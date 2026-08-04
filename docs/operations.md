@@ -7,10 +7,10 @@ This runbook describes contracts and checks. It is not authorization to change a
 | Gate | Evidence | Current repository state |
 |---|---|---|
 | G0 read-only baseline | Host/runtime/repository inventory and decisions | documented; live values can drift |
-| G1 development | Focused Backend, Frontend, Agent tests with production isolation | not yet executed |
-| G2 path-aware CI | Classifier cases and stable required contexts | implemented, not yet run in GitHub |
+| G1 development | Focused Backend, Frontend, Agent tests with production isolation | completed locally; sequential Docker verification passed |
+| G2 path-aware CI | Classifier cases and stable required contexts | implemented; latest push and pull request Validate runs passed |
 | G3 deploy staging | Bootstrap identity, release shape, modes, idempotence, rollback | implemented as an example, not staged |
-| G4 initial migration | Empty dedicated DB migration and JPA validation | not executed |
+| G4 initial migration | Empty dedicated DB migration and JPA validation | isolated PostgreSQL 18.4 initial migration, V1-to-V2 upgrade, and JPA validation passed |
 | G5 Agent | mTLS delivery, actual Mac metrics, Docker socket, spool recovery | not executed |
 | G6 tailnet/PWA | Serve identity, iPhone install, background recovery, no public access | not executed |
 | G7 production | exact-SHA deploy, health, tailnet smoke, previous rollback | not authorized or executed |
