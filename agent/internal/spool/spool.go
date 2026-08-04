@@ -18,6 +18,11 @@ type Spool struct {
 	maximum   int
 }
 
+type DrainResult struct {
+	Delivered int
+	Rejected  int
+}
+
 func New(directory string, maximum int) (*Spool, error) {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return nil, fmt.Errorf("create Agent spool: %w", err)
@@ -74,42 +79,54 @@ func (spool *Spool) Store(name string, payload []byte) error {
 	return nil
 }
 
-func (spool *Spool) Drain(send func([]byte) error) error {
+func (spool *Spool) Drain(send func([]byte) error) (DrainResult, error) {
+	result := DrainResult{}
 	files, err := spool.files()
 	if err != nil {
-		return err
+		return result, err
 	}
 	for _, file := range files {
 		path := filepath.Join(spool.directory, file)
 		payload, readErr := os.ReadFile(path)
 		if readErr != nil {
-			return fmt.Errorf("read spool file: %w", readErr)
+			return result, fmt.Errorf("read spool file: %w", readErr)
 		}
 		if len(payload) > maximumPayloadBytes {
-			return errors.New("stored snapshot exceeds spool payload limit")
+			if quarantineErr := spool.quarantine(file); quarantineErr != nil {
+				return result, fmt.Errorf(
+					"quarantine oversized spool file: %w",
+					quarantineErr)
+			}
+			result.Rejected++
+			continue
 		}
 		if sendErr := send(payload); sendErr != nil {
 			var permanent interface{ Permanent() bool }
 			if errors.As(sendErr, &permanent) && permanent.Permanent() {
-				rejectedPath := filepath.Join(
-					spool.directory,
-					".rejected-"+file)
-				if renameErr := os.Rename(path, rejectedPath); renameErr != nil {
-					return fmt.Errorf(
+				if quarantineErr := spool.quarantine(file); quarantineErr != nil {
+					return result, fmt.Errorf(
 						"quarantine rejected spool file: %w",
-						renameErr)
+						quarantineErr)
 				}
-				return fmt.Errorf(
-					"snapshot was permanently rejected and quarantined: %w",
-					sendErr)
+				result.Rejected++
+				continue
 			}
-			return sendErr
+			return result, sendErr
 		}
 		if removeErr := os.Remove(path); removeErr != nil {
-			return fmt.Errorf("remove delivered spool file: %w", removeErr)
+			return result, fmt.Errorf(
+				"remove delivered spool file: %w",
+				removeErr)
 		}
+		result.Delivered++
 	}
-	return nil
+	return result, nil
+}
+
+func (spool *Spool) quarantine(file string) error {
+	path := filepath.Join(spool.directory, file)
+	rejectedPath := filepath.Join(spool.directory, ".rejected-"+file)
+	return os.Rename(path, rejectedPath)
 }
 
 func (spool *Spool) payloadEntryCount() (int, error) {

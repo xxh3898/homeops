@@ -40,7 +40,7 @@ type snapshotTransport interface {
 }
 
 type snapshotSpool interface {
-	Drain(func([]byte) error) error
+	Drain(func([]byte) error) (spool.DrainResult, error)
 	Store(string, []byte) error
 }
 
@@ -97,9 +97,18 @@ func (app *App) Run(ctx context.Context) error {
 }
 
 func (app *App) collectAndSend(ctx context.Context) error {
-	if err := app.spool.Drain(func(payload []byte) error {
+	drainResult, err := app.spool.Drain(func(payload []byte) error {
 		return app.transport.Send(ctx, payload)
-	}); err != nil {
+	})
+	if drainResult.Rejected > 0 {
+		app.logger.Warn(
+			"permanently rejected snapshots quarantined",
+			"rejected_count",
+			drainResult.Rejected,
+			"delivered_count",
+			drainResult.Delivered)
+	}
+	if err != nil {
 		app.logger.Info("pending snapshots remain queued")
 		return fmt.Errorf("drain pending snapshots: %w", err)
 	}

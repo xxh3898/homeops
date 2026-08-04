@@ -67,8 +67,8 @@ If `pending` remains, do not delete it automatically. Inspect the deployment log
 | migration failure | cutover stops | inspect Flyway and DB; prefer a forward fix |
 | API/Web health failure | previous exact SHA/config attempted | verify rollback health and keep pending evidence |
 | tailnet smoke failure | workflow fails after local health | separate Serve/ACL/identity from application health |
-| Agent delivery failure | snapshot queued locally | verify API, mTLS, spool capacity, and clock without deleting spool files |
-| snapshot permanently rejected | payload renamed to a hidden `.rejected-*.json` evidence file | inspect only metadata and safe error status; decide exact retention manually |
+| Agent delivery failure | retryable pending delivery failure preserves FIFO and suppresses newer collection; a newly collected snapshot is queued when its delivery fails | verify API, mTLS, spool capacity, and clock without deleting spool files |
+| snapshot permanently rejected | consecutive permanent rejects are renamed to hidden `.rejected-*.json` evidence files in the same FIFO drain; fresh collection resumes after no retryable pending item remains | inspect only metadata and safe error status; rejected evidence still counts toward bounded spool capacity, so decide exact retention manually |
 | stale Agent | UI warns stale/offline | inspect the native process and Docker Desktop; no automatic restart |
 
 Because Flyway may already have changed the database, an image rollback is safe only for backward-compatible migrations. Never use an incompatible migration in the automatic path.

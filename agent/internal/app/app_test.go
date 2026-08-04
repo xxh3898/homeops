@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/xxh3898/homeops/agent/internal/config"
 	"github.com/xxh3898/homeops/agent/internal/snapshot"
+	spoolpkg "github.com/xxh3898/homeops/agent/internal/spool"
 )
 
 func TestNewUUIDReturnsRFC4122Shape(t *testing.T) {
@@ -27,15 +29,15 @@ func TestCollectAndSendStopsBeforeCollectionWhenPendingDrainFails(t *testing.T) 
 	host := &recordingHostCollector{}
 	docker := &recordingDockerCollector{}
 	transport := &recordingTransport{sendError: drainFailure}
-	spool := &recordingSpool{pendingPayload: []byte(`{"snapshotId":"older"}`)}
+	spoolStore := &recordingSpool{
+		pendingPayload: []byte(`{"snapshotId":"older"}`),
+	}
 	application := &App{
 		host:      host,
 		docker:    docker,
 		transport: transport,
-		spool:     spool,
-		logger: slog.New(slog.NewTextHandler(
-			io.Discard,
-			nil)),
+		spool:     spoolStore,
+		logger:    discardLogger(),
 	}
 
 	err := application.collectAndSend(context.Background())
@@ -52,9 +54,51 @@ func TestCollectAndSendStopsBeforeCollectionWhenPendingDrainFails(t *testing.T) 
 	if docker.containerCalls != 0 {
 		t.Fatalf("Docker collection calls = %d, want 0", docker.containerCalls)
 	}
-	if spool.storeCalls != 0 {
-		t.Fatalf("spool store calls = %d, want 0", spool.storeCalls)
+	if spoolStore.storeCalls != 0 {
+		t.Fatalf("spool store calls = %d, want 0", spoolStore.storeCalls)
 	}
+}
+
+func TestCollectAndSendContinuesAfterPermanentRejectionsAreQuarantined(
+	t *testing.T,
+) {
+	t.Parallel()
+	host := &recordingHostCollector{}
+	docker := &recordingDockerCollector{}
+	transport := &recordingTransport{}
+	spoolStore := &recordingSpool{
+		drainResult: spoolpkg.DrainResult{Rejected: 2},
+	}
+	application := &App{
+		config:    config.Config{MaxContainers: 128},
+		host:      host,
+		docker:    docker,
+		transport: transport,
+		spool:     spoolStore,
+		logger:    discardLogger(),
+	}
+
+	err := application.collectAndSend(context.Background())
+
+	if err != nil {
+		t.Fatalf("collectAndSend returned an error: %v", err)
+	}
+	if host.collectCalls != 1 {
+		t.Fatalf("host collect calls = %d, want 1", host.collectCalls)
+	}
+	if docker.containerCalls != 1 {
+		t.Fatalf("Docker collection calls = %d, want 1", docker.containerCalls)
+	}
+	if transport.sendCalls != 1 {
+		t.Fatalf("transport send calls = %d, want 1", transport.sendCalls)
+	}
+	if spoolStore.storeCalls != 0 {
+		t.Fatalf("spool store calls = %d, want 0", spoolStore.storeCalls)
+	}
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 type recordingHostCollector struct {
@@ -95,11 +139,19 @@ func (transport *recordingTransport) Send(
 
 type recordingSpool struct {
 	pendingPayload []byte
+	drainResult    spoolpkg.DrainResult
 	storeCalls     int
 }
 
-func (spool *recordingSpool) Drain(send func([]byte) error) error {
-	return send(spool.pendingPayload)
+func (spool *recordingSpool) Drain(
+	send func([]byte) error,
+) (spoolpkg.DrainResult, error) {
+	if spool.pendingPayload != nil {
+		if err := send(spool.pendingPayload); err != nil {
+			return spool.drainResult, err
+		}
+	}
+	return spool.drainResult, nil
 }
 
 func (spool *recordingSpool) Store(string, []byte) error {
