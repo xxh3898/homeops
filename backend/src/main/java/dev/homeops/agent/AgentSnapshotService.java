@@ -214,7 +214,10 @@ public class AgentSnapshotService {
     private AgentStatusResponse toConnectedStatus(
             ReceivedAgentSnapshot received,
             Instant now) {
-        boolean stale = isStale(received.receivedAt(), now);
+        boolean stale = isSnapshotStale(
+                received.snapshot().capturedAt(),
+                received.receivedAt(),
+                now);
         return new AgentStatusResponse(
                 received.snapshot().agentId(),
                 received.snapshot().agentVersion(),
@@ -227,8 +230,10 @@ public class AgentSnapshotService {
     private AgentStatusResponse toPersistedStatus(
             AgentStatusEntity entity,
             Instant now) {
-        boolean stale = entity.getLastSeenAt() == null
-                || isStale(entity.getLastSeenAt(), now);
+        boolean stale = isSnapshotStale(
+                entity.getLastCapturedAt(),
+                entity.getLastSeenAt(),
+                now);
         return new AgentStatusResponse(
                 entity.getAgentId(),
                 entity.getAgentVersion(),
@@ -246,7 +251,10 @@ public class AgentSnapshotService {
         long unhealthy = snapshot.containers().stream()
                 .filter(container -> container.health() == ContainerHealth.UNHEALTHY)
                 .count();
-        boolean stale = isStale(received.receivedAt(), clock.instant());
+        boolean stale = isSnapshotStale(
+                snapshot.capturedAt(),
+                received.receivedAt(),
+                clock.instant());
         return new SystemSummaryResponse(
                 stale ? ConnectionStatus.STALE.name() : ConnectionStatus.CONNECTED.name(),
                 snapshot.capturedAt(),
@@ -267,7 +275,10 @@ public class AgentSnapshotService {
 
     private ContainerInventoryResponse toContainerInventory(
             ReceivedAgentSnapshot received) {
-        boolean stale = isStale(received.receivedAt(), clock.instant());
+        boolean stale = isSnapshotStale(
+                received.snapshot().capturedAt(),
+                received.receivedAt(),
+                clock.instant());
         return new ContainerInventoryResponse(
                 stale
                         ? ConnectionStatus.STALE.name()
@@ -279,8 +290,18 @@ public class AgentSnapshotService {
                         .toList());
     }
 
-    private boolean isStale(Instant lastSeen, Instant now) {
-        return lastSeen.isBefore(now.minus(properties.staleAfter()));
+    private boolean isSnapshotStale(
+            Instant capturedAt,
+            Instant receivedAt,
+            Instant now) {
+        return capturedAt == null
+                || receivedAt == null
+                || isStale(capturedAt, now)
+                || isStale(receivedAt, now);
+    }
+
+    private boolean isStale(Instant timestamp, Instant now) {
+        return timestamp.isBefore(now.minus(properties.staleAfter()));
     }
 
     private boolean sameDatabaseTimestamp(Instant left, Instant right) {

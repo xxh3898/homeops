@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import dev.homeops.agent.api.AgentSnapshotRequest;
+import dev.homeops.agent.api.AgentStatusResponse.ConnectionStatus;
 import dev.homeops.agent.config.HomeOpsAgentProperties;
 import dev.homeops.agent.persistence.AgentStatusEntity;
 import dev.homeops.agent.persistence.AgentStatusRepository;
@@ -153,6 +154,30 @@ class AgentSnapshotServiceTest {
         assertThat(inventory.lastUpdatedAt()).isNull();
         assertThat(inventory.stale()).isTrue();
         assertThat(inventory.containers()).isEmpty();
+    }
+
+    @Test
+    void should_markDelayedSnapshotStale_when_captureTimeExceedsFreshnessWindow() {
+        AgentSnapshotRequest request = AgentSnapshotFixtures.snapshot(
+                UUID.fromString("10000000-0000-0000-0000-000000000008"),
+                NOW.minus(Duration.ofMinutes(4)));
+        when(agentStatusRepository.findById("local-mac"))
+                .thenReturn(Optional.empty());
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any()))
+                .thenReturn(Optional.empty());
+
+        service.accept(request);
+
+        var status = service.status();
+        var summary = service.summary();
+        var inventory = service.containerInventory();
+
+        assertThat(status.status()).isEqualTo(ConnectionStatus.STALE);
+        assertThat(status.stale()).isTrue();
+        assertThat(summary.agentStatus()).isEqualTo("STALE");
+        assertThat(summary.stale()).isTrue();
+        assertThat(inventory.agentStatus()).isEqualTo("STALE");
+        assertThat(inventory.stale()).isTrue();
     }
 
     @Test
