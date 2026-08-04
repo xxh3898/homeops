@@ -1,0 +1,266 @@
+name: Validate
+
+on:
+  push:
+    branches:
+      - dev
+  pull_request:
+    branches:
+      - dev
+      - main
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.classify.outputs.backend }}
+      frontend: ${{ steps.classify.outputs.frontend }}
+      agent: ${{ steps.classify.outputs.agent }}
+      infrastructure: ${{ steps.classify.outputs.infrastructure }}
+      api_image: ${{ steps.classify.outputs.api_image }}
+      web_image: ${{ steps.classify.outputs.web_image }}
+      agent_artifact: ${{ steps.classify.outputs.agent_artifact }}
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - name: Classify changed paths
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "${REF_NAME}" == "refs/heads/main" ]]; then
+            ./scripts/classify-ci-paths.sh .github/workflows/validate.yml
+            exit 0
+          fi
+          case "${EVENT_NAME}" in
+            pull_request) base_sha="${PR_BASE_SHA}" ;;
+            push) base_sha="${BEFORE_SHA}" ;;
+            *) base_sha="" ;;
+          esac
+          if [[ -z "${base_sha}" || "${base_sha}" =~ ^0{40}$ ]] \
+            || ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null
+          then
+            ./scripts/classify-ci-paths.sh .github/workflows/validate.yml
+            exit 0
+          fi
+          changed_paths_file="$(mktemp "${RUNNER_TEMP}/homeops-paths.XXXXXX")"
+          trap 'rm -f -- "${changed_paths_file}"' EXIT
+          git diff --no-renames --name-only -z "${base_sha}" "${GITHUB_SHA}" >"${changed_paths_file}"
+          mapfile -d '' -t changed_paths <"${changed_paths_file}"
+          ./scripts/classify-ci-paths.sh "${changed_paths[@]}"
+
+  infrastructure:
+    name: Infrastructure checks
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Fail when change detection fails
+        if: needs.changes.result != 'success'
+        run: exit 1
+      - name: Skip unrelated infrastructure checks
+        if: needs.changes.result == 'success' && needs.changes.outputs.infrastructure != 'true'
+        run: echo "No infrastructure-related changes."
+      - name: Check out repository
+        if: needs.changes.outputs.infrastructure == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Validate shell scripts
+        if: needs.changes.outputs.infrastructure == 'true'
+        run: bash -n scripts/*.sh deploy/scripts/*.sh
+      - name: Test path classifier
+        if: needs.changes.outputs.infrastructure == 'true'
+        run: ./scripts/test-classify-ci-paths.sh
+      - name: Render Compose definitions
+        if: needs.changes.outputs.infrastructure == 'true'
+        run: |
+          docker compose --env-file .env.dev.example --file compose.dev.yaml config --quiet
+          docker compose --file compose.test.yaml config --quiet
+          docker compose --env-file deploy/env.example --file deploy/compose.example.yaml config --quiet
+      - name: Build runtime config image
+        if: needs.changes.outputs.infrastructure == 'true'
+        run: >
+          docker build
+          --file runtime-config.Dockerfile
+          --build-arg REVISION=1111111111111111111111111111111111111111
+          --tag homeops-runtime-config:verify
+          .
+
+  backend:
+    name: Backend checks
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Fail when change detection fails
+        if: needs.changes.result != 'success'
+        run: exit 1
+      - name: Skip unrelated backend checks
+        if: needs.changes.outputs.backend != 'true'
+        run: echo "No backend-related changes."
+      - name: Check out repository
+        if: needs.changes.outputs.backend == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Run backend checks
+        if: needs.changes.outputs.backend == 'true'
+        run: docker compose --file compose.test.yaml run --rm backend-test
+
+  frontend:
+    name: Frontend checks
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Fail when change detection fails
+        if: needs.changes.result != 'success'
+        run: exit 1
+      - name: Skip unrelated frontend checks
+        if: needs.changes.outputs.frontend != 'true'
+        run: echo "No frontend-related changes."
+      - name: Check out repository
+        if: needs.changes.outputs.frontend == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Run frontend checks
+        if: needs.changes.outputs.frontend == 'true'
+        run: docker compose --file compose.test.yaml run --rm frontend-test
+
+  agent:
+    name: Agent checks
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Fail when change detection fails
+        if: needs.changes.result != 'success'
+        run: exit 1
+      - name: Skip unrelated Agent checks
+        if: needs.changes.outputs.agent != 'true'
+        run: echo "No Agent-related changes."
+      - name: Check out repository
+        if: needs.changes.outputs.agent == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Run Agent tests
+        if: needs.changes.outputs.agent == 'true'
+        run: docker compose --file compose.test.yaml run --rm agent-test
+
+  api-image:
+    name: API ARM64 image
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Fail when change detection fails
+        if: needs.changes.result != 'success'
+        run: exit 1
+      - name: Skip unrelated API image build
+        if: needs.changes.outputs.api_image != 'true'
+        run: echo "No API image-related changes."
+      - name: Check out repository
+        if: needs.changes.outputs.api_image == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Docker Buildx
+        if: needs.changes.outputs.api_image == 'true'
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Build API ARM64 verification image
+        if: needs.changes.outputs.api_image == 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: linux/arm64
+          push: false
+          tags: homeops-api:verify
+
+  web-image:
+    name: Web ARM64 image
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Fail when change detection fails
+        if: needs.changes.result != 'success'
+        run: exit 1
+      - name: Skip unrelated Web image build
+        if: needs.changes.outputs.web_image != 'true'
+        run: echo "No Web image-related changes."
+      - name: Check out repository
+        if: needs.changes.outputs.web_image == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Docker Buildx
+        if: needs.changes.outputs.web_image == 'true'
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Build Web ARM64 verification image
+        if: needs.changes.outputs.web_image == 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: frontend/Dockerfile
+          platforms: linux/arm64
+          push: false
+          tags: homeops-web:verify
+
+  agent-artifact:
+    name: Agent macOS ARM64 artifact
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Fail when change detection fails
+        if: needs.changes.result != 'success'
+        run: exit 1
+      - name: Skip unrelated Agent artifact build
+        if: needs.changes.outputs.agent_artifact != 'true'
+        run: echo "No Agent artifact-related changes."
+      - name: Check out repository
+        if: needs.changes.outputs.agent_artifact == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Go
+        if: needs.changes.outputs.agent_artifact == 'true'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: 1.26.5
+          cache-dependency-path: agent/go.mod
+      - name: Build Agent artifact
+        if: needs.changes.outputs.agent_artifact == 'true'
+        working-directory: agent
+        run: |
+          mkdir -p dist
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build \
+            -trimpath \
+            -ldflags "-s -w -X main.version=${GITHUB_SHA}" \
+            -o dist/homeops-agent-darwin-arm64 \
+            ./cmd/homeops-agent
+          (
+            cd dist
+            shasum -a 256 homeops-agent-darwin-arm64 >homeops-agent-darwin-arm64.sha256
+          )
+      - name: Upload Agent artifact
+        if: needs.changes.outputs.agent_artifact == 'true'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: homeops-agent-darwin-arm64-${{ github.sha }}
+          path: agent/dist/homeops-agent-darwin-arm64*
+          if-no-files-found: error
+          retention-days: 14

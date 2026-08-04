@@ -1,0 +1,219 @@
+name: Publish and Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homeops-production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/validate.yml
+    permissions:
+      contents: read
+
+  publish:
+    name: Publish ARM64 images
+    if: github.ref == 'refs/heads/main' && vars.MAC_MINI_DEPLOY_ENABLED == 'true'
+    needs:
+      - validate
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      registry_owner: ${{ steps.names.outputs.owner }}
+      runtime_config_digest: ${{ steps.publish-runtime-config.outputs.digest }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Resolve image names
+        id: names
+        env:
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -Eeuo pipefail
+          owner="$(printf '%s' "${REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          if [[ ! "${owner}" =~ ^[a-z0-9][a-z0-9-]{0,38}$ ]]; then
+            printf 'Registry owner has an unexpected format\n' >&2
+            exit 64
+          fi
+          {
+            printf 'owner=%s\n' "${owner}"
+            printf 'api=ghcr.io/%s/homeops-api\n' "${owner}"
+            printf 'web=ghcr.io/%s/homeops-web\n' "${owner}"
+            printf 'runtime=ghcr.io/%s/homeops-runtime-config\n' "${owner}"
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish API ARM64 image
+        id: publish-api
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.names.outputs.api }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.sha }}
+          cache-from: type=gha,scope=homeops-api-arm64
+          cache-to: type=gha,mode=max,scope=homeops-api-arm64
+
+      - name: Build and publish Web ARM64 image
+        id: publish-web
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: frontend/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.names.outputs.web }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.sha }}
+          cache-from: type=gha,scope=homeops-web-arm64
+          cache-to: type=gha,mode=max,scope=homeops-web-arm64
+
+      - name: Build and publish runtime config image
+        id: publish-runtime-config
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: runtime-config.Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.names.outputs.runtime }}:${{ github.sha }}
+          build-args: |
+            REVISION=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.sha }}
+          cache-from: type=gha,scope=homeops-runtime-config
+          cache-to: type=gha,mode=max,scope=homeops-runtime-config
+
+      - name: Record immutable image references
+        env:
+          API_IMAGE: ${{ steps.names.outputs.api }}
+          API_DIGEST: ${{ steps.publish-api.outputs.digest }}
+          WEB_IMAGE: ${{ steps.names.outputs.web }}
+          WEB_DIGEST: ${{ steps.publish-web.outputs.digest }}
+          RUNTIME_IMAGE: ${{ steps.names.outputs.runtime }}
+          RUNTIME_DIGEST: ${{ steps.publish-runtime-config.outputs.digest }}
+        run: |
+          {
+            printf '## Published images\n\n'
+            printf -- '- API: `%s:%s` (`%s`)\n' "${API_IMAGE}" "${GITHUB_SHA}" "${API_DIGEST}"
+            printf -- '- Web: `%s:%s` (`%s`)\n' "${WEB_IMAGE}" "${GITHUB_SHA}" "${WEB_DIGEST}"
+            printf -- '- Runtime config: `%s:%s` (`%s`)\n' "${RUNTIME_IMAGE}" "${GITHUB_SHA}" "${RUNTIME_DIGEST}"
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+  deploy:
+    name: Deploy to Mac mini
+    if: github.ref == 'refs/heads/main' && vars.MAC_MINI_DEPLOY_ENABLED == 'true'
+    needs:
+      - publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: Production
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+
+    steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:ci
+          hostname: homeops-deploy-${{ github.run_id }}-${{ github.run_attempt }}
+          ping: ${{ vars.HOMEOPS_DEPLOY_HOST }}
+
+      - name: Configure restricted SSH identity
+        env:
+          HOME_MINI_SSH_KEY: ${{ secrets.HOME_MINI_SSH_KEY }}
+          HOME_MINI_KNOWN_HOSTS: ${{ secrets.HOME_MINI_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${HOME_MINI_SSH_KEY}"
+          test -n "${HOME_MINI_KNOWN_HOSTS}"
+          umask 077
+          mkdir -p "${HOME}/.ssh"
+          printf '%s\n' "${HOME_MINI_SSH_KEY}" >"${HOME}/.ssh/id_ed25519_homeops_ci"
+          printf '%s\n' "${HOME_MINI_KNOWN_HOSTS}" >"${HOME}/.ssh/known_hosts"
+          ssh-keygen -y -f "${HOME}/.ssh/id_ed25519_homeops_ci" >/dev/null
+          ssh-keygen -lf "${HOME}/.ssh/known_hosts" >/dev/null
+
+      - name: Deploy published images
+        env:
+          DEPLOY_HOST: ${{ vars.HOMEOPS_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.HOMEOPS_DEPLOY_USER }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_OWNER: ${{ needs.publish.outputs.registry_owner }}
+          RUNTIME_CONFIG_DIGEST: ${{ needs.publish.outputs.runtime_config_digest }}
+        run: |
+          set -Eeuo pipefail
+          if [[ ! "${DEPLOY_HOST}" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] \
+            || [[ ! "${DEPLOY_USER}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
+            || [[ ! "${RUNTIME_CONFIG_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || [[ ! "${GITHUB_ACTOR}" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?$ ]]
+          then
+            printf 'Deployment input has an unexpected format\n' >&2
+            exit 64
+          fi
+          registry_user="$(printf '%s' "${GITHUB_ACTOR}" | tr '[:upper:]' '[:lower:]')"
+          deploy_command="deploy-homeops-v1 ${GITHUB_SHA} ${RUNTIME_CONFIG_DIGEST} ${REGISTRY_OWNER} ${registry_user}"
+          printf '%s' "${GHCR_TOKEN}" \
+            | ssh \
+                -F /dev/null \
+                -i "${HOME}/.ssh/id_ed25519_homeops_ci" \
+                -o BatchMode=yes \
+                -o IdentitiesOnly=yes \
+                -o StrictHostKeyChecking=yes \
+                "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                "${deploy_command}"
+
+      - name: Verify tailnet HTTPS readiness
+        env:
+          HOMEOPS_SMOKE_URL: ${{ secrets.HOMEOPS_SMOKE_URL }}
+        run: |
+          set -Eeuo pipefail
+          if [[ ! "${HOMEOPS_SMOKE_URL}" =~ ^https://[^/[:space:]]+$ ]]; then
+            printf 'Smoke URL must be an HTTPS origin without a path\n' >&2
+            exit 64
+          fi
+          curl \
+            --fail \
+            --retry 6 \
+            --retry-all-errors \
+            --retry-delay 5 \
+            --silent \
+            --output /dev/null \
+            "${HOMEOPS_SMOKE_URL}/actuator/health/readiness"
