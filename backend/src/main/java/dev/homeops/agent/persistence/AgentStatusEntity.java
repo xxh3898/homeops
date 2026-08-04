@@ -43,10 +43,6 @@ public class AgentStatusEntity {
         return new AgentStatusEntity(agentId);
     }
 
-    public boolean hasProcessed(UUID snapshotId) {
-        return snapshotId.equals(lastSnapshotId);
-    }
-
     public void recordSnapshot(
             UUID snapshotId,
             String version,
@@ -83,4 +79,3 @@ public class AgentStatusEntity {
         return lastSeenAt;
     }
 }
-

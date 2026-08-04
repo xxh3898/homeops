@@ -1,7 +1,6 @@
 package dev.homeops.system.api;
 
 import dev.homeops.agent.AgentSnapshotService;
-import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -22,8 +21,7 @@ public class SystemController {
     }
 
     @GetMapping("/containers")
-    public List<ContainerView> containers() {
-        return agentSnapshotService.containers();
+    public ContainerInventoryResponse containers() {
+        return agentSnapshotService.containerInventory();
     }
 }
-

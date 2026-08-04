@@ -12,7 +12,9 @@ import dev.homeops.agent.persistence.AgentStatusEntity;
 import dev.homeops.agent.persistence.AgentStatusRepository;
 import dev.homeops.agent.persistence.HostMetricAggregateEntity;
 import dev.homeops.agent.persistence.HostMetricAggregateRepository;
+import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
 import dev.homeops.common.AgentSnapshotRejectedException;
+import dev.homeops.system.api.ContainerInventoryResponse;
 import dev.homeops.system.api.ContainerView;
 import dev.homeops.system.api.SystemSummaryResponse;
 import dev.homeops.system.api.SystemSummaryResponse.DockerSummaryView;
@@ -35,6 +37,7 @@ public class AgentSnapshotService {
     private final HomeOpsAgentProperties properties;
     private final AgentStatusRepository agentStatusRepository;
     private final HostMetricAggregateRepository metricRepository;
+    private final ProcessedAgentSnapshotStore processedSnapshotStore;
     private final Clock clock;
     private final AtomicReference<ReceivedAgentSnapshot> latest =
             new AtomicReference<>();
@@ -43,18 +46,26 @@ public class AgentSnapshotService {
     public AgentSnapshotService(
             HomeOpsAgentProperties properties,
             AgentStatusRepository agentStatusRepository,
-            HostMetricAggregateRepository metricRepository) {
-        this(properties, agentStatusRepository, metricRepository, Clock.systemUTC());
+            HostMetricAggregateRepository metricRepository,
+            ProcessedAgentSnapshotStore processedSnapshotStore) {
+        this(
+                properties,
+                agentStatusRepository,
+                metricRepository,
+                processedSnapshotStore,
+                Clock.systemUTC());
     }
 
     AgentSnapshotService(
             HomeOpsAgentProperties properties,
             AgentStatusRepository agentStatusRepository,
             HostMetricAggregateRepository metricRepository,
+            ProcessedAgentSnapshotStore processedSnapshotStore,
             Clock clock) {
         this.properties = properties;
         this.agentStatusRepository = agentStatusRepository;
         this.metricRepository = metricRepository;
+        this.processedSnapshotStore = processedSnapshotStore;
         this.clock = clock;
     }
 
@@ -63,13 +74,19 @@ public class AgentSnapshotService {
         Instant receivedAt = clock.instant();
         validate(request, receivedAt);
 
-        AgentStatusEntity status = agentStatusRepository
-                .findById(request.agentId())
-                .orElseGet(() -> AgentStatusEntity.create(request.agentId()));
-        if (status.hasProcessed(request.snapshotId())) {
+        boolean firstProcessing = processedSnapshotStore.recordIfAbsent(
+                request.agentId(),
+                request.snapshotId(),
+                request.capturedAt(),
+                receivedAt);
+        if (!firstProcessing) {
+            Instant processedCapturedAt = processedSnapshotStore
+                    .findCapturedAt(request.agentId(), request.snapshotId())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Processed snapshot claim is missing"));
             if (!sameDatabaseTimestamp(
                     request.capturedAt(),
-                    status.getLastCapturedAt())) {
+                    processedCapturedAt)) {
                 throw new AgentSnapshotRejectedException(
                         "Snapshot identifier conflicts with a prior capture time");
             }
@@ -80,6 +97,9 @@ public class AgentSnapshotService {
                     true);
         }
 
+        AgentStatusEntity status = agentStatusRepository
+                .findById(request.agentId())
+                .orElseGet(() -> AgentStatusEntity.create(request.agentId()));
         Instant bucket = request.capturedAt().truncatedTo(ChronoUnit.MINUTES);
         Optional<HostMetricAggregateEntity> existingAggregate = metricRepository
                 .findByAgentIdAndBucketStart(request.agentId(), bucket);
@@ -141,12 +161,14 @@ public class AgentSnapshotService {
                         new DockerSummaryView(0, 0, 0, 0)));
     }
 
-    public List<ContainerView> containers() {
+    public ContainerInventoryResponse containerInventory() {
         return latest()
-                .map(received -> received.snapshot().containers().stream()
-                        .map(ContainerView::from)
-                        .toList())
-                .orElseGet(List::of);
+                .map(this::toContainerInventory)
+                .orElse(new ContainerInventoryResponse(
+                        ConnectionStatus.OFFLINE.name(),
+                        null,
+                        true,
+                        List.of()));
     }
 
     private void validate(AgentSnapshotRequest request, Instant receivedAt) {
@@ -241,6 +263,20 @@ public class AgentSnapshotService {
                         Math.toIntExact(running),
                         Math.toIntExact(snapshot.containers().size() - running),
                         Math.toIntExact(unhealthy)));
+    }
+
+    private ContainerInventoryResponse toContainerInventory(
+            ReceivedAgentSnapshot received) {
+        boolean stale = isStale(received.receivedAt(), clock.instant());
+        return new ContainerInventoryResponse(
+                stale
+                        ? ConnectionStatus.STALE.name()
+                        : ConnectionStatus.CONNECTED.name(),
+                received.snapshot().capturedAt(),
+                stale,
+                received.snapshot().containers().stream()
+                        .map(ContainerView::from)
+                        .toList());
     }
 
     private boolean isStale(Instant lastSeen, Instant now) {

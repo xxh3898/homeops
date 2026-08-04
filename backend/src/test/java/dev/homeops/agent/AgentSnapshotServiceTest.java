@@ -3,7 +3,10 @@ package dev.homeops.agent;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -12,6 +15,7 @@ import dev.homeops.agent.config.HomeOpsAgentProperties;
 import dev.homeops.agent.persistence.AgentStatusEntity;
 import dev.homeops.agent.persistence.AgentStatusRepository;
 import dev.homeops.agent.persistence.HostMetricAggregateRepository;
+import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
 import dev.homeops.common.AgentSnapshotRejectedException;
 import java.time.Clock;
 import java.time.Duration;
@@ -36,6 +40,9 @@ class AgentSnapshotServiceTest {
     @Mock
     private HostMetricAggregateRepository metricRepository;
 
+    @Mock
+    private ProcessedAgentSnapshotStore processedSnapshotStore;
+
     private AgentSnapshotService service;
 
     @BeforeEach
@@ -45,12 +52,17 @@ class AgentSnapshotServiceTest {
                 Duration.ofSeconds(30),
                 Duration.ofMinutes(5),
                 Duration.ofMinutes(1),
-                128);
+                128,
+                Duration.ofDays(1));
         service = new AgentSnapshotService(
                 properties,
                 agentStatusRepository,
                 metricRepository,
+                processedSnapshotStore,
                 Clock.fixed(NOW, ZoneOffset.UTC));
+        lenient().when(processedSnapshotStore.recordIfAbsent(
+                anyString(), any(), any(), any()))
+                .thenReturn(true);
     }
 
     @Test
@@ -73,7 +85,7 @@ class AgentSnapshotServiceTest {
         assertThat(summary.stale()).isFalse();
         assertThat(summary.docker().total()).isEqualTo(1);
         assertThat(summary.docker().running()).isEqualTo(1);
-        assertThat(service.containers()).hasSize(1);
+        assertThat(service.containerInventory().containers()).hasSize(1);
         verify(agentStatusRepository).save(any(AgentStatusEntity.class));
         verify(metricRepository).save(any());
     }
@@ -85,20 +97,62 @@ class AgentSnapshotServiceTest {
         AgentSnapshotRequest request = AgentSnapshotFixtures.snapshot(
                 snapshotId,
                 NOW.minusSeconds(1));
-        AgentStatusEntity existing = AgentStatusEntity.create("local-mac");
-        existing.recordSnapshot(
-                snapshotId,
-                "0.1.0",
-                NOW.minusSeconds(1),
-                NOW.minusSeconds(1));
-        when(agentStatusRepository.findById("local-mac"))
-                .thenReturn(Optional.of(existing));
+        when(processedSnapshotStore.recordIfAbsent(
+                anyString(), any(), any(), any()))
+                .thenReturn(false);
+        when(processedSnapshotStore.findCapturedAt("local-mac", snapshotId))
+                .thenReturn(Optional.of(NOW.minusSeconds(1)));
 
         var accepted = service.accept(request);
 
         assertThat(accepted.duplicate()).isTrue();
         verify(metricRepository, never()).save(any());
         verify(agentStatusRepository, never()).save(any());
+    }
+
+    @Test
+    void should_notAggregateSnapshotAgain_when_retryFollowsNewerSnapshot() {
+        UUID firstId = UUID.fromString(
+                "10000000-0000-0000-0000-000000000006");
+        UUID secondId = UUID.fromString(
+                "10000000-0000-0000-0000-000000000007");
+        Instant firstCapturedAt = NOW.minusSeconds(2);
+        Instant secondCapturedAt = NOW.minusSeconds(1);
+        AgentSnapshotRequest first = AgentSnapshotFixtures.snapshot(
+                firstId,
+                firstCapturedAt);
+        AgentSnapshotRequest second = AgentSnapshotFixtures.snapshot(
+                secondId,
+                secondCapturedAt);
+        when(processedSnapshotStore.recordIfAbsent(
+                anyString(), any(), any(), any()))
+                .thenReturn(true, true, false);
+        when(processedSnapshotStore.findCapturedAt("local-mac", firstId))
+                .thenReturn(Optional.of(firstCapturedAt));
+        when(agentStatusRepository.findById("local-mac"))
+                .thenReturn(Optional.empty());
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any()))
+                .thenReturn(Optional.empty());
+
+        service.accept(first);
+        service.accept(second);
+        var retry = service.accept(first);
+
+        assertThat(retry.duplicate()).isTrue();
+        assertThat(service.containerInventory().lastUpdatedAt())
+                .isEqualTo(secondCapturedAt);
+        verify(metricRepository, times(2)).save(any());
+        verify(agentStatusRepository, times(2)).save(any());
+    }
+
+    @Test
+    void should_returnStaleOfflineInventory_when_snapshotIsUnavailable() {
+        var inventory = service.containerInventory();
+
+        assertThat(inventory.agentStatus()).isEqualTo("OFFLINE");
+        assertThat(inventory.lastUpdatedAt()).isNull();
+        assertThat(inventory.stale()).isTrue();
+        assertThat(inventory.containers()).isEmpty();
     }
 
     @Test
@@ -136,14 +190,11 @@ class AgentSnapshotServiceTest {
     void should_rejectSnapshot_when_idempotencyIdentifierHasDifferentTimestamp() {
         UUID snapshotId = UUID.fromString(
                 "10000000-0000-0000-0000-000000000005");
-        AgentStatusEntity existing = AgentStatusEntity.create("local-mac");
-        existing.recordSnapshot(
-                snapshotId,
-                "0.1.0",
-                NOW.minusSeconds(2),
-                NOW.minusSeconds(1));
-        when(agentStatusRepository.findById("local-mac"))
-                .thenReturn(Optional.of(existing));
+        when(processedSnapshotStore.recordIfAbsent(
+                anyString(), any(), any(), any()))
+                .thenReturn(false);
+        when(processedSnapshotStore.findCapturedAt("local-mac", snapshotId))
+                .thenReturn(Optional.of(NOW.minusSeconds(2)));
         AgentSnapshotRequest request = AgentSnapshotFixtures.snapshot(
                 snapshotId,
                 NOW.minusSeconds(1));

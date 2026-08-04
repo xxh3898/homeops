@@ -28,6 +28,8 @@ Every secret and host-specific value stays outside Git. Example values use reser
 | `HOMEOPS_AGENT_MAXIMUM_SNAPSHOT_AGE` | no | no | Oldest accepted Agent snapshot; default `5m` |
 | `HOMEOPS_AGENT_ALLOWED_FUTURE_SKEW` | no | no | Accepted clock skew; default `1m` |
 | `HOMEOPS_AGENT_MAXIMUM_CONTAINERS` | no | no | Snapshot bound; default `128`, hard maximum `256` in the Agent |
+| `HOMEOPS_AGENT_PROCESSED_SNAPSHOT_RETENTION` | no | no | Durable idempotency ledger retention; default `1d`, must exceed maximum snapshot age |
+| `HOMEOPS_AGENT_PROCESSED_SNAPSHOT_CLEANUP_CRON` | no | no | Idempotency ledger cleanup cron in UTC; default `0 47 3 * * *` |
 | `HOMEOPS_METRIC_RETENTION` | no | no | One-minute aggregate retention; default `30d`, maximum `365d` |
 | `HOMEOPS_METRIC_CLEANUP_CRON` | no | no | UTC cleanup cron; default `0 17 3 * * *` |
 

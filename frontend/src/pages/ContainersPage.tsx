@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Box, RefreshCw } from 'lucide-react'
 import { getContainers } from '../api/client'
+import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { usePageVisible } from '../hooks/usePageVisible'
 import { Card } from '../ui/Card'
 import { StatusBadge } from '../ui/StatusBadge'
@@ -8,6 +9,7 @@ import { formatBytes, formatContainerCpu, formatTimestamp } from '../utils/forma
 
 export function ContainersPage() {
   const visible = usePageVisible()
+  const online = useOnlineStatus()
   const query = useQuery({
     queryKey: ['containers'],
     queryFn: getContainers,
@@ -32,32 +34,47 @@ export function ContainersPage() {
       </Card>
     )
   }
-  if (query.data.length === 0) {
-    return (
-      <Card>
-        <Box aria-hidden="true" className="text-slate-500" />
-        <h2 className="mt-3 font-semibold">No container snapshot</h2>
-        <p className="mt-2 text-sm text-slate-400">The Agent has not reported any containers yet.</p>
-      </Card>
-    )
-  }
+  const inventory = query.data
+  const effectivelyStale = inventory.stale || !online || query.isRefetchError
 
   return (
     <div className="space-y-3">
-      <div className="flex items-end justify-between px-1">
-        <div>
-          <h2 className="text-lg font-semibold">Containers</h2>
-          <p className="text-xs text-slate-500">Read-only inventory · {query.data.length} total</p>
+      <Card className={effectivelyStale ? 'border-amber-400/30' : 'border-emerald-400/20'}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Containers</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Read-only inventory · {inventory.containers.length} total
+            </p>
+          </div>
+          <StatusBadge status={effectivelyStale ? 'STALE' : inventory.agentStatus} />
         </div>
-      </div>
-      {query.data.map((container) => (
+        <p className="mt-4 text-xs text-slate-500">
+          Last collected {formatTimestamp(inventory.lastUpdatedAt)}
+        </p>
+        {effectivelyStale && (
+          <p className="mt-3 rounded-xl bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
+            This container snapshot is stale. Do not treat displayed states as current.
+          </p>
+        )}
+      </Card>
+      {inventory.containers.length === 0 && (
+        <Card>
+          <Box aria-hidden="true" className="text-slate-500" />
+          <h3 className="mt-3 font-semibold">No container snapshot</h3>
+          <p className="mt-2 text-sm text-slate-400">The Agent has not reported any containers yet.</p>
+        </Card>
+      )}
+      {inventory.containers.map((container) => (
         <Card key={container.id}>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate font-semibold">{container.name}</p>
               <p className="mt-1 truncate text-xs text-slate-500">{container.image}</p>
             </div>
-            <StatusBadge status={container.health === 'NONE' ? container.state : container.health} />
+            <StatusBadge
+              status={effectivelyStale ? 'STALE' : container.health === 'NONE' ? container.state : container.health}
+            />
           </div>
           <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
             <Detail label="Project" value={container.composeProject ?? 'Standalone'} />

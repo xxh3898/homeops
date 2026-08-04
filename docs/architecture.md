@@ -56,7 +56,7 @@ Status uses five-second HTTP polling while the page is visible. TanStack Query r
 
 ## Data ownership
 
-HomeOps has a dedicated PostgreSQL instance and volume. It does not share a database with another project. The current implementation persists one-minute host metric aggregates and Agent liveness, while the latest detailed container snapshot remains in API memory.
+HomeOps has a dedicated PostgreSQL instance and volume. It does not share a database with another project. The current implementation persists one-minute host metric aggregates, Agent liveness, and a bounded processed-snapshot idempotency ledger, while the latest detailed container snapshot remains in API memory. Container inventory responses include Agent freshness so a stopped Agent cannot leave old RUNNING or HEALTHY states presented as current.
 
 The default metric policy keeps one-minute aggregates for 30 days, about 43,200 rows for one Agent, and deletes only older aggregate rows in a daily transaction. The retention value is bounded to 365 days. The schema also reserves normalized tables for monitored services, check results, incidents, deployment events, backup metadata from other projects, notification attempts, control audit events, settings, and Spring sessions. JSONB is restricted to auxiliary metadata; searchable state and identity fields remain normal columns.
 

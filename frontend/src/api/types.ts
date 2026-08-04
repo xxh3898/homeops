@@ -42,3 +42,10 @@ export interface ContainerView {
   }>
   managed: boolean
 }
+
+export interface ContainerInventory {
+  agentStatus: 'CONNECTED' | 'STALE' | 'OFFLINE'
+  lastUpdatedAt: string | null
+  stale: boolean
+  containers: ContainerView[]
+}

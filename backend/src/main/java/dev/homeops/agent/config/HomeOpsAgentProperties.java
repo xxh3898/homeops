@@ -14,6 +14,16 @@ public record HomeOpsAgentProperties(
         @NotNull Duration staleAfter,
         @NotNull Duration maximumSnapshotAge,
         @NotNull Duration allowedFutureSkew,
-        @Positive int maximumContainers) {
-}
+        @Positive int maximumContainers,
+        @NotNull Duration processedSnapshotRetention) {
 
+    public HomeOpsAgentProperties {
+        if (processedSnapshotRetention != null
+                && maximumSnapshotAge != null
+                && (processedSnapshotRetention.compareTo(maximumSnapshotAge) <= 0
+                || processedSnapshotRetention.compareTo(Duration.ofDays(30)) > 0)) {
+            throw new IllegalArgumentException(
+                    "Processed snapshot retention must be longer than the maximum snapshot age and at most 30 days");
+        }
+    }
+}

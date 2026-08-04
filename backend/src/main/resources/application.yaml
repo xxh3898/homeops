@@ -52,6 +52,8 @@ homeops:
     maximum-snapshot-age: ${HOMEOPS_AGENT_MAXIMUM_SNAPSHOT_AGE:5m}
     allowed-future-skew: ${HOMEOPS_AGENT_ALLOWED_FUTURE_SKEW:1m}
     maximum-containers: ${HOMEOPS_AGENT_MAXIMUM_CONTAINERS:128}
+    processed-snapshot-retention: ${HOMEOPS_AGENT_PROCESSED_SNAPSHOT_RETENTION:1d}
+    processed-snapshot-cleanup-cron: ${HOMEOPS_AGENT_PROCESSED_SNAPSHOT_CLEANUP_CRON:0 47 3 * * *}
   metrics:
     retention: ${HOMEOPS_METRIC_RETENTION:30d}
     cleanup-cron: ${HOMEOPS_METRIC_CLEANUP_CRON:0 17 3 * * *}

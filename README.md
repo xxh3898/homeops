@@ -52,7 +52,7 @@ The pinned frontend dependency graph requires a committed `package-lock.json`; g
 - `GET /api/v1/session`
 - `GET /api/v1/system/summary`
 - `GET /api/v1/agent/status`
-- `GET /api/v1/containers`
+- `GET /api/v1/containers`, with Agent freshness metadata and read-only inventory
 - `POST /api/v1/internal/agent/snapshots`, available only through the loopback mTLS ingress
 - `GET /actuator/health/readiness`
 

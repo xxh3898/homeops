@@ -1,4 +1,4 @@
-import type { ContainerView, SystemSummary } from './types'
+import type { ContainerInventory, SystemSummary } from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -40,6 +40,5 @@ export function getSystemSummary() {
 }
 
 export function getContainers() {
-  return getJson<ContainerView[]>('/api/v1/containers')
+  return getJson<ContainerInventory>('/api/v1/containers')
 }
-
