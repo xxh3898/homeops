@@ -38,8 +38,13 @@ run_case 'true,false,false,false,true,false,false' backend/src/main/java/dev/hom
 run_case 'false,true,false,false,false,true,false' frontend/src/App.tsx
 run_case 'false,false,true,false,false,false,true' agent/cmd/homeops-agent/main.go
 run_case 'false,false,false,true,false,true,false' deploy/nginx/default.conf
+run_case 'false,false,false,true,true,true,false' .dockerignore
+run_case 'true,true,true,true,false,false,false' compose.test.yaml
+run_case 'false,false,false,true,false,false,false' runtime-config.Dockerfile
+run_case 'false,false,false,true,false,false,false' docs/architecture.md
+run_case 'false,true,true,false,false,true,true' frontend/src/App.tsx agent/cmd/homeops-agent/main.go
+run_case 'true,true,true,true,true,true,true'
 run_case 'true,true,true,true,true,true,true' .github/workflows/validate.yml
 run_case 'true,true,true,true,true,true,true' unknown/new-file.txt
 
 printf 'HomeOps CI path classification tests passed\n'
-

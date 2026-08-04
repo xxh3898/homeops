@@ -36,10 +36,21 @@ for path in "$@"; do
       infrastructure=true
       web_image=true
       ;;
+    .dockerignore)
+      infrastructure=true
+      api_image=true
+      web_image=true
+      ;;
+    compose.test.yaml)
+      backend=true
+      frontend=true
+      agent=true
+      infrastructure=true
+      ;;
     deploy/*|compose.*.yaml|runtime-config.Dockerfile|.env.*.example|README.md|SECURITY.md|CONTRIBUTING.md)
       infrastructure=true
       ;;
-    docs/*|LICENSE|.editorconfig|.gitignore|.dockerignore)
+    docs/*|LICENSE|.editorconfig|.gitignore)
       infrastructure=true
       ;;
     *)
@@ -68,4 +79,3 @@ output_file="${GITHUB_OUTPUT:-/dev/stdout}"
   printf 'web_image=%s\n' "${web_image}"
   printf 'agent_artifact=%s\n' "${agent_artifact}"
 } >>"${output_file}"
-
