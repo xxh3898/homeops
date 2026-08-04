@@ -67,7 +67,7 @@ The runtime Compose bundle is built from `runtime-config.Dockerfile`. It runs a 
 
 The initial database requires the one-shot `migration` profile before the API can pass schema validation. Future migrations must be additive and backward compatible. Because automatic HomeOps database backup is intentionally excluded, any destructive migration requires a separately approved logical snapshot or an explicit decision to discard all HomeOps history.
 
-Do not substitute `latest` tags. API and Web must use the same full 40-character commit SHA.
+Do not substitute mutable tags. API and Web must use immutable `@sha256:` references, and both images' `org.opencontainers.image.revision` labels must identify the same full 40-character commit SHA.
 
 ## 6. Configure Tailscale Serve
 
@@ -87,8 +87,8 @@ Connect the iPhone to Tailscale, open the Serve HTTPS origin in Safari, and use 
 
 ## 8. Optional automatic deployment
 
-Automatic deployment follows the same contract as the existing home-server projects: reviewed `main`, full validation, ARM64 exact-SHA images, GHCR, Tailscale, restricted SSH, runtime-config digest, one-shot migration, health, tailnet smoke, and previous-SHA rollback.
+Automatic deployment follows the same contract as the existing home-server projects: reviewed `main`, full validation, ARM64 images, immutable API/Web/runtime-config digests, a shared full-SHA revision identity, GHCR, Tailscale, restricted SSH, one-shot migration, health, tailnet smoke, and digest-pinned rollback.
 
-Configure the repository values listed in `docs/configuration.md`, install a project-specific forced-command SSH key using `deploy/bootstrap/deploy-homeops-ci.sh.example`, and leave `MAC_MINI_DEPLOY_ENABLED` false until the bootstrap has passed a manual staging and rollback drill.
+Configure the repository values listed in `docs/configuration.md`, install the `deploy-homeops-v2` project-specific forced-command SSH key using `deploy/bootstrap/deploy-homeops-ci.sh.example`, and leave `MAC_MINI_DEPLOY_ENABLED` false until the bootstrap has passed a manual staging and rollback drill. The earlier v1 command grammar is intentionally rejected; update the installed bootstrap before enabling this workflow.
 
 The example bootstrap contains placeholders and is not safe to install unchanged.

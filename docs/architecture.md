@@ -17,7 +17,7 @@ flowchart LR
     agent["Native macOS Go Agent"] -->|"Loopback TLS 1.3 + client certificate"| web
     agent -->|"Read-only fixed Docker API calls"| docker["Docker Desktop Engine"]
     agent -->|"Fixed macOS commands and syscalls"| mac["macOS host"]
-    actions["GitHub Actions"] -->|"ARM64 exact-SHA images"| ghcr["GHCR"]
+    actions["GitHub Actions"] -->|"ARM64 digest-pinned images"| ghcr["GHCR"]
     actions -->|"Tailscale + forced SSH command"| bootstrap["Stable deploy bootstrap"]
     bootstrap --> docker
     kuma["Uptime Kuma"] -.->|"Independent availability checks"| serve
@@ -73,9 +73,9 @@ HomeOps does not depend on an unofficial Uptime Kuma API. If both services run o
 - Agent delivery failure stores a bounded local snapshot spool and retries oldest first.
 - A stale or missing Agent snapshot is shown as stale/offline, never healthy.
 - API responses use `no-store`, and the service worker uses `NetworkOnly` for API GET requests.
-- A deployment uses exact application SHA tags and an exact runtime-config digest.
+- A deployment uses immutable API, Web, and runtime-config digests and verifies both application images carry the requested full-SHA revision label.
 - Runtime configuration remains pending until application health succeeds.
-- Migration failure stops before application cutover. Application health failure attempts the previous exact-SHA application with the previous runtime configuration.
+- Migration failure stops before application cutover. Application health failure pulls and verifies the previous digest-pinned application before attempting it with the previous runtime configuration.
 
 No live behavior in this document should be considered verified until the corresponding development, CI, Mac Agent, iPhone, and production acceptance gates have run.
 

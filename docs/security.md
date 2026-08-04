@@ -48,7 +48,7 @@ Even read access can reveal operational metadata. Treat the Agent binary and con
 
 ## Deployment boundary
 
-The CI key must be forced to the stable bootstrap. The bootstrap accepts only a full commit SHA, runtime-config digest, registry owner, and registry login identity. It verifies the runtime image labels and extracted release shape before invoking the immutable deployment worker. It never accepts a path, image name, project name, Compose subcommand, or shell fragment.
+The CI key must be forced to the stable bootstrap. The v2 bootstrap accepts only a full commit SHA, API digest, Web digest, runtime-config digest, registry owner, and registry login identity. It rejects zero or malformed digests, verifies the runtime image labels and extracted release shape, and passes the application digests to the immutable deployment worker. The worker pulls candidate and rollback images by digest and verifies their revision labels before cutover. Neither layer accepts a path, image name, project name, Compose subcommand, or shell fragment.
 
 The examples still require operator review and staging. They are not proof that the live SSH key, file owner/mode, Tailscale grants, or production directory are correctly configured.
 

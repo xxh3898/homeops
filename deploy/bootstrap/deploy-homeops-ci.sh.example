@@ -73,13 +73,23 @@ then
 fi
 
 original_command="${SSH_ORIGINAL_COMMAND:-}"
-if [[ ! "${original_command}" =~ ^deploy-homeops-v1[[:space:]]([0-9a-f]{40})[[:space:]](sha256:[0-9a-f]{64})[[:space:]]([a-z0-9][a-z0-9-]{0,38})[[:space:]]([a-z0-9][a-z0-9-]{0,38}(\[bot\])?)$ ]]; then
+if [[ ! "${original_command}" =~ ^deploy-homeops-v2[[:space:]]([0-9a-f]{40})[[:space:]](sha256:[0-9a-f]{64})[[:space:]](sha256:[0-9a-f]{64})[[:space:]](sha256:[0-9a-f]{64})[[:space:]]([a-z0-9][a-z0-9-]{0,38})[[:space:]]([a-z0-9][a-z0-9-]{0,38}(\[bot\])?)$ ]]; then
   fail "only the strictly formatted HomeOps deployment command is allowed"
 fi
 readonly COMMIT_SHA="${BASH_REMATCH[1]}"
-readonly RUNTIME_DIGEST="${BASH_REMATCH[2]}"
-readonly REGISTRY_OWNER="${BASH_REMATCH[3]}"
-readonly REGISTRY_USER="${BASH_REMATCH[4]}"
+readonly API_DIGEST="${BASH_REMATCH[2]}"
+readonly WEB_DIGEST="${BASH_REMATCH[3]}"
+readonly RUNTIME_DIGEST="${BASH_REMATCH[4]}"
+readonly REGISTRY_OWNER="${BASH_REMATCH[5]}"
+readonly REGISTRY_USER="${BASH_REMATCH[6]}"
+readonly ZERO_DIGEST=sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+if [[ "${API_DIGEST}" == "${ZERO_DIGEST}" ]] \
+  || [[ "${WEB_DIGEST}" == "${ZERO_DIGEST}" ]] \
+  || [[ "${RUNTIME_DIGEST}" == "${ZERO_DIGEST}" ]]
+then
+  fail "deployment digests must be non-zero"
+fi
 
 umask 077
 exec 9>>"${BOOTSTRAP_LOCK}"
@@ -177,6 +187,8 @@ fi
 
 HOMEOPS_APP_DIR="${APP_DIR}" \
 HOMEOPS_RUNTIME_DIR="${candidate_release}" \
+HOMEOPS_API_IMAGE_DIGEST="${API_DIGEST}" \
+HOMEOPS_WEB_IMAGE_DIGEST="${WEB_DIGEST}" \
 HOMEOPS_RUNTIME_CONFIG_DIGEST="${RUNTIME_DIGEST}" \
 DOCKER_CONFIG="${docker_config_dir}" \
   "${candidate_release}/scripts/deploy-homeops.sh" \

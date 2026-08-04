@@ -20,6 +20,8 @@ readonly RUNTIME_CONFIG_PENDING="${RUNTIME_CONFIG_ROOT}/pending"
 readonly RUNTIME_CONFIG_CURRENT="${RUNTIME_CONFIG_ROOT}/current"
 readonly ZERO_SHA=0000000000000000000000000000000000000000
 readonly ZERO_DIGEST=sha256:0000000000000000000000000000000000000000000000000000000000000000
+readonly CANDIDATE_API_DIGEST="${HOMEOPS_API_IMAGE_DIGEST:-${ZERO_DIGEST}}"
+readonly CANDIDATE_WEB_DIGEST="${HOMEOPS_WEB_IMAGE_DIGEST:-${ZERO_DIGEST}}"
 readonly CANDIDATE_RUNTIME_DIGEST="${HOMEOPS_RUNTIME_CONFIG_DIGEST:-${ZERO_DIGEST}}"
 
 fail() {
@@ -60,6 +62,16 @@ if [[ ! "${REGISTRY_OWNER}" =~ ^[a-z0-9][a-z0-9-]{0,38}$ ]]; then
 fi
 if [[ ! "${APP_DIR}" =~ ^/ ]] || [[ ! "${RUNTIME_DIR}" =~ ^/ ]]; then
   fail "application and runtime directories must be absolute"
+fi
+if [[ "${CANDIDATE_API_DIGEST}" == "${ZERO_DIGEST}" ]] \
+  || [[ ! "${CANDIDATE_API_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+then
+  fail "API image digest must be a non-zero lowercase SHA-256 digest"
+fi
+if [[ "${CANDIDATE_WEB_DIGEST}" == "${ZERO_DIGEST}" ]] \
+  || [[ ! "${CANDIDATE_WEB_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+then
+  fail "Web image digest must be a non-zero lowercase SHA-256 digest"
 fi
 if [[ "${CANDIDATE_RUNTIME_DIGEST}" != "${ZERO_DIGEST}" ]] \
   && [[ ! "${CANDIDATE_RUNTIME_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -102,20 +114,32 @@ fi
 
 current_sha="${ZERO_SHA}"
 previous_sha="${ZERO_SHA}"
+current_api_digest="${ZERO_DIGEST}"
+previous_api_digest="${ZERO_DIGEST}"
+current_web_digest="${ZERO_DIGEST}"
+previous_web_digest="${ZERO_DIGEST}"
 current_runtime_digest="${ZERO_DIGEST}"
 previous_runtime_digest="${ZERO_DIGEST}"
 if [[ -e "${STATE_FILE}" || -L "${STATE_FILE}" ]]; then
   require_private_file "${STATE_FILE}" "deployment state"
   state_keys="$(/usr/bin/awk -F= 'NF == 2 { print $1 }' "${STATE_FILE}" | LC_ALL=C /usr/bin/sort)"
-  if [[ "${state_keys}" != $'CURRENT_SHA\nPREVIOUS_RUNTIME_CONFIG_DIGEST\nPREVIOUS_SHA\nRUNTIME_CONFIG_DIGEST' ]]; then
+  if [[ "${state_keys}" != $'API_IMAGE_DIGEST\nCURRENT_SHA\nPREVIOUS_API_IMAGE_DIGEST\nPREVIOUS_RUNTIME_CONFIG_DIGEST\nPREVIOUS_SHA\nPREVIOUS_WEB_IMAGE_DIGEST\nRUNTIME_CONFIG_DIGEST\nWEB_IMAGE_DIGEST' ]]; then
     fail "deployment state keys are invalid"
   fi
   current_sha="$(/usr/bin/sed -n 's/^CURRENT_SHA=//p' "${STATE_FILE}" | /usr/bin/tail -n 1)"
   previous_sha="$(/usr/bin/sed -n 's/^PREVIOUS_SHA=//p' "${STATE_FILE}" | /usr/bin/tail -n 1)"
+  current_api_digest="$(/usr/bin/sed -n 's/^API_IMAGE_DIGEST=//p' "${STATE_FILE}" | /usr/bin/tail -n 1)"
+  previous_api_digest="$(/usr/bin/sed -n 's/^PREVIOUS_API_IMAGE_DIGEST=//p' "${STATE_FILE}" | /usr/bin/tail -n 1)"
+  current_web_digest="$(/usr/bin/sed -n 's/^WEB_IMAGE_DIGEST=//p' "${STATE_FILE}" | /usr/bin/tail -n 1)"
+  previous_web_digest="$(/usr/bin/sed -n 's/^PREVIOUS_WEB_IMAGE_DIGEST=//p' "${STATE_FILE}" | /usr/bin/tail -n 1)"
   current_runtime_digest="$(/usr/bin/sed -n 's/^RUNTIME_CONFIG_DIGEST=//p' "${STATE_FILE}" | /usr/bin/tail -n 1)"
   previous_runtime_digest="$(/usr/bin/sed -n 's/^PREVIOUS_RUNTIME_CONFIG_DIGEST=//p' "${STATE_FILE}" | /usr/bin/tail -n 1)"
   if [[ ! "${current_sha}" =~ ^[0-9a-f]{40}$ ]] \
     || [[ ! "${previous_sha}" =~ ^[0-9a-f]{40}$ ]] \
+    || [[ ! "${current_api_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || [[ ! "${previous_api_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || [[ ! "${current_web_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || [[ ! "${previous_web_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] \
     || [[ ! "${current_runtime_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] \
     || [[ ! "${previous_runtime_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
   then
@@ -144,8 +168,8 @@ if [[ "${CANDIDATE_RUNTIME_DIGEST}" != "${ZERO_DIGEST}" ]]; then
   fi
 fi
 
-API_IMAGE="ghcr.io/${REGISTRY_OWNER}/homeops-api:${COMMIT_SHA}"
-WEB_IMAGE="ghcr.io/${REGISTRY_OWNER}/homeops-web:${COMMIT_SHA}"
+API_IMAGE="ghcr.io/${REGISTRY_OWNER}/homeops-api@${CANDIDATE_API_DIGEST}"
+WEB_IMAGE="ghcr.io/${REGISTRY_OWNER}/homeops-web@${CANDIDATE_WEB_DIGEST}"
 
 compose() {
   HOMEOPS_API_IMAGE="${API_IMAGE}" \
@@ -155,6 +179,17 @@ compose() {
       --env-file "${ENV_FILE}" \
       --file "${COMPOSE_FILE}" \
       "$@"
+}
+
+validate_image_revision() {
+  local expected_revision="$1"
+  local image="$2"
+  local actual_revision
+
+  actual_revision="$("${DOCKER_BIN}" image inspect \
+    --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+    "${image}")" || return 1
+  [[ "${actual_revision}" == "${expected_revision}" ]]
 }
 
 wait_for_health() {
@@ -221,11 +256,14 @@ public_smoke() {
 }
 
 rollback_previous_application() {
-  if [[ "${current_sha}" == "${ZERO_SHA}" ]]; then
+  if [[ "${current_sha}" == "${ZERO_SHA}" ]] \
+    || [[ "${current_api_digest}" == "${ZERO_DIGEST}" ]] \
+    || [[ "${current_web_digest}" == "${ZERO_DIGEST}" ]]
+  then
     return 1
   fi
-  API_IMAGE="ghcr.io/${REGISTRY_OWNER}/homeops-api:${current_sha}"
-  WEB_IMAGE="ghcr.io/${REGISTRY_OWNER}/homeops-web:${current_sha}"
+  API_IMAGE="ghcr.io/${REGISTRY_OWNER}/homeops-api@${current_api_digest}"
+  WEB_IMAGE="ghcr.io/${REGISTRY_OWNER}/homeops-web@${current_web_digest}"
   if [[ "${current_runtime_digest}" != "${ZERO_DIGEST}" ]]; then
     rollback_compose="${RUNTIME_CONFIG_RELEASES}/${current_runtime_digest#sha256:}/compose.yaml"
     if [[ ! -f "${rollback_compose}" || -L "${rollback_compose}" ]]; then
@@ -234,6 +272,9 @@ rollback_previous_application() {
     COMPOSE_FILE="${rollback_compose}"
   fi
   compose config --quiet \
+    && compose pull api web \
+    && validate_image_revision "${current_sha}" "${API_IMAGE}" \
+    && validate_image_revision "${current_sha}" "${WEB_IMAGE}" \
     && compose up -d --remove-orphans api web \
     && wait_for_health \
     && public_smoke
@@ -241,6 +282,11 @@ rollback_previous_application() {
 
 compose config --quiet
 compose pull api web migration
+if ! validate_image_revision "${COMMIT_SHA}" "${API_IMAGE}" \
+  || ! validate_image_revision "${COMMIT_SHA}" "${WEB_IMAGE}"
+then
+  fail "candidate application image revision is invalid"
+fi
 compose up -d db
 compose --profile operations run --rm migration
 compose up -d --remove-orphans api web
@@ -268,8 +314,12 @@ cleanup_transaction_files() {
 }
 trap cleanup_transaction_files EXIT INT TERM
 {
+  printf 'API_IMAGE_DIGEST=%s\n' "${CANDIDATE_API_DIGEST}"
   printf 'CURRENT_SHA=%s\n' "${COMMIT_SHA}"
+  printf 'WEB_IMAGE_DIGEST=%s\n' "${CANDIDATE_WEB_DIGEST}"
+  printf 'PREVIOUS_API_IMAGE_DIGEST=%s\n' "${current_api_digest}"
   printf 'PREVIOUS_SHA=%s\n' "${current_sha}"
+  printf 'PREVIOUS_WEB_IMAGE_DIGEST=%s\n' "${current_web_digest}"
   printf 'RUNTIME_CONFIG_DIGEST=%s\n' "${CANDIDATE_RUNTIME_DIGEST}"
   printf 'PREVIOUS_RUNTIME_CONFIG_DIGEST=%s\n' "${current_runtime_digest}"
 } >"${state_temp}"

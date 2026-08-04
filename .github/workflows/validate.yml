@@ -87,6 +87,9 @@ jobs:
       - name: Test path classifier
         if: needs.changes.outputs.infrastructure == 'true'
         run: ./scripts/test-classify-ci-paths.sh
+      - name: Test deployment contract
+        if: needs.changes.outputs.infrastructure == 'true'
+        run: ./scripts/test-deploy-contract.sh
       - name: Render Compose definitions
         if: needs.changes.outputs.infrastructure == 'true'
         run: |

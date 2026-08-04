@@ -13,7 +13,7 @@ This runbook describes contracts and checks. It is not authorization to change a
 | G4 initial migration | Empty dedicated DB migration and JPA validation | isolated PostgreSQL 18.4 initial migration, V1-to-V2 upgrade, and JPA validation passed |
 | G5 Agent | mTLS delivery, actual Mac metrics, Docker socket, spool recovery | not executed |
 | G6 tailnet/PWA | Serve identity, iPhone install, background recovery, no public access | not executed |
-| G7 production | exact-SHA deploy, health, tailnet smoke, previous rollback | not authorized or executed |
+| G7 production | immutable-digest deploy, SHA identity validation, health, tailnet smoke, previous rollback | not authorized or executed |
 
 HomeOps intentionally omits the Master Playbook's recurring/offsite backup, retention, and restore gates for its own PostgreSQL. This is an explicit durability tradeoff, not a successful backup state. A destructive migration still requires a one-time logical snapshot or an explicit reset decision.
 
@@ -35,7 +35,7 @@ The GitHub workflow performs:
 
 1. reusable full validation on `main`;
 2. ARM64 API, Web, and runtime-config image publication;
-3. exact commit SHA tags and runtime-config digest capture;
+3. exact commit SHA plus immutable API, Web, and runtime-config digest capture;
 4. tailnet connection using an OIDC OAuth client;
 5. restricted SSH invocation with the GHCR token on standard input;
 6. runtime release extraction and validation;
@@ -52,10 +52,10 @@ The runtime-config image is rebuilt on every release. This costs a small extra b
 
 - `runtime-config/pending` identifies an incomplete candidate transaction.
 - `runtime-config/current` identifies the runtime configuration associated with the accepted deployment state.
-- `deployment.state` contains only current/previous application SHA and runtime-config digest.
+- `deployment.state` contains current/previous application SHA, API digest, Web digest, and runtime-config digest.
 - Lock files contain no credentials.
 
-If `pending` remains, do not delete it automatically. Inspect the deployment log, `deployment.state`, both symlink targets, the exact candidate release, current container image tags, and database migration state. Decide whether to resume, return to the current release, or repair a partial state. Broad cleanup and `docker system prune` are not recovery steps.
+If `pending` remains, do not delete it automatically. Inspect the deployment log, `deployment.state`, both symlink targets, the exact candidate release, current container image digests and revision labels, and database migration state. Decide whether to resume, return to the current release, or repair a partial state. Broad cleanup and `docker system prune` are not recovery steps.
 
 ## Failure handling
 
@@ -65,7 +65,7 @@ If `pending` remains, do not delete it automatically. Inspect the deployment log
 | runtime image identity/shape mismatch | bootstrap stops | verify digest, GHCR package, and immutable release directory |
 | lock unavailable | exits without overlap | find the active exact operation; do not bypass the lock |
 | migration failure | cutover stops | inspect Flyway and DB; prefer a forward fix |
-| API/Web health failure | previous exact SHA/config attempted | verify rollback health and keep pending evidence |
+| API/Web health failure | previous digest-pinned images and runtime config attempted | verify rollback health and keep pending evidence |
 | tailnet smoke failure | workflow fails after local health | separate Serve/ACL/identity from application health |
 | Agent delivery failure | retryable pending delivery failure preserves FIFO and suppresses newer collection; a newly collected snapshot is queued when its delivery fails | verify API, mTLS, spool capacity, and clock without deleting spool files |
 | snapshot permanently rejected | consecutive permanent rejects are renamed to hidden `.rejected-*.json` evidence files in the same FIFO drain; fresh collection resumes after no retryable pending item remains | inspect only metadata and safe error status; rejected evidence still counts toward bounded spool capacity, so decide exact retention manually |
@@ -76,7 +76,7 @@ Because Flyway may already have changed the database, an image rollback is safe 
 ## Routine read-only checks
 
 - API and Web container health
-- current image SHA pair and runtime-config digest
+- current application SHA plus API, Web, and runtime-config digests
 - Agent last captured/received time and version
 - spool file count without reading payloads
 - PostgreSQL volume size and host disk trend
@@ -94,7 +94,7 @@ Keep Uptime Kuma as the independent HTTP availability source and retain its curr
 
 There is no automatic HomeOps database backup. Loss of the PostgreSQL volume loses host metric history, sessions, incidents, deployment/backup metadata, notifications, audit events, and database settings. The service can be rebuilt from:
 
-- the public repository and exact image SHAs;
+- the public repository and exact immutable image digests;
 - the private `.env` and TLS material;
 - the Agent binary/configuration and LaunchAgent definition;
 - the stable bootstrap and deployment state.

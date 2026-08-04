@@ -33,6 +33,8 @@ jobs:
       packages: write
     outputs:
       registry_owner: ${{ steps.names.outputs.owner }}
+      api_digest: ${{ steps.publish-api.outputs.digest }}
+      web_digest: ${{ steps.publish-web.outputs.digest }}
       runtime_config_digest: ${{ steps.publish-runtime-config.outputs.digest }}
 
     steps:
@@ -177,19 +179,31 @@ jobs:
           DEPLOY_USER: ${{ vars.HOMEOPS_DEPLOY_USER }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REGISTRY_OWNER: ${{ needs.publish.outputs.registry_owner }}
+          API_IMAGE_DIGEST: ${{ needs.publish.outputs.api_digest }}
+          WEB_IMAGE_DIGEST: ${{ needs.publish.outputs.web_digest }}
           RUNTIME_CONFIG_DIGEST: ${{ needs.publish.outputs.runtime_config_digest }}
         run: |
           set -Eeuo pipefail
           if [[ ! "${DEPLOY_HOST}" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] \
             || [[ ! "${DEPLOY_USER}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
+            || [[ ! "${API_IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || [[ ! "${WEB_IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] \
             || [[ ! "${RUNTIME_CONFIG_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] \
             || [[ ! "${GITHUB_ACTOR}" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?$ ]]
           then
             printf 'Deployment input has an unexpected format\n' >&2
             exit 64
           fi
+          zero_digest="sha256:$(printf '0%.0s' {1..64})"
+          if [[ "${API_IMAGE_DIGEST}" == "${zero_digest}" ]] \
+            || [[ "${WEB_IMAGE_DIGEST}" == "${zero_digest}" ]] \
+            || [[ "${RUNTIME_CONFIG_DIGEST}" == "${zero_digest}" ]]
+          then
+            printf 'Deployment digests must be non-zero\n' >&2
+            exit 64
+          fi
           registry_user="$(printf '%s' "${GITHUB_ACTOR}" | tr '[:upper:]' '[:lower:]')"
-          deploy_command="deploy-homeops-v1 ${GITHUB_SHA} ${RUNTIME_CONFIG_DIGEST} ${REGISTRY_OWNER} ${registry_user}"
+          deploy_command="deploy-homeops-v2 ${GITHUB_SHA} ${API_IMAGE_DIGEST} ${WEB_IMAGE_DIGEST} ${RUNTIME_CONFIG_DIGEST} ${REGISTRY_OWNER} ${registry_user}"
           printf '%s' "${GHCR_TOKEN}" \
             | ssh \
                 -F /dev/null \

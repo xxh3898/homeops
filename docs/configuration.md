@@ -14,8 +14,8 @@ Every secret and host-specific value stays outside Git. Example values use reser
 | `HOMEOPS_WEB_BIND` | production | no | Loopback Web host binding |
 | `HOMEOPS_AGENT_BIND` | production | no | Loopback mTLS Agent binding |
 | `HOMEOPS_TLS_DIR` | production | sensitive path | Directory containing server certificate, key, and Agent CA certificate |
-| `HOMEOPS_API_IMAGE` | manual runs | no | Exact-SHA API image reference |
-| `HOMEOPS_WEB_IMAGE` | manual runs | no | Exact-SHA Web image reference |
+| `HOMEOPS_API_IMAGE` | manual runs | no | Immutable API image digest reference; the image revision label must match the release SHA |
+| `HOMEOPS_WEB_IMAGE` | manual runs | no | Immutable Web image digest reference; the image revision label must match the release SHA |
 | `HOMEOPS_DB_POOL_SIZE` | no | no | Hikari maximum pool size; default `5` |
 | `HOMEOPS_DB_MIN_IDLE` | no | no | Hikari minimum idle; default `1` |
 | `HOMEOPS_DB_MAX_CONNECTIONS` | no | no | PostgreSQL connection ceiling; default `20` |
