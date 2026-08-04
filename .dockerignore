@@ -1,0 +1,14 @@
+.git
+.github
+.idea
+.vscode
+**/.DS_Store
+**/.gradle
+**/build
+**/node_modules
+**/dist
+**/coverage
+**/.env*
+certs
+spool
+
