@@ -1,0 +1,184 @@
+#!/bin/bash
+
+set -Eeuo pipefail
+
+readonly DOCKER_BIN=/usr/local/bin/docker
+readonly LOCKF_BIN=/usr/bin/lockf
+readonly APP_DIR=/Users/REPLACE_ME/Server/apps/homeops
+readonly RUNTIME_CONFIG_REPOSITORY=ghcr.io/REPLACE_ME/homeops-runtime-config
+readonly RUNTIME_CONFIG_ROOT="${APP_DIR}/runtime-config"
+readonly RUNTIME_CONFIG_RELEASES="${RUNTIME_CONFIG_ROOT}/releases"
+readonly RUNTIME_CONFIG_PENDING="${RUNTIME_CONFIG_ROOT}/pending"
+readonly BOOTSTRAP_LOCK="${APP_DIR}/.homeops-bootstrap.lock"
+
+fail() {
+  printf 'HomeOps deploy bootstrap failed: %s\n' "$1" >&2
+  exit 1
+}
+
+validate_release_shape() {
+  local release_dir="$1"
+  local entry_count
+
+  if [[ ! -d "${release_dir}" || -L "${release_dir}" ]] \
+    || [[ ! -f "${release_dir}/compose.yaml" || -L "${release_dir}/compose.yaml" ]] \
+    || [[ ! -d "${release_dir}/scripts" || -L "${release_dir}/scripts" ]] \
+    || [[ ! -f "${release_dir}/scripts/deploy-homeops.sh" || -L "${release_dir}/scripts/deploy-homeops.sh" ]]
+  then
+    fail "runtime config release shape is invalid"
+  fi
+
+  if [[ -n "$(/usr/bin/find "${release_dir}" -type l -print -quit)" ]]; then
+    fail "runtime config release must not contain symbolic links"
+  fi
+  entry_count="$(/usr/bin/find "${release_dir}" -mindepth 1 -print | /usr/bin/wc -l | /usr/bin/tr -d '[:space:]')"
+  if [[ "${entry_count}" != 3 ]]; then
+    fail "runtime config release contains unexpected entries"
+  fi
+}
+
+validate_release_entry() {
+  local path="$1"
+  local expected_mode="$2"
+  local expected_owner
+  local actual_mode
+  local actual_owner
+
+  expected_owner="$(/usr/bin/id -un)"
+  actual_owner="$(/usr/bin/stat -f '%Su' "${path}")"
+  actual_mode="$(/usr/bin/stat -f '%OLp' "${path}")"
+  if [[ "${actual_owner}" != "${expected_owner}" ]] \
+    || [[ "${actual_mode}" != "${expected_mode}" ]]
+  then
+    fail "runtime config release owner or mode is invalid"
+  fi
+}
+
+validate_release_metadata() {
+  local release_dir="$1"
+
+  validate_release_entry "${release_dir}" 700
+  validate_release_entry "${release_dir}/compose.yaml" 600
+  validate_release_entry "${release_dir}/scripts" 700
+  validate_release_entry "${release_dir}/scripts/deploy-homeops.sh" 700
+}
+
+if [[ ! -x "${DOCKER_BIN}" ]] || [[ ! -x "${LOCKF_BIN}" ]]; then
+  fail "required Docker or lockf executable is unavailable"
+fi
+if [[ -L "${BOOTSTRAP_LOCK}" ]] \
+  || { [[ -e "${BOOTSTRAP_LOCK}" ]] && [[ ! -f "${BOOTSTRAP_LOCK}" ]]; }
+then
+  fail "bootstrap lock must be a regular non-symlink file"
+fi
+
+original_command="${SSH_ORIGINAL_COMMAND:-}"
+if [[ ! "${original_command}" =~ ^deploy-homeops-v1[[:space:]]([0-9a-f]{40})[[:space:]](sha256:[0-9a-f]{64})[[:space:]]([a-z0-9][a-z0-9-]{0,38})[[:space:]]([a-z0-9][a-z0-9-]{0,38}(\[bot\])?)$ ]]; then
+  fail "only the strictly formatted HomeOps deployment command is allowed"
+fi
+readonly COMMIT_SHA="${BASH_REMATCH[1]}"
+readonly RUNTIME_DIGEST="${BASH_REMATCH[2]}"
+readonly REGISTRY_OWNER="${BASH_REMATCH[3]}"
+readonly REGISTRY_USER="${BASH_REMATCH[4]}"
+
+umask 077
+exec 9>>"${BOOTSTRAP_LOCK}"
+/bin/chmod 600 "${BOOTSTRAP_LOCK}"
+if "${LOCKF_BIN}" -s -t 0 9; then
+  :
+else
+  status="$?"
+  if [[ "${status}" -eq 75 ]]; then
+    printf 'Another HomeOps bootstrap is already running\n' >&2
+    exit 75
+  fi
+  fail "bootstrap lock failed"
+fi
+
+if [[ -e "${RUNTIME_CONFIG_PENDING}" || -L "${RUNTIME_CONFIG_PENDING}" ]]; then
+  fail "an incomplete runtime config transaction requires recovery"
+fi
+
+registry_token="$(/bin/cat)"
+if [[ -z "${registry_token}" ]]; then
+  fail "GHCR token must not be empty"
+fi
+
+docker_config_dir="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/homeops-docker.XXXXXX")"
+release_temp=""
+config_container_id=""
+logged_in=false
+
+cleanup() {
+  registry_token=""
+  if [[ -n "${config_container_id}" ]]; then
+    "${DOCKER_BIN}" rm "${config_container_id}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${release_temp}" && -d "${release_temp}" ]] \
+    && [[ "$(/usr/bin/basename "${release_temp}")" == .tmp.* ]]
+  then
+    /bin/rm -rf -- "${release_temp}"
+  fi
+  if [[ "${logged_in}" == true ]]; then
+    "${DOCKER_BIN}" --config "${docker_config_dir}" logout ghcr.io >/dev/null 2>&1 || true
+  fi
+  if [[ -d "${docker_config_dir}" ]] \
+    && [[ "$(/usr/bin/basename "${docker_config_dir}")" == homeops-docker.* ]]
+  then
+    /bin/rm -rf -- "${docker_config_dir}"
+  fi
+}
+trap cleanup EXIT INT TERM
+
+printf '%s' "${registry_token}" \
+  | "${DOCKER_BIN}" --config "${docker_config_dir}" login ghcr.io \
+      --username "${REGISTRY_USER}" \
+      --password-stdin \
+      >/dev/null
+registry_token=""
+logged_in=true
+
+runtime_image="${RUNTIME_CONFIG_REPOSITORY}@${RUNTIME_DIGEST}"
+"${DOCKER_BIN}" --config "${docker_config_dir}" pull "${runtime_image}" >/dev/null
+actual_revision="$("${DOCKER_BIN}" image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${runtime_image}")"
+actual_project="$("${DOCKER_BIN}" image inspect --format '{{ index .Config.Labels "dev.homeops.runtime-config.project" }}' "${runtime_image}")"
+if [[ "${actual_revision}" != "${COMMIT_SHA}" ]] || [[ "${actual_project}" != homeops ]]; then
+  fail "runtime config image identity is invalid"
+fi
+
+/bin/mkdir -p "${RUNTIME_CONFIG_RELEASES}"
+candidate_release="${RUNTIME_CONFIG_RELEASES}/${RUNTIME_DIGEST#sha256:}"
+release_temp="$(/usr/bin/mktemp -d "${RUNTIME_CONFIG_RELEASES}/.tmp.XXXXXX")"
+config_container_id="$("${DOCKER_BIN}" create "${runtime_image}")"
+"${DOCKER_BIN}" cp "${config_container_id}:/runtime/." "${release_temp}"
+"${DOCKER_BIN}" rm "${config_container_id}" >/dev/null
+config_container_id=""
+validate_release_shape "${release_temp}"
+/bin/chmod 700 \
+  "${release_temp}" \
+  "${release_temp}/scripts" \
+  "${release_temp}/scripts/deploy-homeops.sh"
+/bin/chmod 600 "${release_temp}/compose.yaml"
+/bin/bash -n "${release_temp}/scripts/deploy-homeops.sh"
+validate_release_metadata "${release_temp}"
+
+if [[ -e "${candidate_release}" || -L "${candidate_release}" ]]; then
+  validate_release_shape "${candidate_release}"
+  validate_release_metadata "${candidate_release}"
+  if ! /usr/bin/diff -qr "${release_temp}" "${candidate_release}" >/dev/null; then
+    fail "existing runtime config release does not match its image digest"
+  fi
+else
+  /bin/mv -- "${release_temp}" "${candidate_release}"
+  release_temp=""
+fi
+
+/bin/ln -s "releases/${RUNTIME_DIGEST#sha256:}" "${RUNTIME_CONFIG_PENDING}"
+
+HOMEOPS_APP_DIR="${APP_DIR}" \
+HOMEOPS_RUNTIME_DIR="${candidate_release}" \
+HOMEOPS_RUNTIME_CONFIG_DIGEST="${RUNTIME_DIGEST}" \
+DOCKER_CONFIG="${docker_config_dir}" \
+  "${candidate_release}/scripts/deploy-homeops.sh" \
+    "${COMMIT_SHA}" \
+    "${REGISTRY_OWNER}"

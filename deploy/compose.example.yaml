@@ -1,0 +1,160 @@
+name: homeops
+
+services:
+  db:
+    image: postgres:18.4-alpine3.24
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - max_connections=${HOMEOPS_DB_MAX_CONNECTIONS:-20}
+      - -c
+      - shared_buffers=${HOMEOPS_DB_SHARED_BUFFERS:-128MB}
+    mem_limit: ${HOMEOPS_DB_MEMORY_LIMIT:-512m}
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_DB: ${HOMEOPS_DB_NAME:?HOMEOPS_DB_NAME must be set}
+      POSTGRES_USER: ${HOMEOPS_DB_USER:?HOMEOPS_DB_USER must be set}
+      POSTGRES_PASSWORD: ${HOMEOPS_DB_PASSWORD:?HOMEOPS_DB_PASSWORD must be set}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks:
+      - application
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  api:
+    image: ${HOMEOPS_API_IMAGE:?HOMEOPS_API_IMAGE must be set}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    mem_limit: ${HOMEOPS_API_MEMORY_LIMIT:-640m}
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=96m,mode=1777
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${HOMEOPS_DB_NAME:?HOMEOPS_DB_NAME must be set}
+      SPRING_DATASOURCE_USERNAME: ${HOMEOPS_DB_USER:?HOMEOPS_DB_USER must be set}
+      SPRING_DATASOURCE_PASSWORD: ${HOMEOPS_DB_PASSWORD:?HOMEOPS_DB_PASSWORD must be set}
+      JAVA_TOOL_OPTIONS: ${HOMEOPS_JAVA_TOOL_OPTIONS:--Xms128m -Xmx384m}
+      HOMEOPS_ALLOWED_USERS: ${HOMEOPS_ALLOWED_USERS:?HOMEOPS_ALLOWED_USERS must be set}
+      HOMEOPS_AGENT_ID: ${HOMEOPS_AGENT_ID:?HOMEOPS_AGENT_ID must be set}
+      HOMEOPS_FLYWAY_ENABLED: "false"
+      HOMEOPS_SESSION_COOKIE_SECURE: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1:8080/actuator/health/readiness | grep -q '"status":"UP"'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks:
+      - application
+    labels:
+      homeops.managed: "false"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  migration:
+    profiles:
+      - operations
+    image: ${HOMEOPS_API_IMAGE:?HOMEOPS_API_IMAGE must be set}
+    restart: "no"
+    read_only: true
+    mem_limit: 512m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    entrypoint:
+      - java
+      - -Dloader.main=dev.homeops.ops.MigrationMain
+      - -cp
+      - /app/homeops.jar
+      - org.springframework.boot.loader.launch.PropertiesLauncher
+    environment:
+      JAVA_TOOL_OPTIONS: -Xms64m -Xmx256m
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${HOMEOPS_DB_NAME:?HOMEOPS_DB_NAME must be set}
+      SPRING_DATASOURCE_USERNAME: ${HOMEOPS_DB_USER:?HOMEOPS_DB_USER must be set}
+      SPRING_DATASOURCE_PASSWORD: ${HOMEOPS_DB_PASSWORD:?HOMEOPS_DB_PASSWORD must be set}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - application
+
+  web:
+    image: ${HOMEOPS_WEB_IMAGE:?HOMEOPS_WEB_IMAGE must be set}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    mem_limit: ${HOMEOPS_WEB_MEMORY_LIMIT:-64m}
+    pids_limit: 100
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /var/cache/nginx:size=32m,mode=0755
+      - /var/run:size=4m,mode=0755
+      - /tmp:size=16m,mode=1777
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - ${HOMEOPS_WEB_BIND:?HOMEOPS_WEB_BIND must be set}:8080
+      - ${HOMEOPS_AGENT_BIND:?HOMEOPS_AGENT_BIND must be set}:8443
+    volumes:
+      - ${HOMEOPS_TLS_DIR:?HOMEOPS_TLS_DIR must be set}:/run/homeops/tls:ro
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:8080/actuator/health/readiness
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - application
+      - ingress
+    labels:
+      homeops.managed: "false"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  postgres-data:
+
+networks:
+  application:
+    internal: true
+  ingress:
