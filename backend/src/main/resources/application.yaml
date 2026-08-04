@@ -1,0 +1,57 @@
+spring:
+  application:
+    name: homeops
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://db:5432/homeops}
+    username: ${SPRING_DATASOURCE_USERNAME:homeops}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${HOMEOPS_DB_POOL_SIZE:5}
+      minimum-idle: ${HOMEOPS_DB_MIN_IDLE:1}
+  flyway:
+    enabled: ${HOMEOPS_FLYWAY_ENABLED:true}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  session:
+    timeout: 12h
+    jdbc:
+      initialize-schema: never
+      table-name: SPRING_SESSION
+
+server:
+  forward-headers-strategy: none
+  shutdown: graceful
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        secure: ${HOMEOPS_SESSION_COOKIE_SECURE:true}
+        same-site: strict
+      timeout: 12h
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+
+homeops:
+  security:
+    mode: ${HOMEOPS_AUTH_MODE:TAILSCALE}
+    allowed-users: ${HOMEOPS_ALLOWED_USERS:}
+  agent:
+    expected-id: ${HOMEOPS_AGENT_ID:local-mac}
+    stale-after: ${HOMEOPS_AGENT_STALE_AFTER:30s}
+    maximum-snapshot-age: ${HOMEOPS_AGENT_MAXIMUM_SNAPSHOT_AGE:5m}
+    allowed-future-skew: ${HOMEOPS_AGENT_ALLOWED_FUTURE_SKEW:1m}
+    maximum-containers: ${HOMEOPS_AGENT_MAXIMUM_CONTAINERS:128}
+  metrics:
+    retention: ${HOMEOPS_METRIC_RETENTION:30d}
+    cleanup-cron: ${HOMEOPS_METRIC_CLEANUP_CRON:0 17 3 * * *}
