@@ -20,11 +20,28 @@ import (
 type App struct {
 	config    config.Config
 	version   string
-	host      *collector.HostCollector
-	docker    *docker.Client
-	transport *transport.Client
-	spool     *spool.Spool
+	host      hostCollector
+	docker    dockerCollector
+	transport snapshotTransport
+	spool     snapshotSpool
 	logger    *slog.Logger
+}
+
+type hostCollector interface {
+	Collect(context.Context) (snapshot.Host, error)
+}
+
+type dockerCollector interface {
+	Containers(context.Context, int) ([]snapshot.Container, error)
+}
+
+type snapshotTransport interface {
+	Send(context.Context, []byte) error
+}
+
+type snapshotSpool interface {
+	Drain(func([]byte) error) error
+	Store(string, []byte) error
 }
 
 const collectionTimeout = 20 * time.Second
@@ -84,6 +101,7 @@ func (app *App) collectAndSend(ctx context.Context) error {
 		return app.transport.Send(ctx, payload)
 	}); err != nil {
 		app.logger.Info("pending snapshots remain queued")
+		return fmt.Errorf("drain pending snapshots: %w", err)
 	}
 
 	collectionContext, cancelCollection := context.WithTimeout(
