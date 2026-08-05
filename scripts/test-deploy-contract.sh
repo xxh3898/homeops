@@ -80,6 +80,9 @@ assert_absent "${WORKER}" '^https://[A-Za-z0-9][A-Za-z0-9.-]{0,252}$'
 
 assert_contains "${ORIGIN_VALIDATOR}" '^https://([A-Za-z0-9.-]+)(:([0-9]+))?$'
 assert_contains "${ORIGIN_VALIDATOR}" '10#${PORT} > 65535'
+assert_contains "${RUNTIME_CONFIG_DOCKERFILE}" 'COPY deploy/scripts/deploy-homeops.sh ./scripts/deploy-homeops.sh'
+assert_contains "${RUNTIME_CONFIG_DOCKERFILE}" 'COPY deploy/scripts/validate-https-origin.sh ./scripts/validate-https-origin.sh'
+assert_absent "${RUNTIME_CONFIG_DOCKERFILE}" 'COPY deploy/scripts ./scripts'
 assert_contains "${RUNTIME_CONFIG_DOCKERFILE}" './scripts/validate-https-origin.sh'
 
 assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_API_IMAGE=ghcr.io/example/homeops-api@sha256:'
