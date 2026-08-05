@@ -119,4 +119,16 @@ class TailscaleIdentityFilterTest {
         assertThat(SecurityContextHolder.getContext().getAuthentication())
                 .isNull();
     }
+
+    @Test
+    void should_skipBrowserAuthentication_when_requestTargetsIngestionEndpoint()
+            throws Exception {
+        var properties = new HomeOpsSecurityProperties(AuthenticationMode.DEV, List.of());
+        var filter = new TailscaleIdentityFilter(properties, new HttpSessionSecurityContextRepository());
+        var request = new MockHttpServletRequest("POST", "/api/v1/internal/ingestion/deployments");
+
+        filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
 }
