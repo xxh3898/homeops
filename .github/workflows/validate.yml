@@ -93,6 +93,9 @@ jobs:
       - name: Test HTTPS origin contract
         if: needs.changes.outputs.infrastructure == 'true'
         run: ./scripts/test-https-origin.sh
+      - name: Test Nginx Web-to-API readiness
+        if: needs.changes.outputs.infrastructure == 'true'
+        run: ./scripts/test-nginx-readiness.sh
       - name: Test deployment runtime state transitions
         if: needs.changes.outputs.infrastructure == 'true'
         run: ./scripts/test-deploy-runtime.sh
@@ -101,6 +104,7 @@ jobs:
         run: |
           docker compose --env-file .env.dev.example --file compose.dev.yaml config --quiet
           docker compose --file compose.test.yaml config --quiet
+          HOMEOPS_READINESS_DB_PASSWORD=readiness-render-only HOMEOPS_READINESS_TLS_DIR=/tmp/homeops-readiness-tls docker compose --file compose.readiness-test.yaml config --quiet
           docker compose --env-file deploy/env.example --file deploy/compose.example.yaml config --quiet
       - name: Build runtime config image
         if: needs.changes.outputs.infrastructure == 'true'
