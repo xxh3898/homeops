@@ -8,6 +8,7 @@ readonly DEPLOY_WORKFLOW="${REPOSITORY_ROOT}/.github/workflows/deploy.yml"
 readonly BOOTSTRAP="${REPOSITORY_ROOT}/deploy/bootstrap/deploy-homeops-ci.sh.example"
 readonly WORKER="${REPOSITORY_ROOT}/deploy/scripts/deploy-homeops.sh"
 readonly ORIGIN_VALIDATOR="${REPOSITORY_ROOT}/deploy/scripts/validate-https-origin.sh"
+readonly EVENT_REPORTER="${REPOSITORY_ROOT}/deploy/scripts/report-homeops-event.py"
 readonly RUNTIME_CONFIG_DOCKERFILE="${REPOSITORY_ROOT}/runtime-config.Dockerfile"
 readonly ENV_EXAMPLE="${REPOSITORY_ROOT}/deploy/env.example"
 readonly AGENT_DOCKERFILE="${REPOSITORY_ROOT}/agent-artifact.Dockerfile"
@@ -51,7 +52,8 @@ assert_contains "${BOOTSTRAP}" 'HOMEOPS_WEB_IMAGE_DIGEST="${WEB_DIGEST}"'
 assert_contains "${BOOTSTRAP}" 'HOMEOPS_RUNTIME_CONFIG_DIGEST="${RUNTIME_DIGEST}"'
 assert_contains "${BOOTSTRAP}" 'deployment digests must be non-zero'
 assert_contains "${BOOTSTRAP}" 'validate-https-origin.sh'
-assert_contains "${BOOTSTRAP}" 'if [[ "${entry_count}" != 4 ]]'
+assert_contains "${BOOTSTRAP}" 'if [[ "${entry_count}" != 5 ]]'
+assert_contains "${BOOTSTRAP}" 'report-homeops-event.py'
 assert_contains "${BOOTSTRAP}" 'fail "runtime config script syntax is invalid"'
 assert_contains "${BOOTSTRAP}" '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}'
 assert_contains "${BOOTSTRAP}" '"${DOCKER_BIN}" compose version >/dev/null 2>&1'
@@ -82,8 +84,11 @@ assert_contains "${ORIGIN_VALIDATOR}" '^https://([A-Za-z0-9.-]+)(:([0-9]+))?$'
 assert_contains "${ORIGIN_VALIDATOR}" '10#${PORT} > 65535'
 assert_contains "${RUNTIME_CONFIG_DOCKERFILE}" 'COPY deploy/scripts/deploy-homeops.sh ./scripts/deploy-homeops.sh'
 assert_contains "${RUNTIME_CONFIG_DOCKERFILE}" 'COPY deploy/scripts/validate-https-origin.sh ./scripts/validate-https-origin.sh'
+assert_contains "${RUNTIME_CONFIG_DOCKERFILE}" 'COPY deploy/scripts/report-homeops-event.py ./scripts/report-homeops-event.py'
 assert_absent "${RUNTIME_CONFIG_DOCKERFILE}" 'COPY deploy/scripts ./scripts'
 assert_contains "${RUNTIME_CONFIG_DOCKERFILE}" './scripts/validate-https-origin.sh'
+assert_contains "${EVENT_REPORTER}" 'X-HomeOps-Ingestion-Signature'
+assert_contains "${EVENT_REPORTER}" 'NoRedirect()'
 
 assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_API_IMAGE=ghcr.io/example/homeops-api@sha256:'
 assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_WEB_IMAGE=ghcr.io/example/homeops-web@sha256:'

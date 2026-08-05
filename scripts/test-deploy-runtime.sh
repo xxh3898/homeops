@@ -7,6 +7,7 @@ readonly REPOSITORY_ROOT="$(cd "${SCRIPT_DIR}/.." && /bin/pwd -P)"
 readonly SOURCE_BOOTSTRAP="${REPOSITORY_ROOT}/deploy/bootstrap/deploy-homeops-ci.sh.example"
 readonly SOURCE_WORKER="${REPOSITORY_ROOT}/deploy/scripts/deploy-homeops.sh"
 readonly SOURCE_VALIDATOR="${REPOSITORY_ROOT}/deploy/scripts/validate-https-origin.sh"
+readonly SOURCE_REPORTER="${REPOSITORY_ROOT}/deploy/scripts/report-homeops-event.py"
 readonly SOURCE_COMPOSE="${REPOSITORY_ROOT}/deploy/compose.example.yaml"
 readonly SOURCE_ENV="${REPOSITORY_ROOT}/deploy/env.example"
 readonly MOCK_DOCKER="${SCRIPT_DIR}/fixtures/mock-homeops-docker.sh"
@@ -100,6 +101,7 @@ run_bootstrap() {
         FAKE_RUNTIME_COMPOSE="${SOURCE_COMPOSE}" \
         FAKE_RUNTIME_WORKER="${runtime_worker}" \
         FAKE_RUNTIME_VALIDATOR="${SOURCE_VALIDATOR}" \
+        FAKE_RUNTIME_REPORTER="${SOURCE_REPORTER}" \
         FAKE_DOCKER_LOG="${docker_log}" \
         FAKE_COMPOSE_PLUGIN="${FAKE_COMPOSE_PLUGIN_OVERRIDE:-${compose_plugin}}" \
         FAKE_CURL_LOG="${curl_log}" \
