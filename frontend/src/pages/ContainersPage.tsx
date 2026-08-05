@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Box, RefreshCw } from 'lucide-react'
-import { getContainers, isAuthorizationError } from '../api/client'
+import { getContainers, isAuthorizationError, isConnectionError } from '../api/client'
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { usePageVisible } from '../hooks/usePageVisible'
 import { Card } from '../ui/Card'
@@ -12,7 +12,7 @@ export function ContainersPage() {
   const online = useOnlineStatus()
   const query = useQuery({
     queryKey: ['containers'],
-    queryFn: getContainers,
+    queryFn: ({ signal }) => getContainers(signal),
     refetchInterval: visible ? 5_000 : false,
   })
 
@@ -38,6 +38,9 @@ export function ContainersPage() {
   }
   const inventory = query.data
   const effectivelyStale = inventory.stale || !online || query.isRefetchError
+  const staleMessage = isConnectionError(query.error)
+    ? query.error.message
+    : 'This container snapshot is stale. Do not treat displayed states as current.'
 
   return (
     <div className="space-y-3">
@@ -56,7 +59,7 @@ export function ContainersPage() {
         </p>
         {effectivelyStale && (
           <p className="mt-3 rounded-xl bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
-            This container snapshot is stale. Do not treat displayed states as current.
+            {staleMessage}
           </p>
         )}
       </Card>

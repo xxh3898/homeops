@@ -1,4 +1,5 @@
 import { useRegisterSW } from 'virtual:pwa-register/react'
+import { PwaUpdateNotice } from './PwaUpdateNotice'
 
 export function PwaUpdatePrompt() {
   const {
@@ -7,37 +8,15 @@ export function PwaUpdatePrompt() {
     updateServiceWorker,
   } = useRegisterSW()
 
-  if (!needRefresh && !offlineReady) {
-    return null
-  }
-
   return (
-    <div className="fixed inset-x-4 bottom-24 z-50 mx-auto max-w-md rounded-2xl border border-teal-300/30 bg-slate-900 p-4 shadow-2xl">
-      <p className="text-sm font-medium">
-        {needRefresh ? 'A new HomeOps version is ready.' : 'HomeOps app shell is ready for offline launch.'}
-      </p>
-      <div className="mt-3 flex justify-end gap-2">
-        <button
-          type="button"
-          className="min-h-11 rounded-xl px-4 text-sm text-slate-300"
-          onClick={() => {
-            setNeedRefresh(false)
-            setOfflineReady(false)
-          }}
-        >
-          Dismiss
-        </button>
-        {needRefresh && (
-          <button
-            type="button"
-            className="min-h-11 rounded-xl bg-teal-300 px-4 text-sm font-semibold text-slate-950"
-            onClick={() => void updateServiceWorker(true)}
-          >
-            Update
-          </button>
-        )}
-      </div>
-    </div>
+    <PwaUpdateNotice
+      needRefresh={needRefresh}
+      offlineReady={offlineReady}
+      onDismiss={() => {
+        setNeedRefresh(false)
+        setOfflineReady(false)
+      }}
+      onUpdate={() => void updateServiceWorker(true)}
+    />
   )
 }
-

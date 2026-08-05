@@ -3,6 +3,14 @@ import { ApiError } from './api/client'
 import { createHomeOpsQueryClient } from './queryClient'
 
 describe('HomeOps QueryClient', () => {
+  it('retries transient queries once after a fixed one-second delay', () => {
+    const queryClient = createHomeOpsQueryClient(vi.fn())
+    const options = queryClient.getDefaultOptions().queries
+
+    expect(options?.retry).toBeTypeOf('function')
+    expect(options?.retryDelay).toBe(1_000)
+  })
+
   it.each([401, 403])('blocks access and clears all cached data after status %s', async (status) => {
     const onAuthorizationError = vi.fn()
     const queryClient = createHomeOpsQueryClient(onAuthorizationError)

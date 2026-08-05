@@ -77,19 +77,24 @@ The read-only milestone reads only these labels:
 
 Automatic deployment is disabled unless the repository variable `MAC_MINI_DEPLOY_ENABLED` is exactly `true`.
 
-Repository or Production environment variables:
+Repository variable:
 
 - `MAC_MINI_DEPLOY_ENABLED`
+
+Production environment variables:
+
 - `HOMEOPS_DEPLOY_HOST`, a MagicDNS host name
 - `HOMEOPS_DEPLOY_USER`, the restricted SSH account
 
-Secrets:
+Production environment secrets:
 
 - `TS_OAUTH_CLIENT_ID`
 - `TS_AUDIENCE`
 - `HOME_MINI_SSH_KEY`, a HomeOps-specific CI key
 - `HOME_MINI_KNOWN_HOSTS`
 - `HOMEOPS_SMOKE_URL`, the tailnet HTTPS origin without a path; it may use the same explicit port as `smoke.origin`
+
+GitHub Actions supplies `GITHUB_TOKEN` automatically for the workflow's scoped package access. Do not create or store a separate `GITHUB_TOKEN` repository or environment secret.
 
 Use a tagged Tailscale OAuth client with the narrowest grants. Protect the Production environment. Do not use a human SSH private key in Actions.
 

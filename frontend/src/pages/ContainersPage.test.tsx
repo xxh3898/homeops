@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError } from '../api/client'
+import { ApiConnectionError, ApiError } from '../api/client'
 import { ContainersPage } from './ContainersPage'
 
 const mocks = vi.hoisted(() => ({
@@ -33,6 +33,16 @@ describe('ContainersPage', () => {
     expect(screen.getByText('inventory unavailable')).toBeInTheDocument()
   })
 
+  it('shows safe reachability guidance when no container snapshot is cached', async () => {
+    const error = new ApiConnectionError()
+    mocks.getContainers.mockRejectedValueOnce(error)
+
+    renderPage()
+
+    expect(await screen.findByText('Unable to load containers')).toBeInTheDocument()
+    expect(screen.getByText(error.message)).toBeInTheDocument()
+  })
+
   it('keeps cached inventory visible when a background refetch fails', async () => {
     mocks.getContainers
       .mockResolvedValueOnce(containerInventory())
@@ -40,6 +50,7 @@ describe('ContainersPage', () => {
     const { queryClient } = renderPage()
 
     expect(await screen.findByText('homeops-api')).toBeInTheDocument()
+    expect(mocks.getContainers).toHaveBeenCalledWith(expect.any(AbortSignal))
 
     await queryClient.refetchQueries({ queryKey: ['containers'] })
 
@@ -49,6 +60,20 @@ describe('ContainersPage', () => {
     })
     expect(screen.getByText('homeops-api')).toBeInTheDocument()
     expect(screen.getByText(/Last collected/)).toBeInTheDocument()
+    expect(screen.getAllByText('STALE')).toHaveLength(2)
+    expect(screen.queryByText('Unable to load containers')).not.toBeInTheDocument()
+  })
+
+  it('keeps cached inventory stale and shows safe guidance after a reachability failure', async () => {
+    const error = new ApiConnectionError()
+    mocks.getContainers.mockResolvedValueOnce(containerInventory()).mockRejectedValueOnce(error)
+    const { queryClient } = renderPage()
+
+    expect(await screen.findByText('homeops-api')).toBeInTheDocument()
+    await queryClient.refetchQueries({ queryKey: ['containers'] })
+
+    expect(await screen.findByText(error.message)).toBeInTheDocument()
+    expect(screen.getByText('homeops-api')).toBeInTheDocument()
     expect(screen.getAllByText('STALE')).toHaveLength(2)
     expect(screen.queryByText('Unable to load containers')).not.toBeInTheDocument()
   })

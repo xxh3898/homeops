@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Cpu, Database, HardDrive, MemoryStick, RefreshCw, Timer } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { getSystemSummary, isAuthorizationError } from '../api/client'
+import { getSystemSummary, isAuthorizationError, isConnectionError } from '../api/client'
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { usePageVisible } from '../hooks/usePageVisible'
 import { Card } from '../ui/Card'
@@ -13,7 +13,7 @@ export function OverviewPage() {
   const online = useOnlineStatus()
   const query = useQuery({
     queryKey: ['system-summary'],
-    queryFn: getSystemSummary,
+    queryFn: ({ signal }) => getSystemSummary(signal),
     refetchInterval: visible ? 5_000 : false,
   })
 
@@ -41,6 +41,9 @@ export function OverviewPage() {
 
   const summary = query.data
   const effectivelyStale = summary.stale || !online || query.isRefetchError
+  const staleMessage = isConnectionError(query.error)
+    ? query.error.message
+    : 'This snapshot is stale. Do not treat the displayed state as current.'
   const memoryPercent = summary.host
     ? percentage(summary.host.memoryUsedBytes, summary.host.memoryTotalBytes)
     : 0
@@ -70,7 +73,7 @@ export function OverviewPage() {
         </p>
         {effectivelyStale && (
           <p className="mt-3 rounded-xl bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
-            This snapshot is stale. Do not treat the displayed state as current.
+            {staleMessage}
           </p>
         )}
       </Card>

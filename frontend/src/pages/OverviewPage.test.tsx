@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError } from '../api/client'
+import { ApiConnectionError, ApiError } from '../api/client'
 import { OverviewPage } from './OverviewPage'
 
 const mocks = vi.hoisted(() => ({
@@ -33,6 +33,16 @@ describe('OverviewPage', () => {
     expect(screen.getByText('summary unavailable')).toBeInTheDocument()
   })
 
+  it('shows safe reachability guidance when no summary snapshot is cached', async () => {
+    const error = new ApiConnectionError()
+    mocks.getSystemSummary.mockRejectedValueOnce(error)
+
+    renderPage()
+
+    expect(await screen.findByText('Unable to load HomeOps')).toBeInTheDocument()
+    expect(screen.getByText(error.message)).toBeInTheDocument()
+  })
+
   it('keeps cached summary visible when a background refetch fails', async () => {
     mocks.getSystemSummary
       .mockResolvedValueOnce(systemSummary())
@@ -40,6 +50,7 @@ describe('OverviewPage', () => {
     const { queryClient } = renderPage()
 
     expect(await screen.findByText('System overview')).toBeInTheDocument()
+    expect(mocks.getSystemSummary).toHaveBeenCalledWith(expect.any(AbortSignal))
     expect(screen.getByText('12.5%')).toBeInTheDocument()
 
     await queryClient.refetchQueries({ queryKey: ['system-summary'] })
@@ -50,6 +61,20 @@ describe('OverviewPage', () => {
     })
     expect(screen.getByText('12.5%')).toBeInTheDocument()
     expect(screen.getByText(/Last collected/)).toBeInTheDocument()
+    expect(screen.getByText('STALE')).toBeInTheDocument()
+    expect(screen.queryByText('Unable to load HomeOps')).not.toBeInTheDocument()
+  })
+
+  it('keeps cached summary stale and shows safe guidance after a reachability failure', async () => {
+    const error = new ApiConnectionError()
+    mocks.getSystemSummary.mockResolvedValueOnce(systemSummary()).mockRejectedValueOnce(error)
+    const { queryClient } = renderPage()
+
+    expect(await screen.findByText('System overview')).toBeInTheDocument()
+    await queryClient.refetchQueries({ queryKey: ['system-summary'] })
+
+    expect(await screen.findByText(error.message)).toBeInTheDocument()
+    expect(screen.getByText('12.5%')).toBeInTheDocument()
     expect(screen.getByText('STALE')).toBeInTheDocument()
     expect(screen.queryByText('Unable to load HomeOps')).not.toBeInTheDocument()
   })

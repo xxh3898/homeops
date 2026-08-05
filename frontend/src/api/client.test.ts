@@ -1,8 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, getSystemSummary, isAuthorizationError, shouldRetryQuery } from './client'
+import {
+  API_REQUEST_TIMEOUT_MS,
+  ApiConnectionError,
+  ApiError,
+  getSystemSummary,
+  isAuthorizationError,
+  isConnectionError,
+  shouldRetryQuery,
+} from './client'
 
 describe('HomeOps API client', () => {
   afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
@@ -25,8 +34,85 @@ describe('HomeOps API client', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/system/summary',
-      expect.objectContaining({ cache: 'no-store', credentials: 'same-origin' }),
+      expect.objectContaining({
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal: expect.any(AbortSignal),
+      }),
     )
+  })
+
+  it('converts fetch failures to safe reachability errors', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch private host')))
+
+    await expect(getSystemSummary()).rejects.toEqual(new ApiConnectionError())
+  })
+
+  it('cleans the request deadline and caller listener after success', async () => {
+    vi.useFakeTimers()
+    const controller = new AbortController()
+    const removeEventListener = vi.spyOn(controller.signal, 'removeEventListener')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      ),
+    )
+
+    await getSystemSummary(controller.signal)
+
+    expect(vi.getTimerCount()).toBe(0)
+    expect(removeEventListener).toHaveBeenCalledWith('abort', expect.any(Function))
+  })
+
+  it('aborts and reports a safe reachability error after eight seconds', async () => {
+    vi.useFakeTimers()
+    const fetchMock = abortAwareFetch()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const request = getSystemSummary()
+    let settled = false
+    void request.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+    const expectation = expect(request).rejects.toEqual(new ApiConnectionError())
+
+    await vi.advanceTimersByTimeAsync(API_REQUEST_TIMEOUT_MS - 1)
+    expect(settled).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(1)
+    await expectation
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('preserves a caller cancellation before the request starts', async () => {
+    const fetchMock = vi.fn()
+    const controller = new AbortController()
+    const reason = new DOMException('query cancelled', 'AbortError')
+    controller.abort(reason)
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getSystemSummary(controller.signal)).rejects.toBe(reason)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('forwards an in-flight caller cancellation without misclassifying it', async () => {
+    const fetchMock = abortAwareFetch()
+    const controller = new AbortController()
+    const reason = new DOMException('query cancelled', 'AbortError')
+    vi.stubGlobal('fetch', fetchMock)
+
+    const expectation = expect(getSystemSummary(controller.signal)).rejects.toBe(reason)
+    controller.abort(reason)
+
+    await expectation
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 
   it('returns a safe authorization message without response body details', async () => {
@@ -46,10 +132,30 @@ describe('HomeOps API client', () => {
     expect(isAuthorizationError(new Error('network unavailable'))).toBe(false)
   })
 
+  it('recognizes only bounded reachability failures as connection errors', () => {
+    expect(isConnectionError(new ApiConnectionError())).toBe(true)
+    expect(isConnectionError(new ApiError(503, 'temporarily unavailable'))).toBe(false)
+    expect(isConnectionError(new Error('unrelated'))).toBe(false)
+  })
+
   it('never retries authorization errors but retains one retry for transient failures', () => {
     expect(shouldRetryQuery(0, new ApiError(401, 'access denied'))).toBe(false)
     expect(shouldRetryQuery(0, new ApiError(403, 'access denied'))).toBe(false)
     expect(shouldRetryQuery(0, new ApiError(500, 'temporarily unavailable'))).toBe(true)
+    expect(shouldRetryQuery(0, new ApiConnectionError())).toBe(true)
     expect(shouldRetryQuery(1, new Error('network unavailable'))).toBe(false)
   })
 })
+
+function abortAwareFetch() {
+  return vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal
+      if (!(signal instanceof AbortSignal)) {
+        reject(new Error('expected an AbortSignal'))
+        return
+      }
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    }),
+  )
+}

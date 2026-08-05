@@ -17,6 +17,7 @@ export function createHomeOpsQueryClient(onAuthorizationError: (error: ApiError)
     defaultOptions: {
       queries: {
         retry: shouldRetryQuery,
+        retryDelay: 1_000,
         refetchOnReconnect: true,
         refetchOnWindowFocus: true,
         staleTime: 4_000,
