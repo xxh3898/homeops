@@ -2,6 +2,7 @@ package dev.homeops;
 
 import dev.homeops.agent.config.HomeOpsAgentProperties;
 import dev.homeops.metrics.HomeOpsMetricProperties;
+import dev.homeops.ingestion.config.HomeOpsIngestionProperties;
 import dev.homeops.security.HomeOpsSecurityProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -14,6 +15,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableConfigurationProperties({
     HomeOpsAgentProperties.class,
     HomeOpsMetricProperties.class,
+    HomeOpsIngestionProperties.class,
     HomeOpsSecurityProperties.class
 })
 public class HomeOpsApplication {

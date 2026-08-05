@@ -35,6 +35,12 @@ public class SecurityConfig {
     }
 
     @Bean
+    IngestionHmacAuthenticationFilter ingestionHmacAuthenticationFilter(
+            dev.homeops.ingestion.config.HomeOpsIngestionProperties properties) {
+        return new IngestionHmacAuthenticationFilter(properties);
+    }
+
+    @Bean
     NoStoreResponseFilter noStoreResponseFilter() {
         return new NoStoreResponseFilter();
     }
@@ -45,6 +51,7 @@ public class SecurityConfig {
             SecurityContextRepository repository,
             TailscaleIdentityFilter tailscaleFilter,
             AgentProxyAuthenticationFilter agentFilter,
+            IngestionHmacAuthenticationFilter ingestionFilter,
             NoStoreResponseFilter noStoreFilter) throws Exception {
         CookieCsrfTokenRepository csrfRepository =
                 CookieCsrfTokenRepository.withHttpOnlyFalse();
@@ -60,11 +67,15 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(csrfRepository)
                         .csrfTokenRequestHandler(csrfHandler)
-                        .ignoringRequestMatchers("/api/v1/internal/agent/**"))
+                        .ignoringRequestMatchers(
+                                "/api/v1/internal/agent/**",
+                                "/api/v1/internal/ingestion/**"))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/actuator/health/**").permitAll()
                         .requestMatchers("/api/v1/internal/agent/**")
                         .hasRole("AGENT")
+                        .requestMatchers("/api/v1/internal/ingestion/**")
+                        .hasRole("INGESTION")
                         .requestMatchers(HttpMethod.GET, "/api/v1/**")
                         .hasRole("ADMIN")
                         .anyRequest().denyAll())
@@ -72,10 +83,10 @@ public class SecurityConfig {
                         .authenticationEntryPoint(
                                 new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .addFilterBefore(agentFilter, AnonymousAuthenticationFilter.class)
+                .addFilterBefore(ingestionFilter, AgentProxyAuthenticationFilter.class)
                 .addFilterBefore(tailscaleFilter, AgentProxyAuthenticationFilter.class)
                 .addFilterAfter(noStoreFilter, AgentProxyAuthenticationFilter.class);
 
         return http.build();
     }
 }
-

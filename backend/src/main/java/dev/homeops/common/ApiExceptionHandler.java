@@ -42,5 +42,12 @@ public class ApiExceptionHandler {
         detail.setTitle("Malformed request");
         return detail;
     }
-}
 
+    @ExceptionHandler({EventKeyConflictException.class, InvalidIngestionStateTransitionException.class})
+    ProblemDetail handleIngestionConflict(RuntimeException exception) {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+        detail.setType(URI.create("urn:homeops:problem:ingestion-conflict"));
+        detail.setTitle("Ingestion request conflicts with existing state");
+        return detail;
+    }
+}

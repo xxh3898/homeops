@@ -57,3 +57,7 @@ homeops:
   metrics:
     retention: ${HOMEOPS_METRIC_RETENTION:30d}
     cleanup-cron: ${HOMEOPS_METRIC_CLEANUP_CRON:0 17 3 * * *}
+  ingestion:
+    shared-secret: ${HOMEOPS_INGESTION_SHARED_SECRET:}
+    maximum-request-age: ${HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE:5m}
+    allowed-future-skew: ${HOMEOPS_INGESTION_ALLOWED_FUTURE_SKEW:1m}

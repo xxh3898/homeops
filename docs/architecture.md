@@ -4,7 +4,7 @@
 
 HomeOps is a single-administrator dashboard for an Apple Silicon Mac that runs Docker Desktop. The source can be forked and self-hosted, but the supported ingress is a private tailnet. Internet exposure, Funnel, multi-tenant isolation, and arbitrary Docker or shell input are not supported.
 
-The current milestone is deliberately read-only. It implements host and container inventory; incidents, service checks, deployment ingestion, notifications, logs, and container control remain later milestones even though their durable table shapes are reserved by the first migration.
+The current milestone is deliberately read-only for host and container operations. It implements host and container inventory plus an inactive, HMAC-authenticated deployment/backup ingestion foundation; existing service scripts are not connected yet. Incidents, service checks, notifications, logs, and container control remain later milestones even though their durable table shapes are reserved by the first migration.
 
 ## Runtime topology
 
@@ -60,7 +60,7 @@ HomeOps has a dedicated PostgreSQL instance and volume. It does not share a data
 
 The default metric policy keeps one-minute aggregates for 30 days, about 43,200 rows for one Agent, and deletes only older aggregate rows in a daily transaction. The retention value is bounded to 365 days. The schema also reserves normalized tables for monitored services, check results, incidents, deployment events, backup metadata from other projects, notification attempts, control audit events, settings, and Spring sessions. JSONB is restricted to auxiliary metadata; searchable state and identity fields remain normal columns.
 
-HomeOps does not store container logs, Docker inspect documents, `.env` content, credentials, or webhook URLs. `backup_run` describes backup results from other projects; it does not mean HomeOps automatically backs up its own database.
+HomeOps does not store container logs, Docker inspect documents, `.env` content, credentials, or webhook URLs. `backup_run` describes backup results from other projects; it does not mean HomeOps automatically backs up its own database. A trusted script can submit a deployment or backup result only after it has a bounded-time HMAC signature; event keys make retried delivery idempotent and terminal state changes are rejected.
 
 ## Uptime Kuma role
 
