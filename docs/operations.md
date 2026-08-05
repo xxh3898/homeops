@@ -104,4 +104,22 @@ Those private files need an operator-managed recovery method even though HomeOps
 
 ## Agent upgrades
 
-Agent publication and Agent installation are separate from API/Web deployment. Verify the artifact checksum, stop only the exact LaunchAgent label, replace only the exact binary, start it again, and confirm version plus a fresh snapshot. Automatic Agent self-update is intentionally excluded.
+### Current: operator-managed upgrade
+
+Agent publication and Agent installation are separate from API/Web deployment. Verify the artifact checksum, stop only the exact LaunchAgent label, replace only the exact binary, start it again, and confirm version plus a fresh snapshot. The `main` deployment workflow does not update the native Agent.
+
+### Future: opt-in automatic rollout
+
+Automatic Agent rollout is not implemented. It must be designed and validated as a separate capability because the Agent reads macOS state and the Docker socket. Do not extend `deploy-homeops-v2` with arbitrary Agent path, LaunchAgent label, action, or shell inputs.
+
+Before enabling an automatic rollout, implement and prove all of the following:
+
+1. A persistent exact-SHA Agent artifact and checksum, with a retention policy suitable for rollback.
+2. A dedicated restricted host command that accepts only the expected full SHA and verified artifact identity.
+3. A per-Agent lock, staged immutable release directory, validated file owner/mode, and atomic current/previous pointer transition.
+4. An explicit first-install policy and a rollback path that does not delete the previous known-good binary.
+5. Restart of only the configured LaunchAgent label, never a caller-supplied label or global launchd operation.
+6. Success proof from a fresh Agent snapshot whose reported version matches the requested release.
+7. A separate Agent rollout kill switch, disabled-by-default opt-in, and a staging plus rollback drill before production enablement.
+
+An API/Web deployment remains independently successful when no Agent rollout was requested. An Agent rollout failure must preserve evidence and return failure without silently claiming the new Agent version is active. See [the implementation roadmap](roadmap.md) for the implementation order.
