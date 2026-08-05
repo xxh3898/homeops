@@ -46,7 +46,7 @@ Create a private CA, a server certificate valid for `localhost` and loopback use
 
 Use different keys for Agent mTLS, human SSH, and CI deployment. Do not reuse the tailnet authentication key or a GitHub token.
 
-## 4. Install the native Agent manually
+## 4. Install the native Agent manually (current behavior)
 
 The CI validation workflow builds a macOS ARM64 Agent artifact identified by the commit SHA. Verify its SHA-256 checksum before installation. Place the binary and configuration under operator-owned, non-world-writable directories.
 
@@ -60,6 +60,21 @@ Start from `deploy/launchd/dev.homeops.agent.plist.example`, replace every place
 - the process runs as the logged-in operator without `sudo`.
 
 Lint the plist before any load. Loading the LaunchAgent, testing a natural scheduled start, and testing reboot persistence are separate acceptance gates.
+
+The `main` deployment workflow does **not** replace this Agent. It deploys only the API, Web, and runtime-config images. Keeping the Agent upgrade separate is intentional: the native process reads macOS metrics and the Docker socket, so a CI-to-host Agent replacement path needs its own constrained command, rollback, and acceptance checks.
+
+### Future opt-in Agent rollout
+
+Automatic Agent rollout is not implemented yet. When implemented, it must remain a separate opt-in deployment track and must not accept arbitrary paths, labels, actions, or shell fragments. Its minimum contract is:
+
+1. CI builds an Agent artifact identified by the exact full commit SHA and records a checksum.
+2. The Mac stages and verifies the immutable artifact before touching the active binary.
+3. A dedicated restricted command switches only the configured Agent release pointer and restarts only the configured LaunchAgent label.
+4. A fresh snapshot with the expected Agent version proves the new binary is healthy.
+5. Failure restores the previous immutable binary pointer and reports a non-successful rollout.
+6. A separate kill switch can disable Agent rollout without disabling API/Web deployment.
+
+The artifact retention location, CI authorization, exact install layout, and staging/rollback drill are implementation decisions. Do not treat a checksum alone as an independent code-signing guarantee.
 
 ## 5. Start the application stack
 

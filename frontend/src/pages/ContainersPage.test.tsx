@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiConnectionError, ApiError } from '../api/client'
+import type { ContainerView } from '../api/types'
 import { ContainersPage } from './ContainersPage'
 
 const mocks = vi.hoisted(() => ({
@@ -49,7 +50,8 @@ describe('ContainersPage', () => {
       .mockRejectedValueOnce(new Error('inventory refetch failed'))
     const { queryClient } = renderPage()
 
-    expect(await screen.findByText('homeops-api')).toBeInTheDocument()
+    await openProject('HomeOps')
+    expect(screen.getByText('homeops-api')).toBeInTheDocument()
     expect(mocks.getContainers).toHaveBeenCalledWith(expect.any(AbortSignal))
 
     await queryClient.refetchQueries({ queryKey: ['containers'] })
@@ -60,7 +62,7 @@ describe('ContainersPage', () => {
     })
     expect(screen.getByText('homeops-api')).toBeInTheDocument()
     expect(screen.getByText(/Last collected/)).toBeInTheDocument()
-    expect(screen.getAllByText('STALE')).toHaveLength(2)
+    expect(screen.getAllByText('STALE')).toHaveLength(3)
     expect(screen.queryByText('Unable to load containers')).not.toBeInTheDocument()
   })
 
@@ -69,12 +71,13 @@ describe('ContainersPage', () => {
     mocks.getContainers.mockResolvedValueOnce(containerInventory()).mockRejectedValueOnce(error)
     const { queryClient } = renderPage()
 
-    expect(await screen.findByText('homeops-api')).toBeInTheDocument()
+    await openProject('HomeOps')
+    expect(screen.getByText('homeops-api')).toBeInTheDocument()
     await queryClient.refetchQueries({ queryKey: ['containers'] })
 
     expect(await screen.findByText(error.message)).toBeInTheDocument()
     expect(screen.getByText('homeops-api')).toBeInTheDocument()
-    expect(screen.getAllByText('STALE')).toHaveLength(2)
+    expect(screen.getAllByText('STALE')).toHaveLength(3)
     expect(screen.queryByText('Unable to load containers')).not.toBeInTheDocument()
   })
 
@@ -83,7 +86,8 @@ describe('ContainersPage', () => {
     mocks.getContainers.mockResolvedValueOnce(containerInventory()).mockRejectedValueOnce(error)
     const { queryClient } = renderPage()
 
-    expect(await screen.findByText('homeops-api')).toBeInTheDocument()
+    await openProject('HomeOps')
+    expect(screen.getByText('homeops-api')).toBeInTheDocument()
 
     await queryClient.refetchQueries({ queryKey: ['containers'] })
 
@@ -105,6 +109,42 @@ describe('ContainersPage', () => {
     expect(screen.getAllByText('STALE')).toHaveLength(2)
     expect(screen.queryByText('HEALTHY')).not.toBeInTheDocument()
   })
+
+  it('groups containers by Compose project and keeps one project expanded', async () => {
+    mocks.getContainers.mockResolvedValue(containerInventory({ containers: groupedContainers() }))
+
+    renderPage()
+
+    const cubingHub = await screen.findByRole('button', { name: /Cubing Hub/i })
+    const guessPokemon = screen.getByRole('button', { name: /Guess Pokemon/i })
+    expect(cubingHub).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('cubing-hub-web-1')).not.toBeInTheDocument()
+
+    fireEvent.click(cubingHub)
+
+    expect(cubingHub).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('cubing-hub-api-1')).toBeInTheDocument()
+    expect(screen.getByText('cubing-hub-web-1')).toBeInTheDocument()
+    expect(screen.getAllByText('UNHEALTHY')).toHaveLength(2)
+
+    fireEvent.click(guessPokemon)
+
+    expect(guessPokemon).toHaveAttribute('aria-expanded', 'true')
+    expect(cubingHub).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByText('guess-pokemon-api-1')).toBeInTheDocument()
+    expect(screen.queryByText('cubing-hub-web-1')).not.toBeInTheDocument()
+  })
+
+  it.each(['STARTING', 'UNKNOWN'] as const)('shows %s health on a collapsed project', async (health) => {
+    mocks.getContainers.mockResolvedValue(containerInventory({ containers: projectWithHealth(health) }))
+
+    renderPage()
+
+    const project = await screen.findByRole('button', { name: /Cubing Hub/i })
+    expect(project).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByText(health)).toBeInTheDocument()
+    expect(screen.queryByText('cubing-hub-api-1')).not.toBeInTheDocument()
+  })
 })
 
 function renderPage() {
@@ -121,12 +161,22 @@ function renderPage() {
   return { ...rendered, queryClient }
 }
 
-function containerInventory(overrides: { stale?: boolean; agentStatus?: 'CONNECTED' | 'STALE' | 'OFFLINE' } = {}) {
+async function openProject(name: string) {
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp(name, 'i') }))
+}
+
+function containerInventory(
+  overrides: {
+    stale?: boolean
+    agentStatus?: 'CONNECTED' | 'STALE' | 'OFFLINE'
+    containers?: ContainerView[]
+  } = {},
+) {
   return {
     agentStatus: overrides.agentStatus ?? 'CONNECTED',
     lastUpdatedAt: '2026-08-04T12:00:00Z',
     stale: overrides.stale ?? false,
-    containers: [
+    containers: overrides.containers ?? [
       {
         id: 'abc123def456',
         name: 'homeops-api',
@@ -145,4 +195,78 @@ function containerInventory(overrides: { stale?: boolean; agentStatus?: 'CONNECT
       },
     ],
   }
+}
+
+function groupedContainers(): ContainerView[] {
+  return [
+    {
+      id: 'cubing-api',
+      name: 'cubing-hub-api-1',
+      composeProject: 'cubing-hub',
+      image: 'example/cubing-api:sha',
+      state: 'RUNNING',
+      health: 'HEALTHY',
+      status: 'Up 10 minutes',
+      startedAt: '2026-08-04T11:50:00Z',
+      restartCount: 0,
+      cpuUsagePercent: 1.25,
+      memoryUsageBytes: 1024,
+      memoryLimitBytes: 2048,
+      ports: [],
+      managed: false,
+    },
+    {
+      id: 'cubing-web',
+      name: 'cubing-hub-web-1',
+      composeProject: 'cubing-hub',
+      image: 'example/cubing-web:sha',
+      state: 'RUNNING',
+      health: 'UNHEALTHY',
+      status: 'Up 10 minutes',
+      startedAt: '2026-08-04T11:50:00Z',
+      restartCount: 0,
+      cpuUsagePercent: 1.25,
+      memoryUsageBytes: 1024,
+      memoryLimitBytes: 2048,
+      ports: [],
+      managed: false,
+    },
+    {
+      id: 'pokemon-api',
+      name: 'guess-pokemon-api-1',
+      composeProject: 'guess-pokemon',
+      image: 'example/pokemon-api:sha',
+      state: 'RUNNING',
+      health: 'HEALTHY',
+      status: 'Up 10 minutes',
+      startedAt: '2026-08-04T11:50:00Z',
+      restartCount: 0,
+      cpuUsagePercent: 1.25,
+      memoryUsageBytes: 1024,
+      memoryLimitBytes: 2048,
+      ports: [],
+      managed: false,
+    },
+  ]
+}
+
+function projectWithHealth(health: 'STARTING' | 'UNKNOWN'): ContainerView[] {
+  return [
+    {
+      id: `cubing-${health.toLowerCase()}`,
+      name: 'cubing-hub-api-1',
+      composeProject: 'cubing-hub',
+      image: 'example/cubing-api:sha',
+      state: 'RUNNING',
+      health,
+      status: 'Up 10 minutes',
+      startedAt: '2026-08-04T11:50:00Z',
+      restartCount: 0,
+      cpuUsagePercent: 1.25,
+      memoryUsageBytes: 1024,
+      memoryLimitBytes: 2048,
+      ports: [],
+      managed: false,
+    },
+  ]
 }

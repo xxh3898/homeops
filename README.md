@@ -8,6 +8,8 @@ The source is public, but the supported deployment boundary is private: a single
 
 HomeOps is pre-release software. The implemented first milestone is read-only host metrics and container inventory. Service checks, incidents, deployments, notifications, bounded logs, and container control remain follow-up milestones. Container start, stop, and restart are deliberately excluded until label allowlists, operation locks, idempotency, and audit controls are complete.
 
+The macOS Agent is currently installed and upgraded manually. The `main` deployment workflow only deploys API, Web, and runtime-config images; a separate opt-in Agent rollout is planned because the Agent reads macOS state and the Docker socket. See the [implementation roadmap](docs/roadmap.md) before treating a future milestone as supported behavior.
+
 ## Architecture
 
 - `frontend`: React 19, TypeScript, Vite, TanStack Query, Tailwind CSS, PWA
@@ -71,6 +73,7 @@ A destructive schema migration requires a separately approved one-time logical s
 - `docs/configuration.md`
 - `docs/security.md`
 - `docs/operations.md`
+- `docs/roadmap.md`
 
 ## License
 
