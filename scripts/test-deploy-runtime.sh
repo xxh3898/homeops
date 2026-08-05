@@ -54,6 +54,7 @@ bootstrap_script=
 docker_log=
 curl_log=
 case_output=
+compose_plugin=
 
 prepare_case() {
   local case_name="$1"
@@ -64,7 +65,10 @@ prepare_case() {
   docker_log="${case_root}/docker.log"
   curl_log="${case_root}/curl.log"
   case_output="${case_root}/output.log"
+  compose_plugin="${case_root}/docker-compose"
   /bin/mkdir -p "${app_dir}"
+  /bin/cp "${MOCK_DOCKER}" "${compose_plugin}"
+  /bin/chmod 700 "${compose_plugin}"
   /bin/cp "${SOURCE_ENV}" "${app_dir}/.env"
   /bin/chmod 600 "${app_dir}/.env"
   printf '%s\n' "${SMOKE_ORIGIN}" >"${app_dir}/smoke.origin"
@@ -97,6 +101,7 @@ run_bootstrap() {
         FAKE_RUNTIME_WORKER="${runtime_worker}" \
         FAKE_RUNTIME_VALIDATOR="${SOURCE_VALIDATOR}" \
         FAKE_DOCKER_LOG="${docker_log}" \
+        FAKE_COMPOSE_PLUGIN="${FAKE_COMPOSE_PLUGIN_OVERRIDE:-${compose_plugin}}" \
         FAKE_CURL_LOG="${curl_log}" \
         FAKE_CONFIG_REVISION="${revision}" \
         FAKE_CONFIG_PROJECT="${FAKE_CONFIG_PROJECT:-homeops}" \
@@ -179,6 +184,19 @@ test "$(/usr/bin/readlink "${app_dir}/runtime-config/current")" \
 test ! -e "${app_dir}/runtime-config/pending"
 /usr/bin/grep -Fxq "${SMOKE_ORIGIN}/" "${curl_log}"
 /usr/bin/grep -Fq -- '--profile operations run --rm migration' "${docker_log}"
+assert_secret_absent
+
+prepare_case compose-plugin-missing
+FAKE_COMPOSE_PLUGIN_OVERRIDE="${app_dir}/missing-docker-compose" \
+  assert_failure 1 \
+    run_bootstrap \
+      "${REVISION_ONE}" \
+      "${API_DIGEST_ONE}" \
+      "${WEB_DIGEST_ONE}" \
+      "${CONFIG_DIGEST_ONE}"
+/usr/bin/grep -Fq -- 'Docker Compose plugin is missing or unsafe' "${case_output}"
+test ! -e "${app_dir}/runtime-config/pending"
+test ! -e "${app_dir}/deployment.state"
 assert_secret_absent
 
 prepare_case initial-smoke-failure

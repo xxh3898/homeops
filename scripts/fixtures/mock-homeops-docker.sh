@@ -9,6 +9,14 @@ fi
 command_name="${1:-}"
 shift || true
 
+if [[ "${command_name}" == compose ]] \
+  && [[ -n "${DOCKER_CONFIG:-}" ]] \
+  && [[ ! -x "${DOCKER_CONFIG}/cli-plugins/docker-compose" ]]
+then
+  printf 'unknown flag: --project-directory\n' >&2
+  exit 125
+fi
+
 log_command() {
   if [[ -n "${FAKE_DOCKER_LOG:-}" ]]; then
     if [[ "${command_name}" == compose ]]; then
@@ -26,6 +34,15 @@ log_command() {
 log_command "$@"
 
 case "${command_name}" in
+  info)
+    if [[ "$#" -ne 2 || "$1" != --format ]] \
+      || [[ "$2" != *'.ClientInfo.Plugins'* ]]
+    then
+      printf 'Unexpected mock Docker info arguments\n' >&2
+      exit 1
+    fi
+    printf '%s\n' "${FAKE_COMPOSE_PLUGIN:-}"
+    ;;
   login)
     /bin/cat >/dev/null
     ;;
@@ -103,7 +120,9 @@ case "${command_name}" in
     ;;
   compose)
     arguments=" $* "
-    if [[ "${arguments}" == *" config --quiet "* ]]; then
+    if [[ "${arguments}" == *" version "* ]]; then
+      printf 'Docker Compose version mock\n'
+    elif [[ "${arguments}" == *" config --quiet "* ]]; then
       if [[ "${FAKE_CONFIG_FAIL:-false}" == true ]]; then
         exit 1
       fi
