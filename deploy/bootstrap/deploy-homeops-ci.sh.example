@@ -65,6 +65,32 @@ validate_release_metadata() {
   validate_release_entry "${release_dir}/scripts/validate-https-origin.sh" 700
 }
 
+install_compose_plugin() {
+  local docker_config_dir="$1"
+  local compose_plugin
+  local compose_plugin_dir="${docker_config_dir}/cli-plugins"
+
+  compose_plugin="$("${DOCKER_BIN}" info \
+    --format '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}')" \
+    || fail "Docker Compose plugin discovery failed"
+  if [[ ! "${compose_plugin}" =~ ^/ ]] \
+    || [[ "$(/usr/bin/basename "${compose_plugin}")" != docker-compose ]] \
+    || [[ ! -f "${compose_plugin}" ]] \
+    || [[ ! -x "${compose_plugin}" ]]
+  then
+    fail "Docker Compose plugin is missing or unsafe"
+  fi
+
+  /bin/mkdir -p "${compose_plugin_dir}"
+  /bin/chmod 700 "${compose_plugin_dir}"
+  /bin/ln -s "${compose_plugin}" "${compose_plugin_dir}/docker-compose"
+  if ! DOCKER_CONFIG="${docker_config_dir}" \
+    "${DOCKER_BIN}" compose version >/dev/null 2>&1
+  then
+    fail "Docker Compose plugin is unavailable in the isolated registry config"
+  fi
+}
+
 if [[ ! -x "${DOCKER_BIN}" ]] || [[ ! -x "${LOCKF_BIN}" ]]; then
   fail "required Docker or lockf executable is unavailable"
 fi
@@ -141,6 +167,8 @@ cleanup() {
   fi
 }
 trap cleanup EXIT INT TERM
+
+install_compose_plugin "${docker_config_dir}"
 
 printf '%s' "${registry_token}" \
   | "${DOCKER_BIN}" --config "${docker_config_dir}" login ghcr.io \
