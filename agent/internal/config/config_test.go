@@ -17,6 +17,7 @@ func TestValidateAcceptsLoopbackConfiguration(t *testing.T) {
 		CACert:        filepath.Join(root, "ca.crt"),
 		DockerSocket:  filepath.Join(root, "docker.sock"),
 		SpoolDir:      filepath.Join(root, "spool"),
+		VersionProof:  filepath.Join(root, "version-proof"),
 		Interval:      5 * time.Second,
 		MaxContainers: 128,
 		MaxSpoolFiles: 120,
@@ -27,6 +28,27 @@ func TestValidateAcceptsLoopbackConfiguration(t *testing.T) {
 	}
 	if configuration.AgentID != "local-mac" {
 		t.Fatalf("AgentID = %q, want local-mac", configuration.AgentID)
+	}
+}
+
+func TestValidateRejectsRelativeVersionProofPath(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	_, err := Validate(Config{
+		AgentID:       "local-mac",
+		APIURL:        "https://localhost:13443/api/v1/internal/agent/snapshots",
+		ClientCert:    filepath.Join(root, "agent.crt"),
+		ClientKey:     filepath.Join(root, "agent.key"),
+		CACert:        filepath.Join(root, "ca.crt"),
+		DockerSocket:  filepath.Join(root, "docker.sock"),
+		SpoolDir:      filepath.Join(root, "spool"),
+		VersionProof:  "version-proof",
+		Interval:      5 * time.Second,
+		MaxContainers: 128,
+		MaxSpoolFiles: 120,
+	})
+	if err == nil || err.Error() != "version proof file path must be absolute" {
+		t.Fatalf("error = %v, want version proof path error", err)
 	}
 }
 

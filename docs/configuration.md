@@ -49,6 +49,7 @@ Every secret and host-specific value stays outside Git. Example values use reser
 | `HOMEOPS_AGENT_INTERVAL` | no | no | `5s` to `5m`; default `5s` |
 | `HOMEOPS_AGENT_MAXIMUM_CONTAINERS` | no | no | `1` to `256`; default `128` |
 | `HOMEOPS_AGENT_MAXIMUM_SPOOL_FILES` | no | no | `1` to `1440`; default `120` |
+| `HOMEOPS_AGENT_VERSION_PROOF_FILE` | rollout host | sensitive path | Absolute, mode `0600` proof written only after a successful snapshot delivery |
 
 The Agent refuses to evict an undelivered snapshot when the spool is full. It reports the failure and preserves existing evidence.
 
@@ -80,6 +81,7 @@ Automatic deployment is disabled unless the repository variable `MAC_MINI_DEPLOY
 Repository variable:
 
 - `MAC_MINI_DEPLOY_ENABLED`
+- `HOMEOPS_AGENT_ROLLOUT_ENABLED`: must be exactly `true` before the separate Agent rollout job can mutate the host; leave unset or `false` until a staging and rollback drill succeeds.
 
 Production environment variables:
 
@@ -93,6 +95,8 @@ Production environment secrets:
 - `HOME_MINI_SSH_KEY`, a HomeOps-specific CI key
 - `HOME_MINI_KNOWN_HOSTS`
 - `HOMEOPS_SMOKE_URL`, the tailnet HTTPS origin without a path; it may use the same explicit port as `smoke.origin`
+- `HOMEOPS_AGENT_ROLLOUT_SSH_KEY`, a distinct forced-command key limited to `rollout-homeops-agent-v1`
+- `HOMEOPS_AGENT_ROLLOUT_KNOWN_HOSTS`, the known-host entry used only by the Agent rollout key
 
 GitHub Actions supplies `GITHUB_TOKEN` automatically for the workflow's scoped package access. Do not create or store a separate `GITHUB_TOKEN` repository or environment secret.
 

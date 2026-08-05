@@ -23,6 +23,7 @@ type Config struct {
 	CACert        string
 	DockerSocket  string
 	SpoolDir      string
+	VersionProof  string
 	Interval      time.Duration
 	MaxContainers int
 	MaxSpoolFiles int
@@ -50,6 +51,7 @@ func Load() (Config, error) {
 		CACert:        strings.TrimSpace(os.Getenv("HOMEOPS_AGENT_CA_CERT")),
 		DockerSocket:  strings.TrimSpace(os.Getenv("HOMEOPS_DOCKER_SOCKET")),
 		SpoolDir:      strings.TrimSpace(os.Getenv("HOMEOPS_AGENT_SPOOL_DIR")),
+		VersionProof:  strings.TrimSpace(os.Getenv("HOMEOPS_AGENT_VERSION_PROOF_FILE")),
 		Interval:      interval,
 		MaxContainers: maxContainers,
 		MaxSpoolFiles: maxSpoolFiles,
@@ -98,6 +100,14 @@ func Validate(config Config) (Config, error) {
 	config.SpoolDir, pathErr = absolutePath(config.SpoolDir, "spool directory")
 	if pathErr != nil {
 		return Config{}, pathErr
+	}
+	if config.VersionProof != "" {
+		config.VersionProof, pathErr = absolutePath(
+			config.VersionProof,
+			"version proof file")
+		if pathErr != nil {
+			return Config{}, pathErr
+		}
 	}
 	if config.Interval < 5*time.Second || config.Interval > 5*time.Minute {
 		return Config{}, errors.New("agent interval must be between 5s and 5m")

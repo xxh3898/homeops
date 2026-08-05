@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/xxh3898/homeops/agent/internal/collector"
@@ -45,6 +48,8 @@ type snapshotSpool interface {
 }
 
 const collectionTimeout = 20 * time.Second
+
+var fullSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 func New(
 	config config.Config,
@@ -145,6 +150,13 @@ func (app *App) collectAndSend(ctx context.Context) error {
 		return fmt.Errorf("encode Agent snapshot: %w", err)
 	}
 	if err := app.transport.Send(ctx, payload); err == nil {
+		if err := writeVersionProof(
+			app.config.VersionProof,
+			app.version,
+			now,
+		); err != nil {
+			return err
+		}
 		return nil
 	}
 	spoolName := now.Format("20060102T150405000000000Z") + "-" + snapshotID
@@ -152,6 +164,47 @@ func (app *App) collectAndSend(ctx context.Context) error {
 		return fmt.Errorf("queue undelivered snapshot: %w", err)
 	}
 	return errorsSentinel{}
+}
+
+func writeVersionProof(path string, version string, sentAt time.Time) error {
+	if path == "" {
+		return nil
+	}
+	if !fullSHA.MatchString(version) {
+		return fmt.Errorf("write Agent version proof: version is not a full SHA")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("create Agent version proof directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".agent-version-proof.")
+	if err != nil {
+		return fmt.Errorf("create Agent version proof: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0600); err != nil {
+		temporary.Close()
+		return fmt.Errorf("protect Agent version proof: %w", err)
+	}
+	contents := fmt.Sprintf(
+		"VERSION=%s\nSENT_AT_UNIX=%d\n",
+		version,
+		sentAt.UTC().Unix())
+	if _, err := temporary.WriteString(contents); err != nil {
+		temporary.Close()
+		return fmt.Errorf("write Agent version proof: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return fmt.Errorf("sync Agent version proof: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close Agent version proof: %w", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("promote Agent version proof: %w", err)
+	}
+	return nil
 }
 
 type errorsSentinel struct{}

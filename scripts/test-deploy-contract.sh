@@ -10,6 +10,9 @@ readonly WORKER="${REPOSITORY_ROOT}/deploy/scripts/deploy-homeops.sh"
 readonly ORIGIN_VALIDATOR="${REPOSITORY_ROOT}/deploy/scripts/validate-https-origin.sh"
 readonly RUNTIME_CONFIG_DOCKERFILE="${REPOSITORY_ROOT}/runtime-config.Dockerfile"
 readonly ENV_EXAMPLE="${REPOSITORY_ROOT}/deploy/env.example"
+readonly AGENT_DOCKERFILE="${REPOSITORY_ROOT}/agent-artifact.Dockerfile"
+readonly AGENT_BOOTSTRAP="${REPOSITORY_ROOT}/deploy/bootstrap/deploy-homeops-agent-rollout-ci.sh.example"
+readonly AGENT_WORKER="${REPOSITORY_ROOT}/deploy/scripts/rollout-homeops-agent.sh"
 
 assert_contains() {
   local file="$1"
@@ -36,6 +39,9 @@ assert_contains "${DEPLOY_WORKFLOW}" 'web_digest: ${{ steps.publish-web.outputs.
 assert_contains "${DEPLOY_WORKFLOW}" 'deploy-homeops-v2 ${GITHUB_SHA} ${API_IMAGE_DIGEST} ${WEB_IMAGE_DIGEST} ${RUNTIME_CONFIG_DIGEST} ${REGISTRY_OWNER} ${registry_user}'
 assert_contains "${DEPLOY_WORKFLOW}" './deploy/scripts/validate-https-origin.sh "${HOMEOPS_SMOKE_URL}"'
 assert_contains "${DEPLOY_WORKFLOW}" 'persist-credentials: false'
+assert_contains "${DEPLOY_WORKFLOW}" 'HOMEOPS_AGENT_ROLLOUT_ENABLED == '\''true'\'''
+assert_contains "${DEPLOY_WORKFLOW}" 'rollout-homeops-agent-v1 ${GITHUB_SHA} ${AGENT_DIGEST} ${REGISTRY_OWNER} ${registry_user}'
+assert_contains "${DEPLOY_WORKFLOW}" 'HOMEOPS_AGENT_ROLLOUT_SSH_KEY'
 assert_absent "${DEPLOY_WORKFLOW}" 'deploy-homeops-v1'
 assert_absent "${DEPLOY_WORKFLOW}" '^https://[^/[:space:]]+$'
 
@@ -78,5 +84,14 @@ assert_contains "${RUNTIME_CONFIG_DOCKERFILE}" './scripts/validate-https-origin.
 
 assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_API_IMAGE=ghcr.io/example/homeops-api@sha256:'
 assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_WEB_IMAGE=ghcr.io/example/homeops-web@sha256:'
+
+assert_contains "${AGENT_DOCKERFILE}" 'GOOS=darwin GOARCH=arm64'
+assert_contains "${AGENT_DOCKERFILE}" 'sha256sum homeops-agent >homeops-agent.sha256'
+assert_contains "${AGENT_BOOTSTRAP}" '^rollout-homeops-agent-v1[[:space:]]'
+assert_contains "${AGENT_BOOTSTRAP}" 'AGENT_REPOSITORY=ghcr.io/REPLACE_ME/homeops-agent'
+assert_contains "${AGENT_BOOTSTRAP}" 'Agent artifact revision is invalid'
+assert_contains "${AGENT_WORKER}" 'readonly AGENT_LABEL=dev.homeops.agent'
+assert_contains "${AGENT_WORKER}" 'candidate Agent restart or fresh snapshot confirmation failed; previous release restored'
+assert_absent "${AGENT_WORKER}" 'SSH_ORIGINAL_COMMAND'
 
 printf 'Deployment static contract checks passed\n'

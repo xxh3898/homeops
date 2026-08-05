@@ -5,7 +5,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/xxh3898/homeops/agent/internal/config"
 	"github.com/xxh3898/homeops/agent/internal/snapshot"
@@ -20,6 +23,41 @@ func TestNewUUIDReturnsRFC4122Shape(t *testing.T) {
 	}
 	if len(identifier) != 36 || identifier[14] != '4' {
 		t.Fatalf("identifier = %q, want version 4 UUID shape", identifier)
+	}
+}
+
+func TestWriteVersionProofAtomicallyWritesExpectedPayload(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "nested", "version-proof")
+	version := "1111111111111111111111111111111111111111"
+	sentAt := time.Unix(1_700_000_000, 0).UTC()
+	if err := writeVersionProof(path, version, sentAt); err != nil {
+		t.Fatalf("writeVersionProof returned an error: %v", err)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read version proof: %v", err)
+	}
+	if string(contents) != "VERSION="+version+"\nSENT_AT_UNIX=1700000000\n" {
+		t.Fatalf("version proof = %q", contents)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat version proof: %v", err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
+func TestWriteVersionProofRejectsNonSHA(t *testing.T) {
+	t.Parallel()
+	if err := writeVersionProof(
+		filepath.Join(t.TempDir(), "proof"),
+		"dev",
+		time.Now(),
+	); err == nil {
+		t.Fatal("writeVersionProof accepted a non-SHA version")
 	}
 }
 
