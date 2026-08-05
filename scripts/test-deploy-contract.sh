@@ -93,6 +93,7 @@ assert_contains "${AGENT_DOCKERFILE}" 'sha256sum homeops-agent >homeops-agent.sh
 assert_contains "${AGENT_BOOTSTRAP}" '^rollout-homeops-agent-v1[[:space:]]'
 assert_contains "${AGENT_BOOTSTRAP}" 'AGENT_REPOSITORY=ghcr.io/REPLACE_ME/homeops-agent'
 assert_contains "${AGENT_BOOTSTRAP}" 'Agent artifact revision is invalid'
+assert_contains "${AGENT_BOOTSTRAP}" 'create "${agent_image}" /homeops-agent'
 assert_contains "${AGENT_WORKER}" 'readonly AGENT_LABEL=dev.homeops.agent'
 assert_contains "${AGENT_WORKER}" 'candidate Agent restart or fresh snapshot confirmation failed; previous release restored'
 assert_absent "${AGENT_WORKER}" 'SSH_ORIGINAL_COMMAND'
