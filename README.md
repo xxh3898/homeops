@@ -8,7 +8,7 @@ The source is public, but the supported deployment boundary is private: a single
 
 HomeOps is pre-release software. The implemented first milestone is read-only host metrics and container inventory. Service checks, incidents, deployments, notifications, bounded logs, and container control remain follow-up milestones. Container start, stop, and restart are deliberately excluded until label allowlists, operation locks, idempotency, and audit controls are complete.
 
-The macOS Agent is currently installed and upgraded manually. The `main` deployment workflow only deploys API, Web, and runtime-config images; a separate opt-in Agent rollout is planned because the Agent reads macOS state and the Docker socket. See the [implementation roadmap](docs/roadmap.md) before treating a future milestone as supported behavior.
+The macOS Agent is installed by an operator. Agent code releases are published as immutable GHCR artifacts, but host rollout is separately disabled by default and uses a distinct restricted SSH key. The standard `main` deployment workflow continues to deploy only API, Web, and runtime-config images unless the independent Agent rollout switch is explicitly enabled after a staging/rollback drill. See the [implementation roadmap](docs/roadmap.md) before treating a future milestone as supported behavior.
 
 ## Architecture
 

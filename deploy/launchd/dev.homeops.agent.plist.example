@@ -6,7 +6,7 @@
   <string>dev.homeops.agent</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/REPLACE_ME/Applications/HomeOps/bin/homeops-agent</string>
+    <string>/Users/REPLACE_ME/Server/apps/homeops/agent/current/homeops-agent</string>
   </array>
   <key>WorkingDirectory</key>
   <string>/Users/REPLACE_ME/Library/Application Support/HomeOps</string>
@@ -26,6 +26,8 @@
     <string>/Users/REPLACE_ME/.docker/run/docker.sock</string>
     <key>HOMEOPS_AGENT_SPOOL_DIR</key>
     <string>/Users/REPLACE_ME/Library/Application Support/HomeOps/spool</string>
+    <key>HOMEOPS_AGENT_VERSION_PROOF_FILE</key>
+    <string>/Users/REPLACE_ME/Server/apps/homeops/agent/version-proof</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -44,4 +46,3 @@
   <string>/Users/REPLACE_ME/Library/Logs/HomeOps/agent-error.log</string>
 </dict>
 </plist>
-

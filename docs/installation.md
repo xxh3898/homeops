@@ -46,7 +46,7 @@ Create a private CA, a server certificate valid for `localhost` and loopback use
 
 Use different keys for Agent mTLS, human SSH, and CI deployment. Do not reuse the tailnet authentication key or a GitHub token.
 
-## 4. Install the native Agent manually (current behavior)
+## 4. Install the native Agent and prepare a rollout boundary
 
 The CI validation workflow builds a macOS ARM64 Agent artifact identified by the commit SHA. Verify its SHA-256 checksum before installation. Place the binary and configuration under operator-owned, non-world-writable directories.
 
@@ -61,20 +61,22 @@ Start from `deploy/launchd/dev.homeops.agent.plist.example`, replace every place
 
 Lint the plist before any load. Loading the LaunchAgent, testing a natural scheduled start, and testing reboot persistence are separate acceptance gates.
 
-The `main` deployment workflow does **not** replace this Agent. It deploys only the API, Web, and runtime-config images. Keeping the Agent upgrade separate is intentional: the native process reads macOS metrics and the Docker socket, so a CI-to-host Agent replacement path needs its own constrained command, rollback, and acceptance checks.
+Install Agent releases below the operator-owned `Server/apps/homeops/agent/releases/<full-sha>` directory. The LaunchAgent must reference the fixed `agent/current/homeops-agent` symlink, not an unversioned mutable binary. Configure `HOMEOPS_AGENT_VERSION_PROOF_FILE` below the fixed Agent root; it is an atomic `0600` file written only after the new Agent successfully sends a snapshot.
 
-### Future opt-in Agent rollout
+The standard `main` deployment workflow does **not** replace this Agent. Keeping its rollout separate is intentional: the native process reads macOS metrics and the Docker socket, so API/Web deployment remains independently successful when Agent rollout is disabled or fails.
 
-Automatic Agent rollout is not implemented yet. When implemented, it must remain a separate opt-in deployment track and must not accept arbitrary paths, labels, actions, or shell fragments. Its minimum contract is:
+### Opt-in Agent rollout
 
-1. CI builds an Agent artifact identified by the exact full commit SHA and records a checksum.
+The repository implements, but does not enable by default, a separate Agent rollout track. It must not accept arbitrary paths, labels, actions, or shell fragments. Its contract is:
+
+1. CI publishes a GHCR Agent artifact identified by the exact full commit SHA, immutable digest, and checksum. Keep current and previous artifact digests available under the package retention policy.
 2. The Mac stages and verifies the immutable artifact before touching the active binary.
 3. A dedicated restricted command switches only the configured Agent release pointer and restarts only the configured LaunchAgent label.
 4. A fresh snapshot with the expected Agent version proves the new binary is healthy.
 5. Failure restores the previous immutable binary pointer and reports a non-successful rollout.
-6. A separate kill switch can disable Agent rollout without disabling API/Web deployment.
+6. The `HOMEOPS_AGENT_ROLLOUT_ENABLED` repository variable is a separate kill switch and does not disable API/Web deployment.
 
-The artifact retention location, CI authorization, exact install layout, and staging/rollback drill are implementation decisions. Do not treat a checksum alone as an independent code-signing guarantee.
+Before enabling it, install `deploy/scripts/rollout-homeops-agent.sh` and `deploy/bootstrap/deploy-homeops-agent-rollout-ci.sh.example` as operator-owned `0700` files, create a separate SSH key restricted to that bootstrap, and populate only the two rollout SSH secrets. Do not reuse the API/Web deployment key. A checksum verifies the retrieved artifact but is not an independent code-signing guarantee.
 
 ## 5. Start the application stack
 

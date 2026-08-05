@@ -1,0 +1,50 @@
+#!/bin/bash
+
+set -Eeuo pipefail
+
+readonly DOCKER_BIN=/usr/local/bin/docker
+readonly LOCKF_BIN=/usr/bin/lockf
+readonly APP_DIR=/Users/REPLACE_ME/Server/apps/homeops
+readonly AGENT_WORKER="${APP_DIR}/scripts/rollout-homeops-agent.sh"
+readonly AGENT_REPOSITORY=ghcr.io/REPLACE_ME/homeops-agent
+readonly AGENT_ROOT="${APP_DIR}/agent"
+readonly AGENT_RELEASES="${AGENT_ROOT}/releases"
+readonly BOOTSTRAP_LOCK="${APP_DIR}/.homeops-agent-bootstrap.lock"
+
+fail() { printf 'HomeOps Agent rollout bootstrap failed: %s\n' "$1" >&2; exit 1; }
+
+validate_release() {
+  local sha="$1" release_dir="${AGENT_RELEASES}/${1}" expected_owner actual_owner
+  [[ -d "${release_dir}" && ! -L "${release_dir}" ]] || return 1
+  [[ -z "$(/usr/bin/find "${release_dir}" -type l -print -quit)" ]] || return 1
+  [[ "$(/usr/bin/find "${release_dir}" -mindepth 1 -maxdepth 1 -print | /usr/bin/wc -l | /usr/bin/tr -d '[:space:]')" == 2 ]] || return 1
+  expected_owner="$(/usr/bin/id -un)"; actual_owner="$(/usr/bin/stat -f '%Su' "${release_dir}")"
+  [[ "${actual_owner}" == "${expected_owner}" && "$(/usr/bin/stat -f '%OLp' "${release_dir}")" == 700 ]] || return 1
+  [[ -f "${release_dir}/homeops-agent" && ! -L "${release_dir}/homeops-agent" && "$(/usr/bin/stat -f '%OLp' "${release_dir}/homeops-agent")" == 700 ]] || return 1
+  [[ -f "${release_dir}/homeops-agent.sha256" && ! -L "${release_dir}/homeops-agent.sha256" && "$(/usr/bin/stat -f '%OLp' "${release_dir}/homeops-agent.sha256")" == 600 ]] || return 1
+  [[ "$(/usr/bin/awk 'NR == 1 { print } END { if (NR != 1) exit 1 }' "${release_dir}/homeops-agent.sha256")" =~ ^[0-9a-f]{64}[[:space:]][[:space:]]homeops-agent$ ]] || return 1
+  (cd "${release_dir}" && /usr/bin/shasum -a 256 -c homeops-agent.sha256 >/dev/null)
+}
+
+if [[ ! -x "${DOCKER_BIN}" || ! -x "${LOCKF_BIN}" || ! -x "${AGENT_WORKER}" ]]; then fail "required executable is unavailable"; fi
+if [[ ! "${SSH_ORIGINAL_COMMAND:-}" =~ ^rollout-homeops-agent-v1[[:space:]]([0-9a-f]{40})[[:space:]](sha256:[0-9a-f]{64})[[:space:]]([a-z0-9][a-z0-9-]{0,38})[[:space:]]([a-z0-9][a-z0-9-]{0,38}(\[bot\])?)$ ]]; then fail "only the strictly formatted HomeOps Agent rollout command is allowed"; fi
+readonly COMMIT_SHA="${BASH_REMATCH[1]}" AGENT_DIGEST="${BASH_REMATCH[2]}" REGISTRY_OWNER="${BASH_REMATCH[3]}" REGISTRY_USER="${BASH_REMATCH[4]}"
+readonly ZERO_DIGEST=sha256:0000000000000000000000000000000000000000000000000000000000000000
+[[ "${AGENT_DIGEST}" != "${ZERO_DIGEST}" ]] || fail "Agent digest must be non-zero"
+umask 077
+exec 9>>"${BOOTSTRAP_LOCK}"; /bin/chmod 600 "${BOOTSTRAP_LOCK}"
+if "${LOCKF_BIN}" -s -t 0 9; then :; else status="$?"; [[ "${status}" -eq 75 ]] && exit 75; fail "bootstrap lock failed"; fi
+[[ ! -e "${AGENT_ROOT}/pending" && ! -L "${AGENT_ROOT}/pending" ]] || fail "an incomplete Agent rollout transaction requires recovery"
+registry_token="$(/bin/cat)"; [[ -n "${registry_token}" ]] || fail "GHCR token must not be empty"
+docker_config_dir="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/homeops-agent-docker.XXXXXX")"; temporary=""; container_id=""
+cleanup() { registry_token=""; [[ -n "${container_id}" ]] && "${DOCKER_BIN}" rm "${container_id}" >/dev/null 2>&1 || true; [[ -n "${temporary}" && -d "${temporary}" ]] && /bin/rm -rf -- "${temporary}"; "${DOCKER_BIN}" --config "${docker_config_dir}" logout ghcr.io >/dev/null 2>&1 || true; /bin/rm -rf -- "${docker_config_dir}"; }
+trap cleanup EXIT INT TERM
+printf '%s' "${registry_token}" | "${DOCKER_BIN}" --config "${docker_config_dir}" login ghcr.io --username "${REGISTRY_USER}" --password-stdin >/dev/null; registry_token=""
+agent_image="${AGENT_REPOSITORY}@${AGENT_DIGEST}"; "${DOCKER_BIN}" --config "${docker_config_dir}" pull "${agent_image}" >/dev/null
+[[ "$("${DOCKER_BIN}" image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${agent_image}")" == "${COMMIT_SHA}" ]] || fail "Agent artifact revision is invalid"
+[[ "$("${DOCKER_BIN}" image inspect --format '{{ index .Config.Labels "dev.homeops.agent-artifact.project" }}' "${agent_image}")" == homeops ]] || fail "Agent artifact project is invalid"
+if [[ -L "${AGENT_ROOT}" ]] || { [[ -e "${AGENT_ROOT}" ]] && [[ ! -d "${AGENT_ROOT}" ]]; } || [[ -L "${AGENT_RELEASES}" ]] || { [[ -e "${AGENT_RELEASES}" ]] && [[ ! -d "${AGENT_RELEASES}" ]]; }; then fail "Agent release directory is missing or unsafe"; fi
+/bin/mkdir -p "${AGENT_RELEASES}"; /bin/chmod 700 "${AGENT_ROOT}" "${AGENT_RELEASES}"
+release_dir="${AGENT_RELEASES}/${COMMIT_SHA}"
+if [[ -e "${release_dir}" || -L "${release_dir}" ]]; then validate_release "${COMMIT_SHA}" || fail "existing Agent release is invalid"; else temporary="$(/usr/bin/mktemp -d "${AGENT_RELEASES}/.tmp.XXXXXX")"; container_id="$("${DOCKER_BIN}" create "${agent_image}")"; "${DOCKER_BIN}" cp "${container_id}:/homeops-agent" "${temporary}/homeops-agent"; "${DOCKER_BIN}" cp "${container_id}:/homeops-agent.sha256" "${temporary}/homeops-agent.sha256"; "${DOCKER_BIN}" rm "${container_id}" >/dev/null; container_id=""; /bin/chmod 700 "${temporary}" "${temporary}/homeops-agent"; /bin/chmod 600 "${temporary}/homeops-agent.sha256"; /bin/mv -- "${temporary}" "${release_dir}"; temporary=""; validate_release "${COMMIT_SHA}" || fail "staged Agent release is invalid"; fi
+HOMEOPS_AGENT_APP_DIR="${APP_DIR}" "${AGENT_WORKER}" "${COMMIT_SHA}"

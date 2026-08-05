@@ -9,6 +9,10 @@ on:
       - dev
       - main
   workflow_call:
+    outputs:
+      agent_artifact:
+        description: Whether the changed revision needs a native Agent artifact.
+        value: ${{ jobs.changes.outputs.agent_artifact }}
 
 permissions:
   contents: read
@@ -277,3 +281,12 @@ jobs:
           path: agent/dist/homeops-agent-darwin-arm64*
           if-no-files-found: error
           retention-days: 14
+      - name: Build persistent Agent artifact verification image
+        if: needs.changes.outputs.agent_artifact == 'true'
+        run: >
+          docker build
+          --file agent-artifact.Dockerfile
+          --platform linux/arm64
+          --build-arg REVISION=1111111111111111111111111111111111111111
+          --tag homeops-agent:verify
+          .

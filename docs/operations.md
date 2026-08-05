@@ -104,22 +104,22 @@ Those private files need an operator-managed recovery method even though HomeOps
 
 ## Agent upgrades
 
-### Current: operator-managed upgrade
+### Current: operator-managed installation
 
-Agent publication and Agent installation are separate from API/Web deployment. Verify the artifact checksum, stop only the exact LaunchAgent label, replace only the exact binary, start it again, and confirm version plus a fresh snapshot. The `main` deployment workflow does not update the native Agent.
+Agent publication and Agent installation are separate from API/Web deployment. Verify the artifact checksum, install the binary under the immutable release directory, point the fixed `current` symlink at it, and confirm version plus a fresh snapshot. The standard `main` deployment workflow does not update the native Agent.
 
-### Future: opt-in automatic rollout
+### Opt-in automatic rollout
 
-Automatic Agent rollout is not implemented. It must be designed and validated as a separate capability because the Agent reads macOS state and the Docker socket. Do not extend `deploy-homeops-v2` with arbitrary Agent path, LaunchAgent label, action, or shell inputs.
+Automatic Agent rollout is implemented but disabled by default because the Agent reads macOS state and the Docker socket. Do not extend `deploy-homeops-v2` with Agent path, LaunchAgent label, action, or shell inputs; the rollout uses its own key and only accepts the exact `rollout-homeops-agent-v1` grammar.
 
-Before enabling an automatic rollout, implement and prove all of the following:
+Before setting `HOMEOPS_AGENT_ROLLOUT_ENABLED=true`, prove all of the following in staging:
 
-1. A persistent exact-SHA Agent artifact and checksum, with a retention policy suitable for rollback.
+1. A persistent GHCR exact-SHA Agent artifact and checksum, with current and previous digests retained for rollback.
 2. A dedicated restricted host command that accepts only the expected full SHA and verified artifact identity.
 3. A per-Agent lock, staged immutable release directory, validated file owner/mode, and atomic current/previous pointer transition.
 4. An explicit first-install policy and a rollback path that does not delete the previous known-good binary.
 5. Restart of only the configured LaunchAgent label, never a caller-supplied label or global launchd operation.
 6. Success proof from a fresh Agent snapshot whose reported version matches the requested release.
-7. A separate Agent rollout kill switch, disabled-by-default opt-in, and a staging plus rollback drill before production enablement.
+7. The separate Agent rollout kill switch, disabled-by-default opt-in, and a staging plus rollback drill.
 
-An API/Web deployment remains independently successful when no Agent rollout was requested. An Agent rollout failure must preserve evidence and return failure without silently claiming the new Agent version is active. See [the implementation roadmap](roadmap.md) for the implementation order.
+The host stages `agent/releases/<SHA>` with a verified binary/checksum, atomically changes `current` and `previous`, and kickstarts only `gui/<uid>/dev.homeops.agent`. It accepts the rollout only after `agent/version-proof` contains the requested SHA and a post-restart successful snapshot timestamp. Failure restores `current` to the previous immutable release; first-install failure removes `current` and boots out only that exact label. An API/Web deployment remains independently successful when no Agent rollout was requested. See [the implementation roadmap](roadmap.md) for the implementation order.

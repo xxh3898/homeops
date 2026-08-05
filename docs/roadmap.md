@@ -29,6 +29,8 @@ The supported baseline is a tailnet-only, read-only PWA with host metrics and co
 
 ## Phase 2: opt-in native Agent rollout
 
+**Status:** implemented in source, disabled by default pending a Mac staging and rollback drill.
+
 **Goal:** make an Agent code change deployable after `main` merge without granting a generic remote shell or silently overwriting the last known-good binary.
 
 ### Required implementation order
