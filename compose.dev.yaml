@@ -1,0 +1,91 @@
+name: dev-homeops
+
+services:
+  db:
+    image: postgres:18.4-alpine3.24
+    environment:
+      POSTGRES_DB: ${HOMEOPS_DB_NAME:?HOMEOPS_DB_NAME must be set}
+      POSTGRES_USER: ${HOMEOPS_DB_USER:?HOMEOPS_DB_USER must be set}
+      POSTGRES_PASSWORD: ${HOMEOPS_DB_PASSWORD:?HOMEOPS_DB_PASSWORD must be set}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - homeops-dev-postgres:/var/lib/postgresql
+    networks:
+      - application
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: development
+    command: ./gradlew bootRun --offline --no-daemon
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${HOMEOPS_DB_NAME:?HOMEOPS_DB_NAME must be set}
+      SPRING_DATASOURCE_USERNAME: ${HOMEOPS_DB_USER:?HOMEOPS_DB_USER must be set}
+      SPRING_DATASOURCE_PASSWORD: ${HOMEOPS_DB_PASSWORD:?HOMEOPS_DB_PASSWORD must be set}
+      HOMEOPS_AGENT_ID: ${HOMEOPS_AGENT_ID:-local-mac}
+      HOMEOPS_SESSION_COOKIE_SECURE: "false"
+      HOMEOPS_FLYWAY_ENABLED: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:18080:8080
+    volumes:
+      - ./backend:/workspace
+      - homeops-dev-backend-project-cache:/workspace/.gradle
+    networks:
+      - application
+      - ingress
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      target: development
+    environment:
+      VITE_DEV_API_TARGET: http://api:8080
+    depends_on:
+      - api
+    ports:
+      - ${HOMEOPS_WEB_PORT:-127.0.0.1:13080}:5173
+    volumes:
+      - ./frontend:/workspace
+      - homeops-dev-node-modules:/workspace/node_modules
+    networks:
+      - application
+      - ingress
+
+  agent-gateway:
+    profiles:
+      - agent
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      target: runtime
+    depends_on:
+      - api
+    ports:
+      - ${HOMEOPS_AGENT_PORT:-127.0.0.1:13443}:8443
+    volumes:
+      - ./certs:/run/homeops/tls:ro
+    networks:
+      - application
+      - ingress
+
+volumes:
+  homeops-dev-postgres:
+  homeops-dev-backend-project-cache:
+  homeops-dev-node-modules:
+
+networks:
+  application:
+    internal: true
+  ingress:

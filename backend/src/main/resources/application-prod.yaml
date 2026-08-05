@@ -1,0 +1,14 @@
+spring:
+  flyway:
+    enabled: false
+
+server:
+  servlet:
+    session:
+      cookie:
+        secure: true
+
+homeops:
+  security:
+    mode: TAILSCALE
+

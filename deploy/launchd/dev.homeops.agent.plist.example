@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.homeops.agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/REPLACE_ME/Applications/HomeOps/bin/homeops-agent</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/REPLACE_ME/Library/Application Support/HomeOps</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOMEOPS_AGENT_ID</key>
+    <string>local-mac</string>
+    <key>HOMEOPS_AGENT_API_URL</key>
+    <string>https://127.0.0.1:13443/api/v1/internal/agent/snapshots</string>
+    <key>HOMEOPS_AGENT_CLIENT_CERT</key>
+    <string>/Users/REPLACE_ME/Library/Application Support/HomeOps/tls/agent.crt</string>
+    <key>HOMEOPS_AGENT_CLIENT_KEY</key>
+    <string>/Users/REPLACE_ME/Library/Application Support/HomeOps/tls/agent.key</string>
+    <key>HOMEOPS_AGENT_CA_CERT</key>
+    <string>/Users/REPLACE_ME/Library/Application Support/HomeOps/tls/ca.crt</string>
+    <key>HOMEOPS_DOCKER_SOCKET</key>
+    <string>/Users/REPLACE_ME/.docker/run/docker.sock</string>
+    <key>HOMEOPS_AGENT_SPOOL_DIR</key>
+    <string>/Users/REPLACE_ME/Library/Application Support/HomeOps/spool</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/REPLACE_ME/Library/Logs/HomeOps/agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/REPLACE_ME/Library/Logs/HomeOps/agent-error.log</string>
+</dict>
+</plist>
+

@@ -1,0 +1,15 @@
+spring:
+  flyway:
+    enabled: true
+
+server:
+  servlet:
+    session:
+      cookie:
+        secure: false
+
+homeops:
+  security:
+    mode: DEV
+    allowed-users: []
+

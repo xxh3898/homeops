@@ -1,0 +1,53 @@
+name: homeops-test
+
+services:
+  backend-test:
+    image: gradle:9.5.1-jdk21-alpine
+    mem_limit: 2g
+    pids_limit: 512
+    working_dir: /workspace
+    command: >
+      sh -lc "cp -R /source/backend /workspace/backend
+      && cd /workspace/backend
+      && ./gradlew test --no-daemon"
+    volumes:
+      - ./backend:/source/backend:ro
+      - homeops-test-gradle:/home/gradle/.gradle
+
+  frontend-test:
+    image: node:24.18.0-alpine3.24
+    mem_limit: 1g
+    pids_limit: 512
+    working_dir: /workspace
+    command: >
+      sh -lc "cp -R /source/frontend /workspace/frontend
+      && cd /workspace/frontend
+      && npm ci --no-fund
+      && npm run lint
+      && npm run typecheck
+      && npm test
+      && npm run build"
+    volumes:
+      - ./frontend:/source/frontend:ro
+
+  agent-test:
+    image: golang:1.26.5-alpine3.23
+    mem_limit: 512m
+    pids_limit: 256
+    working_dir: /workspace
+    command: >
+      sh -c "cp -R /source/agent /workspace/agent
+      && cd /workspace/agent
+      && gofmt -l . > /tmp/homeops-unformatted-go-files
+      && test ! -s /tmp/homeops-unformatted-go-files
+      && go test ./...
+      && GOOS=darwin GOARCH=arm64 go build -trimpath -o /out/homeops-agent ./cmd/homeops-agent"
+    volumes:
+      - ./agent:/source/agent:ro
+      - homeops-test-agent-out:/out
+      - homeops-test-go-cache:/root/.cache/go-build
+
+volumes:
+  homeops-test-gradle:
+  homeops-test-agent-out:
+  homeops-test-go-cache:
