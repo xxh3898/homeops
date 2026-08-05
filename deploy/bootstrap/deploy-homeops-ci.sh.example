@@ -23,7 +23,8 @@ validate_release_shape() {
   if [[ ! -d "${release_dir}" || -L "${release_dir}" ]] \
     || [[ ! -f "${release_dir}/compose.yaml" || -L "${release_dir}/compose.yaml" ]] \
     || [[ ! -d "${release_dir}/scripts" || -L "${release_dir}/scripts" ]] \
-    || [[ ! -f "${release_dir}/scripts/deploy-homeops.sh" || -L "${release_dir}/scripts/deploy-homeops.sh" ]]
+    || [[ ! -f "${release_dir}/scripts/deploy-homeops.sh" || -L "${release_dir}/scripts/deploy-homeops.sh" ]] \
+    || [[ ! -f "${release_dir}/scripts/validate-https-origin.sh" || -L "${release_dir}/scripts/validate-https-origin.sh" ]]
   then
     fail "runtime config release shape is invalid"
   fi
@@ -32,7 +33,7 @@ validate_release_shape() {
     fail "runtime config release must not contain symbolic links"
   fi
   entry_count="$(/usr/bin/find "${release_dir}" -mindepth 1 -print | /usr/bin/wc -l | /usr/bin/tr -d '[:space:]')"
-  if [[ "${entry_count}" != 3 ]]; then
+  if [[ "${entry_count}" != 4 ]]; then
     fail "runtime config release contains unexpected entries"
   fi
 }
@@ -61,6 +62,7 @@ validate_release_metadata() {
   validate_release_entry "${release_dir}/compose.yaml" 600
   validate_release_entry "${release_dir}/scripts" 700
   validate_release_entry "${release_dir}/scripts/deploy-homeops.sh" 700
+  validate_release_entry "${release_dir}/scripts/validate-https-origin.sh" 700
 }
 
 if [[ ! -x "${DOCKER_BIN}" ]] || [[ ! -x "${LOCKF_BIN}" ]]; then
@@ -167,9 +169,14 @@ validate_release_shape "${release_temp}"
 /bin/chmod 700 \
   "${release_temp}" \
   "${release_temp}/scripts" \
-  "${release_temp}/scripts/deploy-homeops.sh"
+  "${release_temp}/scripts/deploy-homeops.sh" \
+  "${release_temp}/scripts/validate-https-origin.sh"
 /bin/chmod 600 "${release_temp}/compose.yaml"
-/bin/bash -n "${release_temp}/scripts/deploy-homeops.sh"
+if ! /bin/bash -n "${release_temp}/scripts/deploy-homeops.sh" >/dev/null 2>&1 \
+  || ! /bin/bash -n "${release_temp}/scripts/validate-https-origin.sh" >/dev/null 2>&1
+then
+  fail "runtime config script syntax is invalid"
+fi
 validate_release_metadata "${release_temp}"
 
 if [[ -e "${candidate_release}" || -L "${candidate_release}" ]]; then

@@ -6,6 +6,7 @@ readonly DOCKER_BIN=/usr/local/bin/docker
 readonly LOCKF_BIN=/usr/bin/lockf
 readonly CURL_BIN=/usr/bin/curl
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && /bin/pwd -P)"
+readonly ORIGIN_VALIDATOR="${SCRIPT_DIR}/validate-https-origin.sh"
 readonly DEFAULT_APP_DIR="$(cd "${SCRIPT_DIR}/.." && /bin/pwd -P)"
 readonly APP_DIR="${HOMEOPS_APP_DIR:-${DEFAULT_APP_DIR}}"
 readonly RUNTIME_DIR="${HOMEOPS_RUNTIME_DIR:-${APP_DIR}}"
@@ -86,6 +87,9 @@ if [[ ! -x "${LOCKF_BIN}" ]]; then
 fi
 if [[ ! -x "${CURL_BIN}" ]]; then
   fail "curl is not executable"
+fi
+if [[ ! -x "${ORIGIN_VALIDATOR}" ]]; then
+  fail "HTTPS origin validator is not executable"
 fi
 if [[ ! -f "${COMPOSE_FILE}" || -L "${COMPOSE_FILE}" ]]; then
   fail "production Compose file is missing or unsafe"
@@ -219,7 +223,7 @@ public_smoke() {
     return 1
   fi
   IFS= read -r origin <"${SMOKE_ORIGIN_FILE}"
-  if [[ ! "${origin}" =~ ^https://[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]]; then
+  if ! "${ORIGIN_VALIDATOR}" "${origin}"; then
     return 1
   fi
   html="$("${CURL_BIN}" \

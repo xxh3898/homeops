@@ -83,13 +83,19 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Validate shell scripts
         if: needs.changes.outputs.infrastructure == 'true'
-        run: bash -n scripts/*.sh deploy/scripts/*.sh
+        run: bash -n scripts/*.sh scripts/fixtures/*.sh deploy/scripts/*.sh deploy/bootstrap/*.sh.example
       - name: Test path classifier
         if: needs.changes.outputs.infrastructure == 'true'
         run: ./scripts/test-classify-ci-paths.sh
       - name: Test deployment contract
         if: needs.changes.outputs.infrastructure == 'true'
         run: ./scripts/test-deploy-contract.sh
+      - name: Test HTTPS origin contract
+        if: needs.changes.outputs.infrastructure == 'true'
+        run: ./scripts/test-https-origin.sh
+      - name: Test deployment runtime state transitions
+        if: needs.changes.outputs.infrastructure == 'true'
+        run: ./scripts/test-deploy-runtime.sh
       - name: Render Compose definitions
         if: needs.changes.outputs.infrastructure == 'true'
         run: |

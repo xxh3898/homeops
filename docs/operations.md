@@ -9,7 +9,7 @@ This runbook describes contracts and checks. It is not authorization to change a
 | G0 read-only baseline | Host/runtime/repository inventory and decisions | documented; live values can drift |
 | G1 development | Focused Backend, Frontend, Agent tests with production isolation | completed locally; sequential Docker verification passed |
 | G2 path-aware CI | Classifier cases and stable required contexts | implemented; latest push and pull request Validate runs passed |
-| G3 deploy staging | Bootstrap identity, release shape, modes, idempotence, rollback | implemented as an example, not staged |
+| G3 deploy staging | Bootstrap identity, release shape, modes, idempotence, rollback | executable mock regression coverage passed locally; CI and live host staging not executed |
 | G4 initial migration | Empty dedicated DB migration and JPA validation | isolated PostgreSQL 18.4 initial migration, V1-to-V2 upgrade, and JPA validation passed |
 | G5 Agent | mTLS delivery, actual Mac metrics, Docker socket, spool recovery | not executed |
 | G6 tailnet/PWA | Serve identity, iPhone install, background recovery, no public access | not executed |
@@ -67,6 +67,7 @@ If `pending` remains, do not delete it automatically. Inspect the deployment log
 | migration failure | cutover stops | inspect Flyway and DB; prefer a forward fix |
 | API/Web health failure | previous digest-pinned images and runtime config attempted | verify rollback health and keep pending evidence |
 | tailnet smoke failure | workflow fails after local health | separate Serve/ACL/identity from application health |
+| first-deploy verification failure | API/Web are stopped; no accepted `current` state exists | preserve `pending` and the dedicated DB for diagnosis; do not delete the volume automatically |
 | Agent delivery failure | retryable pending delivery failure preserves FIFO and suppresses newer collection; a newly collected snapshot is queued when its delivery fails | verify API, mTLS, spool capacity, and clock without deleting spool files |
 | snapshot permanently rejected | consecutive permanent rejects are renamed to hidden `.rejected-*.json` evidence files in the same FIFO drain; fresh collection resumes after no retryable pending item remains | inspect only metadata and safe error status; rejected evidence still counts toward bounded spool capacity, so decide exact retention manually |
 | stale Agent | UI warns stale/offline | inspect the native process and Docker Desktop; no automatic restart |

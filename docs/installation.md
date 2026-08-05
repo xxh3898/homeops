@@ -34,7 +34,7 @@ Keep source and production state separate. A production directory contains only:
 - deployment state and operation locks;
 - the dedicated PostgreSQL volume managed by Docker.
 
-Do not copy the Git working tree into the production directory. Copy `deploy/env.example` to a private `.env` and replace every placeholder. Create a mode-restricted `smoke.origin` from `deploy/smoke.origin.example`; it contains exactly one tailnet HTTPS origin without a path. Do not commit either private file.
+Do not copy the Git working tree into the production directory. Copy `deploy/env.example` to a private `.env` and replace every placeholder. Create a mode-restricted `smoke.origin` from `deploy/smoke.origin.example`; it contains exactly one tailnet HTTPS origin without a path. Use the explicit `:9443` port when preserving existing Serve listeners on 443 and 8443. Do not commit either private file.
 
 ## 3. Create the Agent mTLS boundary
 

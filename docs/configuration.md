@@ -62,7 +62,7 @@ The directory mounted at `/run/homeops/tls` must contain:
 
 The Agent may use a different CA file name on the host, but it must trust the issuer of `server.crt`.
 
-The production directory also contains `smoke.origin`, a single-line tailnet HTTPS origin with no path. It is read only by the deployment worker so `current` is not advanced before root, representative asset, and readiness checks pass. Treat the host name as private operational metadata.
+The production directory also contains `smoke.origin`, a single-line tailnet HTTPS origin with no path, query, fragment, credentials, or trailing slash. A decimal port from 1 through 65535 may follow the DNS host, for example `:9443`; ports with leading zeroes are rejected. It is read only by the deployment worker so `current` is not advanced before root, representative asset, and readiness checks pass. Treat the host name as private operational metadata.
 
 ## Container labels
 
@@ -89,7 +89,7 @@ Secrets:
 - `TS_AUDIENCE`
 - `HOME_MINI_SSH_KEY`, a HomeOps-specific CI key
 - `HOME_MINI_KNOWN_HOSTS`
-- `HOMEOPS_SMOKE_URL`, the tailnet HTTPS origin without a path
+- `HOMEOPS_SMOKE_URL`, the tailnet HTTPS origin without a path; it may use the same explicit port as `smoke.origin`
 
 Use a tagged Tailscale OAuth client with the narrowest grants. Protect the Production environment. Do not use a human SSH private key in Actions.
 
