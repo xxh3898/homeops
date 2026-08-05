@@ -80,6 +80,9 @@ assert_absent "${WORKER}" '^https://[A-Za-z0-9][A-Za-z0-9.-]{0,252}$'
 
 assert_contains "${ORIGIN_VALIDATOR}" '^https://([A-Za-z0-9.-]+)(:([0-9]+))?$'
 assert_contains "${ORIGIN_VALIDATOR}" '10#${PORT} > 65535'
+assert_contains "${RUNTIME_CONFIG_DOCKERFILE}" 'COPY deploy/scripts/deploy-homeops.sh ./scripts/deploy-homeops.sh'
+assert_contains "${RUNTIME_CONFIG_DOCKERFILE}" 'COPY deploy/scripts/validate-https-origin.sh ./scripts/validate-https-origin.sh'
+assert_absent "${RUNTIME_CONFIG_DOCKERFILE}" 'COPY deploy/scripts ./scripts'
 assert_contains "${RUNTIME_CONFIG_DOCKERFILE}" './scripts/validate-https-origin.sh'
 
 assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_API_IMAGE=ghcr.io/example/homeops-api@sha256:'
@@ -90,6 +93,7 @@ assert_contains "${AGENT_DOCKERFILE}" 'sha256sum homeops-agent >homeops-agent.sh
 assert_contains "${AGENT_BOOTSTRAP}" '^rollout-homeops-agent-v1[[:space:]]'
 assert_contains "${AGENT_BOOTSTRAP}" 'AGENT_REPOSITORY=ghcr.io/REPLACE_ME/homeops-agent'
 assert_contains "${AGENT_BOOTSTRAP}" 'Agent artifact revision is invalid'
+assert_contains "${AGENT_BOOTSTRAP}" 'create "${agent_image}" /homeops-agent'
 assert_contains "${AGENT_WORKER}" 'readonly AGENT_LABEL=dev.homeops.agent'
 assert_contains "${AGENT_WORKER}" 'candidate Agent restart or fresh snapshot confirmation failed; previous release restored'
 assert_absent "${AGENT_WORKER}" 'SSH_ORIGINAL_COMMAND'
