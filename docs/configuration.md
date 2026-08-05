@@ -35,6 +35,11 @@ Every secret and host-specific value stays outside Git. Example values use reser
 | `HOMEOPS_INGESTION_SHARED_SECRET` | Phase 3 integration | yes | Shared HMAC secret for trusted deployment/backup-result scripts; blank disables ingestion (fail closed) |
 | `HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE` | no | no | Oldest accepted signed request; default `5m` |
 | `HOMEOPS_INGESTION_ALLOWED_FUTURE_SKEW` | no | no | Accepted sender clock skew; default `1m` |
+| `HOMEOPS_MONITORING_ALLOWED_ORIGINS` | Phase 3 checks | private | Comma-separated exact HTTPS origins allowed for service checks; blank disables registration |
+| `HOMEOPS_HEALTHY_RESULT_RETENTION` | no | no | Healthy check retention; default `7d` |
+| `HOMEOPS_FAILURE_RESULT_RETENTION` | no | no | Failed check retention; default `30d` |
+| `HOMEOPS_MONITORING_SCHEDULER_DELAY` | no | no | Due-service scan delay; default `5s` |
+| `HOMEOPS_MONITORING_CLEANUP_CRON` | no | no | Check-result cleanup cron in UTC |
 
 `HOMEOPS_AUTH_MODE=DEV` is accepted only with the Spring `dev` profile. Never set it in a production environment.
 
@@ -46,6 +51,12 @@ The ingestion endpoints are intentionally disabled while `HOMEOPS_INGESTION_SHAR
 - `X-HomeOps-Ingestion-Signature`: lowercase hexadecimal HMAC-SHA-256 of `timestamp + "." + raw-request-body`, using the shared secret.
 
 The API accepts only requests inside the configured time window. Never put the secret in a command line, repository variable, shell trace, deployment output, or the event payload. An event key identifies one deployment or backup lifecycle: the exact retry is accepted as a duplicate, a valid active-state transition updates the event, and a conflicting or terminal-state change is rejected. Backup `logicalLocation` is a logical identifier, never an absolute host path.
+
+The bundled host reporter is `runtime-config/current/scripts/report-homeops-event.py`. It reads `HOMEOPS_INGESTION_SHARED_SECRET` from the mode-`0600` HomeOps `.env` and the HTTPS origin from the existing mode-`0600` `smoke.origin`; use a generated 64-character lowercase hexadecimal secret so the reporter and API share one value without a second secret file. Before sending, it writes a mode-`0600` event under `/Users/homeserver/Server/data/homeops/ingestion-spool`, serializes drains with a file lock, keeps failed deliveries for a later invocation, limits each drain, and refuses redirects. The integration protocol does not pass the secret to a caller, but this is not an isolation boundary against another process already compromised under the same macOS account.
+
+## Service check boundary
+
+Service checks are fail-closed until `HOMEOPS_MONITORING_ALLOWED_ORIGINS` contains one or more exact HTTPS origins. Include an explicit non-default port when the service uses one, for example `https://homeops.example.ts.net:9443`. Paths and query parameters belong to each monitored service URL, not to the origin allowlist. User info and URL fragments are rejected, redirects are not followed, and each request uses the configured timeout. This exact-origin policy prevents an authenticated settings request from turning HomeOps into a general-purpose network client.
 
 ## Native Agent environment
 

@@ -31,6 +31,8 @@ Before running, confirm memory pressure, disk headroom, active production health
 
 ## Deployment transaction
 
+Phase 3 ingestion activation is a separate host operation after the source releases are merged. Confirm the HomeOps `.env` contains one generated 64-character lowercase hexadecimal `HOMEOPS_INGESTION_SHARED_SECRET`, `smoke.origin` is the intended tailnet HTTPS origin, both files remain owner-only mode `0600`, and `/Users/homeserver/Server/data/homeops/ingestion-spool` is owner-only mode `0700`. Cubing Hub and Guess Pokémon begin emitting events only after their own runtime-config releases containing the hook are deployed. A reporter warning must not be treated as a failed application deploy or backup; inspect the spool and HomeOps ingestion health separately.
+
 The GitHub workflow performs:
 
 1. reusable full validation on `main`;
