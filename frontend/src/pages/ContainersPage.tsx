@@ -19,11 +19,13 @@ export function ContainersPage() {
   if (query.isPending) {
     return <div className="h-40 animate-pulse rounded-2xl bg-white/5" aria-label="Loading containers" />
   }
-  if (query.isError) {
+  if (query.data === undefined) {
     return (
       <Card className="border-rose-400/30">
         <p className="font-semibold text-rose-200">Unable to load containers</p>
-        <p className="mt-2 text-sm text-slate-400">{query.error.message}</p>
+        <p className="mt-2 text-sm text-slate-400">
+          {query.error?.message ?? 'No cached container snapshot is available.'}
+        </p>
         <button
           type="button"
           className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-xl bg-white/10 px-4 text-sm font-semibold"
