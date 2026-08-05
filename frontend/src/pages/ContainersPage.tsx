@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
-import { Box, RefreshCw } from 'lucide-react'
+import { useState } from 'react'
+import { Box, ChevronDown, RefreshCw } from 'lucide-react'
 import { getContainers, isAuthorizationError, isConnectionError } from '../api/client'
+import type { ContainerView } from '../api/types'
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { usePageVisible } from '../hooks/usePageVisible'
 import { Card } from '../ui/Card'
@@ -10,6 +12,7 @@ import { formatBytes, formatContainerCpu, formatTimestamp } from '../utils/forma
 export function ContainersPage() {
   const visible = usePageVisible()
   const online = useOnlineStatus()
+  const [expandedProject, setExpandedProject] = useState<string | null>(null)
   const query = useQuery({
     queryKey: ['containers'],
     queryFn: ({ signal }) => getContainers(signal),
@@ -41,6 +44,7 @@ export function ContainersPage() {
   const staleMessage = isConnectionError(query.error)
     ? query.error.message
     : 'This container snapshot is stale. Do not treat displayed states as current.'
+  const projectGroups = groupContainers(inventory.containers)
 
   return (
     <div className="space-y-3">
@@ -70,36 +74,128 @@ export function ContainersPage() {
           <p className="mt-2 text-sm text-slate-400">The Agent has not reported any containers yet.</p>
         </Card>
       )}
-      {inventory.containers.map((container) => (
-        <Card key={container.id}>
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="truncate font-semibold">{container.name}</p>
-              <p className="mt-1 truncate text-xs text-slate-500">{container.image}</p>
-            </div>
-            <StatusBadge
-              status={effectivelyStale ? 'STALE' : container.health === 'NONE' ? container.state : container.health}
-            />
-          </div>
-          <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
-            <Detail label="Project" value={container.composeProject ?? 'Standalone'} />
-            <Detail label="Container ID" value={container.id} mono />
-            <Detail label="State" value={container.state} />
-            <Detail label="Restarts" value={String(container.restartCount)} />
-            <Detail label="CPU" value={formatContainerCpu(container.cpuUsagePercent)} />
-            <Detail
-              label="Memory"
-              value={formatContainerMemory(container.memoryUsageBytes, container.memoryLimitBytes)}
-            />
-            <Detail label="Ports" value={formatPorts(container.ports)} />
-            <Detail label="Started" value={formatTimestamp(container.startedAt)} />
-            <Detail label="Control" value={container.managed ? 'Eligible later' : 'Read only'} />
-          </dl>
-          {container.status && <p className="mt-4 rounded-lg bg-black/20 px-3 py-2 text-xs text-slate-400">{container.status}</p>}
-        </Card>
-      ))}
+      {projectGroups.map((project) => {
+        const isExpanded = expandedProject === project.key
+        const contentId = `project-containers-${project.key}`
+        return (
+          <Card key={project.key} className="overflow-hidden p-0">
+            <button
+              type="button"
+              className="flex min-h-16 w-full items-center justify-between gap-3 px-4 py-3 text-left"
+              aria-expanded={isExpanded}
+              aria-controls={contentId}
+              onClick={() => setExpandedProject(isExpanded ? null : project.key)}
+            >
+              <div className="min-w-0">
+                <p className="truncate font-semibold">{project.name}</p>
+                <p className="mt-1 text-xs text-slate-500">{projectSummary(project.containers)}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <StatusBadge status={projectStatus(project.containers, effectivelyStale)} />
+                <ChevronDown
+                  aria-hidden="true"
+                  size={18}
+                  className={`text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                />
+              </div>
+            </button>
+            {isExpanded && (
+              <div id={contentId} className="space-y-3 border-t border-white/10 bg-black/10 p-3">
+                {project.containers.map((container) => (
+                  <ContainerCard key={container.id} container={container} stale={effectivelyStale} />
+                ))}
+              </div>
+            )}
+          </Card>
+        )
+      })}
     </div>
   )
+}
+
+function ContainerCard({ container, stale }: { container: ContainerView; stale: boolean }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-slate-950/60 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate font-semibold">{container.name}</p>
+          <p className="mt-1 truncate text-xs text-slate-500">{container.image}</p>
+        </div>
+        <StatusBadge status={stale ? 'STALE' : container.health === 'NONE' ? container.state : container.health} />
+      </div>
+      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+        <Detail label="Project" value={container.composeProject ?? 'Standalone'} />
+        <Detail label="Container ID" value={container.id} mono />
+        <Detail label="State" value={container.state} />
+        <Detail label="Restarts" value={String(container.restartCount)} />
+        <Detail label="CPU" value={formatContainerCpu(container.cpuUsagePercent)} />
+        <Detail
+          label="Memory"
+          value={formatContainerMemory(container.memoryUsageBytes, container.memoryLimitBytes)}
+        />
+        <Detail label="Ports" value={formatPorts(container.ports)} />
+        <Detail label="Started" value={formatTimestamp(container.startedAt)} />
+        <Detail label="Control" value={container.managed ? 'Eligible later' : 'Read only'} />
+      </dl>
+      {container.status && <p className="mt-4 rounded-lg bg-black/20 px-3 py-2 text-xs text-slate-400">{container.status}</p>}
+    </div>
+  )
+}
+
+interface ProjectGroup {
+  key: string
+  name: string
+  containers: ContainerView[]
+}
+
+function groupContainers(containers: ContainerView[]): ProjectGroup[] {
+  const groups = new Map<string, ProjectGroup>()
+  for (const container of containers) {
+    const projectName = container.composeProject?.trim()
+    const key = projectName ? `compose:${projectName}` : 'standalone'
+    const existing = groups.get(key)
+    if (existing) {
+      existing.containers.push(container)
+      continue
+    }
+    groups.set(key, {
+      key,
+      name: projectName ? formatProjectName(projectName) : 'Standalone',
+      containers: [container],
+    })
+  }
+  return [...groups.values()]
+    .map((group) => ({ ...group, containers: [...group.containers].sort((left, right) => left.name.localeCompare(right.name)) }))
+    .sort((left, right) => left.name.localeCompare(right.name))
+}
+
+function formatProjectName(project: string) {
+  if (project.toLowerCase() === 'homeops') {
+    return 'HomeOps'
+  }
+  return project
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ')
+}
+
+function projectSummary(containers: ContainerView[]) {
+  const running = containers.filter((container) => container.state === 'RUNNING').length
+  return `${containers.length} container${containers.length === 1 ? '' : 's'} · ${running} running`
+}
+
+function projectStatus(containers: ContainerView[], stale: boolean) {
+  if (stale) {
+    return 'STALE'
+  }
+  if (containers.some((container) => container.health === 'UNHEALTHY')) {
+    return 'UNHEALTHY'
+  }
+  if (containers.some((container) => container.state !== 'RUNNING')) {
+    return 'NOT RUNNING'
+  }
+  return 'RUNNING'
 }
 
 function formatPorts(ports: Array<{ privatePort: number; publicPort: number | null; type: string }>) {
