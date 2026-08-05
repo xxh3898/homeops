@@ -163,27 +163,47 @@ func parseMemoryUsed(output string, total uint64) (uint64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("parse memory page size: %w", err)
 	}
-	var freePages uint64
+	if pageSize == 0 {
+		return 0, errors.New("parse memory usage: page size must be positive")
+	}
+
+	usedPagesByName := make(map[string]uint64, 2)
 	for _, line := range strings.Split(output, "\n") {
 		match := pageLinePattern.FindStringSubmatch(strings.TrimSpace(line))
 		if len(match) != 3 {
 			continue
 		}
 		name := strings.TrimSpace(match[1])
-		if name != "free" && name != "speculative" {
+		if name != "active" && name != "wired down" {
 			continue
+		}
+		if _, exists := usedPagesByName[name]; exists {
+			return 0, fmt.Errorf("parse memory usage: duplicate Pages %s", name)
 		}
 		pages, parseErr := strconv.ParseUint(match[2], 10, 64)
 		if parseErr != nil {
 			return 0, fmt.Errorf("parse memory pages: %w", parseErr)
 		}
-		freePages += pages
+		usedPagesByName[name] = pages
 	}
-	freeBytes := freePages * pageSize
-	if freeBytes > total {
-		return 0, errors.New("parse memory usage: free memory exceeds total")
+
+	activePages, hasActive := usedPagesByName["active"]
+	wiredPages, hasWired := usedPagesByName["wired down"]
+	if !hasActive || !hasWired {
+		return 0, errors.New("parse memory usage: active or wired pages not found")
 	}
-	return total - freeBytes, nil
+	if activePages > ^uint64(0)-wiredPages {
+		return 0, errors.New("parse memory usage: used page count overflows")
+	}
+	usedPages := activePages + wiredPages
+	if usedPages > ^uint64(0)/pageSize {
+		return 0, errors.New("parse memory usage: used byte count overflows")
+	}
+	usedBytes := usedPages * pageSize
+	if usedBytes > total {
+		return 0, errors.New("parse memory usage: used memory exceeds total")
+	}
+	return usedBytes, nil
 }
 
 func disk(path string) (uint64, uint64, error) {
