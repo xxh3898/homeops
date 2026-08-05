@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Cpu, Database, HardDrive, MemoryStick, RefreshCw, Timer } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { getSystemSummary } from '../api/client'
+import { getSystemSummary, isAuthorizationError } from '../api/client'
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { usePageVisible } from '../hooks/usePageVisible'
 import { Card } from '../ui/Card'
@@ -20,7 +20,7 @@ export function OverviewPage() {
   if (query.isPending) {
     return <OverviewSkeleton />
   }
-  if (query.data === undefined) {
+  if (isAuthorizationError(query.error) || query.data === undefined) {
     return (
       <Card className="border-rose-400/30">
         <h2 className="font-semibold text-rose-200">Unable to load HomeOps</h2>

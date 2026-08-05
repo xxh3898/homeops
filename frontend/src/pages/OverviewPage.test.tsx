@@ -1,13 +1,15 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '../api/client'
 import { OverviewPage } from './OverviewPage'
 
 const mocks = vi.hoisted(() => ({
   getSystemSummary: vi.fn(),
 }))
 
-vi.mock('../api/client', () => ({
+vi.mock('../api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api/client')>()),
   getSystemSummary: mocks.getSystemSummary,
 }))
 vi.mock('../hooks/useOnlineStatus', () => ({
@@ -50,6 +52,24 @@ describe('OverviewPage', () => {
     expect(screen.getByText(/Last collected/)).toBeInTheDocument()
     expect(screen.getByText('STALE')).toBeInTheDocument()
     expect(screen.queryByText('Unable to load HomeOps')).not.toBeInTheDocument()
+  })
+
+  it.each([401, 403])('blocks cached summary after a background refetch returns status %s', async (status) => {
+    const error = new ApiError(status, 'Tailscale identity is not authorized for HomeOps.')
+    mocks.getSystemSummary.mockResolvedValueOnce(systemSummary()).mockRejectedValueOnce(error)
+    const { queryClient } = renderPage()
+
+    expect(await screen.findByText('System overview')).toBeInTheDocument()
+    expect(screen.getByText('12.5%')).toBeInTheDocument()
+
+    await queryClient.refetchQueries({ queryKey: ['system-summary'] })
+
+    expect(await screen.findByText('Unable to load HomeOps')).toBeInTheDocument()
+    expect(screen.getByText(error.message)).toBeInTheDocument()
+    expect(screen.queryByText('System overview')).not.toBeInTheDocument()
+    expect(screen.queryByText('12.5%')).not.toBeInTheDocument()
+    expect(screen.queryByText('This snapshot is stale. Do not treat the displayed state as current.'))
+      .not.toBeInTheDocument()
   })
 })
 

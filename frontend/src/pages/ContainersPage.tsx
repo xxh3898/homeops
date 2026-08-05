@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Box, RefreshCw } from 'lucide-react'
-import { getContainers } from '../api/client'
+import { getContainers, isAuthorizationError } from '../api/client'
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { usePageVisible } from '../hooks/usePageVisible'
 import { Card } from '../ui/Card'
@@ -19,7 +19,7 @@ export function ContainersPage() {
   if (query.isPending) {
     return <div className="h-40 animate-pulse rounded-2xl bg-white/5" aria-label="Loading containers" />
   }
-  if (query.data === undefined) {
+  if (isAuthorizationError(query.error) || query.data === undefined) {
     return (
       <Card className="border-rose-400/30">
         <p className="font-semibold text-rose-200">Unable to load containers</p>

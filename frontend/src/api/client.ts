@@ -10,6 +10,14 @@ export class ApiError extends Error {
   }
 }
 
+export function isAuthorizationError(error: unknown): error is ApiError {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403)
+}
+
+export function shouldRetryQuery(failureCount: number, error: unknown) {
+  return !isAuthorizationError(error) && failureCount < 1
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path, {
     method: 'GET',

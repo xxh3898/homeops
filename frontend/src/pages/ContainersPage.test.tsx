@@ -1,13 +1,15 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '../api/client'
 import { ContainersPage } from './ContainersPage'
 
 const mocks = vi.hoisted(() => ({
   getContainers: vi.fn(),
 }))
 
-vi.mock('../api/client', () => ({
+vi.mock('../api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api/client')>()),
   getContainers: mocks.getContainers,
 }))
 vi.mock('../hooks/useOnlineStatus', () => ({
@@ -49,6 +51,22 @@ describe('ContainersPage', () => {
     expect(screen.getByText(/Last collected/)).toBeInTheDocument()
     expect(screen.getAllByText('STALE')).toHaveLength(2)
     expect(screen.queryByText('Unable to load containers')).not.toBeInTheDocument()
+  })
+
+  it.each([401, 403])('blocks cached inventory after a background refetch returns status %s', async (status) => {
+    const error = new ApiError(status, 'Tailscale identity is not authorized for HomeOps.')
+    mocks.getContainers.mockResolvedValueOnce(containerInventory()).mockRejectedValueOnce(error)
+    const { queryClient } = renderPage()
+
+    expect(await screen.findByText('homeops-api')).toBeInTheDocument()
+
+    await queryClient.refetchQueries({ queryKey: ['containers'] })
+
+    expect(await screen.findByText('Unable to load containers')).toBeInTheDocument()
+    expect(screen.getByText(error.message)).toBeInTheDocument()
+    expect(screen.queryByText('homeops-api')).not.toBeInTheDocument()
+    expect(screen.queryByText('This container snapshot is stale. Do not treat displayed states as current.'))
+      .not.toBeInTheDocument()
   })
 
   it('marks inventory and container state stale when Agent snapshot is stale', async () => {
