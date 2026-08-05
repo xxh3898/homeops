@@ -3,12 +3,14 @@ package dev.homeops.monitoring.api;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import dev.homeops.common.ApiExceptionHandler;
-import dev.homeops.monitoring.MonitoredServiceStore;
+import dev.homeops.monitoring.SafeServiceUrlPolicy.UnsafeServiceUrlException;
 import java.util.UUID;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
@@ -20,18 +22,18 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 @ExtendWith(MockitoExtension.class)
 class MonitoringControllerTest {
-    @Mock private MonitoredServiceStore store;
+    @Mock private MonitoringService service;
     private MockMvc mockMvc;
 
     @BeforeEach void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(new MonitoringController(store))
+        mockMvc = MockMvcBuilders.standaloneSetup(new MonitoringController(service))
                 .setControllerAdvice(new ApiExceptionHandler()).build();
     }
 
     @Test
     void should_createService_when_requestIsValid() throws Exception {
         UUID id = UUID.fromString("10000000-0000-0000-0000-000000000100");
-        when(store.create(any())).thenReturn(new MonitoredServiceResponse(id, "HomeOps", "https://homeops.example.invalid/health", "GET", 200, 3000, 30, 3, 2, "WARNING", true, true));
+        when(service.create(any())).thenReturn(new MonitoredServiceResponse(id, "HomeOps", "https://homeops.example.invalid/health", "GET", 200, 3000, 30, 3, 2, "WARNING", true, true));
 
         mockMvc.perform(post("/api/v1/services").contentType(MediaType.APPLICATION_JSON).content(validJson()))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.id").value(id.toString()));
@@ -42,6 +44,29 @@ class MonitoringControllerTest {
         mockMvc.perform(post("/api/v1/services").contentType(MediaType.APPLICATION_JSON)
                         .content(validJson().replace("https://homeops.example.invalid/health", "file:///private/path")))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.title").value("Invalid request"));
+    }
+
+    @Test
+    void should_rejectService_when_originIsNotAllowlisted() throws Exception {
+        when(service.create(any())).thenThrow(new UnsafeServiceUrlException());
+
+        mockMvc.perform(post("/api/v1/services")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validJson()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.title").value("Unsafe service URL"));
+    }
+
+    @Test
+    void should_returnCurrentStatuses_when_requested() throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000100");
+        when(service.currentStatuses()).thenReturn(List.of(new ServiceStatusResponse(
+                id, "HomeOps", true, "HEALTHY", java.time.Instant.parse("2026-08-06T12:00:00Z"),
+                200, 25, false)));
+
+        mockMvc.perform(get("/api/v1/services/status"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].status").value("HEALTHY"));
     }
 
     private static String validJson() { return """

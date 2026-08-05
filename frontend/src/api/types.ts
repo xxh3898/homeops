@@ -49,3 +49,19 @@ export interface ContainerInventory {
   stale: boolean
   containers: ContainerView[]
 }
+
+export interface ActivityEvent {
+  id: string
+  type: 'DEPLOYMENT' | 'BACKUP' | 'INCIDENT' | 'AGENT'
+  title: string
+  status: string
+  severity: 'INFO' | 'WARNING' | 'CRITICAL' | 'RECOVERY'
+  occurredAt: string
+  context: string
+}
+
+export interface ActivityPage {
+  items: ActivityEvent[]
+  nextCursor: string | null
+  generatedAt: string
+}

@@ -1,5 +1,7 @@
 package dev.homeops.common;
 
+import dev.homeops.activity.InvalidActivityCursorException;
+import dev.homeops.monitoring.SafeServiceUrlPolicy.UnsafeServiceUrlException;
 import java.net.URI;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -45,9 +47,28 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler({EventKeyConflictException.class, InvalidIngestionStateTransitionException.class})
     ProblemDetail handleIngestionConflict(RuntimeException exception) {
-        ProblemDetail detail = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT, exception.getMessage());
         detail.setType(URI.create("urn:homeops:problem:ingestion-conflict"));
         detail.setTitle("Ingestion request conflicts with existing state");
+        return detail;
+    }
+
+    @ExceptionHandler(UnsafeServiceUrlException.class)
+    ProblemDetail handleUnsafeServiceUrl(UnsafeServiceUrlException exception) {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST, exception.getMessage());
+        detail.setType(URI.create("urn:homeops:problem:unsafe-service-url"));
+        detail.setTitle("Unsafe service URL");
+        return detail;
+    }
+
+    @ExceptionHandler(InvalidActivityCursorException.class)
+    ProblemDetail handleInvalidActivityCursor(InvalidActivityCursorException exception) {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST, exception.getMessage());
+        detail.setType(URI.create("urn:homeops:problem:invalid-activity-cursor"));
+        detail.setTitle("Invalid activity cursor");
         return detail;
     }
 }

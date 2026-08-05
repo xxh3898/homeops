@@ -78,6 +78,8 @@ public class SecurityConfig {
                         .hasRole("INGESTION")
                         .requestMatchers(HttpMethod.GET, "/api/v1/**")
                         .hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/services")
+                        .hasRole("ADMIN")
                         .anyRequest().denyAll())
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(

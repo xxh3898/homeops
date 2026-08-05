@@ -61,3 +61,9 @@ homeops:
     shared-secret: ${HOMEOPS_INGESTION_SHARED_SECRET:}
     maximum-request-age: ${HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE:5m}
     allowed-future-skew: ${HOMEOPS_INGESTION_ALLOWED_FUTURE_SKEW:1m}
+  monitoring:
+    allowed-origins: ${HOMEOPS_MONITORING_ALLOWED_ORIGINS:}
+    healthy-result-retention: ${HOMEOPS_HEALTHY_RESULT_RETENTION:7d}
+    failure-result-retention: ${HOMEOPS_FAILURE_RESULT_RETENTION:30d}
+    scheduler-delay: ${HOMEOPS_MONITORING_SCHEDULER_DELAY:5s}
+    cleanup-cron: ${HOMEOPS_MONITORING_CLEANUP_CRON:0 29 3 * * *}

@@ -10,6 +10,7 @@ import dev.homeops.agent.config.HomeOpsAgentProperties;
 import dev.homeops.agent.domain.ReceivedAgentSnapshot;
 import dev.homeops.agent.persistence.AgentStatusEntity;
 import dev.homeops.agent.persistence.AgentStatusRepository;
+import dev.homeops.agent.persistence.AgentActivityStore;
 import dev.homeops.agent.persistence.HostMetricAggregateEntity;
 import dev.homeops.agent.persistence.HostMetricAggregateRepository;
 import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
@@ -38,6 +39,7 @@ public class AgentSnapshotService {
     private final AgentStatusRepository agentStatusRepository;
     private final HostMetricAggregateRepository metricRepository;
     private final ProcessedAgentSnapshotStore processedSnapshotStore;
+    private final AgentActivityStore agentActivityStore;
     private final Clock clock;
     private final AtomicReference<ReceivedAgentSnapshot> latest =
             new AtomicReference<>();
@@ -47,12 +49,14 @@ public class AgentSnapshotService {
             HomeOpsAgentProperties properties,
             AgentStatusRepository agentStatusRepository,
             HostMetricAggregateRepository metricRepository,
-            ProcessedAgentSnapshotStore processedSnapshotStore) {
+            ProcessedAgentSnapshotStore processedSnapshotStore,
+            AgentActivityStore agentActivityStore) {
         this(
                 properties,
                 agentStatusRepository,
                 metricRepository,
                 processedSnapshotStore,
+                agentActivityStore,
                 Clock.systemUTC());
     }
 
@@ -61,11 +65,13 @@ public class AgentSnapshotService {
             AgentStatusRepository agentStatusRepository,
             HostMetricAggregateRepository metricRepository,
             ProcessedAgentSnapshotStore processedSnapshotStore,
+            AgentActivityStore agentActivityStore,
             Clock clock) {
         this.properties = properties;
         this.agentStatusRepository = agentStatusRepository;
         this.metricRepository = metricRepository;
         this.processedSnapshotStore = processedSnapshotStore;
+        this.agentActivityStore = agentActivityStore;
         this.clock = clock;
     }
 
@@ -97,9 +103,12 @@ public class AgentSnapshotService {
                     true);
         }
 
-        AgentStatusEntity status = agentStatusRepository
-                .findById(request.agentId())
-                .orElseGet(() -> AgentStatusEntity.create(request.agentId()));
+        Optional<AgentStatusEntity> persistedStatus = agentStatusRepository.findById(request.agentId());
+        AgentStatusEntity status = persistedStatus.orElseGet(() -> AgentStatusEntity.create(request.agentId()));
+        boolean firstConnection = persistedStatus.isEmpty();
+        boolean versionChanged = persistedStatus
+                .map(existing -> !existing.getAgentVersion().equals(request.agentVersion()))
+                .orElse(false);
         Instant bucket = request.capturedAt().truncatedTo(ChronoUnit.MINUTES);
         Optional<HostMetricAggregateEntity> existingAggregate = metricRepository
                 .findByAgentIdAndBucketStart(request.agentId(), bucket);
@@ -121,6 +130,10 @@ public class AgentSnapshotService {
                 request.capturedAt(),
                 receivedAt);
         agentStatusRepository.save(status);
+        if (firstConnection || versionChanged) {
+            agentActivityStore.recordConnection(
+                    request.agentId(), request.agentVersion(), receivedAt, versionChanged);
+        }
         publishLatestAfterCommit(new ReceivedAgentSnapshot(request, receivedAt));
 
         return new AgentSnapshotAcceptedResponse(

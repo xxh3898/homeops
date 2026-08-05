@@ -14,6 +14,7 @@ import dev.homeops.agent.api.AgentSnapshotRequest;
 import dev.homeops.agent.api.AgentStatusResponse.ConnectionStatus;
 import dev.homeops.agent.config.HomeOpsAgentProperties;
 import dev.homeops.agent.persistence.AgentStatusEntity;
+import dev.homeops.agent.persistence.AgentActivityStore;
 import dev.homeops.agent.persistence.AgentStatusRepository;
 import dev.homeops.agent.persistence.HostMetricAggregateRepository;
 import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
@@ -44,6 +45,9 @@ class AgentSnapshotServiceTest {
     @Mock
     private ProcessedAgentSnapshotStore processedSnapshotStore;
 
+    @Mock
+    private AgentActivityStore agentActivityStore;
+
     private AgentSnapshotService service;
 
     @BeforeEach
@@ -60,6 +64,7 @@ class AgentSnapshotServiceTest {
                 agentStatusRepository,
                 metricRepository,
                 processedSnapshotStore,
+                agentActivityStore,
                 Clock.fixed(NOW, ZoneOffset.UTC));
         lenient().when(processedSnapshotStore.recordIfAbsent(
                 anyString(), any(), any(), any()))
@@ -89,6 +94,7 @@ class AgentSnapshotServiceTest {
         assertThat(service.containerInventory().containers()).hasSize(1);
         verify(agentStatusRepository).save(any(AgentStatusEntity.class));
         verify(metricRepository).save(any());
+        verify(agentActivityStore).recordConnection("local-mac", request.agentVersion(), NOW, false);
     }
 
     @Test
@@ -109,6 +115,23 @@ class AgentSnapshotServiceTest {
         assertThat(accepted.duplicate()).isTrue();
         verify(metricRepository, never()).save(any());
         verify(agentStatusRepository, never()).save(any());
+        verify(agentActivityStore, never()).recordConnection(anyString(), anyString(), any(),
+                org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void should_notRecordActivity_when_agentVersionIsUnchanged() {
+        UUID snapshotId = UUID.fromString("10000000-0000-0000-0000-000000000012");
+        AgentSnapshotRequest request = AgentSnapshotFixtures.snapshot(snapshotId, NOW.minusSeconds(1));
+        AgentStatusEntity status = AgentStatusEntity.create("local-mac");
+        status.recordSnapshot(UUID.randomUUID(), request.agentVersion(), NOW.minusSeconds(6), NOW.minusSeconds(5));
+        when(agentStatusRepository.findById("local-mac")).thenReturn(Optional.of(status));
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any())).thenReturn(Optional.empty());
+
+        service.accept(request);
+
+        verify(agentActivityStore, never()).recordConnection(anyString(), anyString(), any(),
+                org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     @Test

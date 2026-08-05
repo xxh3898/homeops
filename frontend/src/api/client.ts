@@ -1,4 +1,4 @@
-import type { ContainerInventory, SystemSummary } from './types'
+import type { ActivityPage, ContainerInventory, SystemSummary } from './types'
 
 export const API_REQUEST_TIMEOUT_MS = 8_000
 export const API_CONNECTION_ERROR_MESSAGE =
@@ -140,4 +140,10 @@ export function getSystemSummary(signal?: AbortSignal) {
 
 export function getContainers(signal?: AbortSignal) {
   return getJson<ContainerInventory>('/api/v1/containers', signal)
+}
+
+export function getActivity(cursor?: string, signal?: AbortSignal) {
+  const parameters = new URLSearchParams({ limit: '25' })
+  if (cursor) parameters.set('cursor', cursor)
+  return getJson<ActivityPage>(`/api/v1/activity?${parameters}`, signal)
 }

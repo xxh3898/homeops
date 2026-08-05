@@ -79,4 +79,26 @@ compose exec --no-TTY web \
   wget -qO- http://127.0.0.1:8080/actuator/health/readiness \
   | /usr/bin/grep -q '"status":"UP"'
 
-printf 'Nginx Web-to-API readiness regression test passed\n'
+compose exec --no-TTY db psql \
+  --username homeops \
+  --dbname homeops \
+  --set ON_ERROR_STOP=1 \
+  --command "INSERT INTO agent_event (id, agent_id, event_type, agent_version, occurred_at, summary) VALUES ('10000000-0000-0000-0000-000000000001', 'readiness-test-agent', 'CONNECTED', 'readiness-test', CURRENT_TIMESTAMP, 'Agent connected')" \
+  >/dev/null
+activity_response="$(
+  compose exec --no-TTY web wget \
+    --quiet \
+    --output-document=- \
+    --header='Tailscale-User-Login: owner@example.invalid' \
+    'http://127.0.0.1:8080/api/v1/activity?limit=25'
+)"
+printf '%s' "${activity_response}" | /usr/bin/grep -q '"type":"AGENT"'
+printf '%s' "${activity_response}" | /usr/bin/grep -q '"nextCursor":null'
+
+/bin/sleep 6
+if compose logs --no-color api | /usr/bin/grep -q 'Unexpected error occurred in scheduled task'; then
+  printf 'Service-check scheduler raised an unexpected error\n' >&2
+  exit 1
+fi
+
+printf 'Nginx Web-to-API readiness and Activity regression test passed\n'
