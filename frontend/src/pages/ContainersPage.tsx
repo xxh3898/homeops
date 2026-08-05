@@ -195,6 +195,12 @@ function projectStatus(containers: ContainerView[], stale: boolean) {
   if (containers.some((container) => container.state !== 'RUNNING')) {
     return 'NOT RUNNING'
   }
+  if (containers.some((container) => container.health === 'UNKNOWN')) {
+    return 'UNKNOWN'
+  }
+  if (containers.some((container) => container.health === 'STARTING')) {
+    return 'STARTING'
+  }
   return 'RUNNING'
 }
 

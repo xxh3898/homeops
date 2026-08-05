@@ -134,6 +134,17 @@ describe('ContainersPage', () => {
     expect(screen.getByText('guess-pokemon-api-1')).toBeInTheDocument()
     expect(screen.queryByText('cubing-hub-web-1')).not.toBeInTheDocument()
   })
+
+  it.each(['STARTING', 'UNKNOWN'] as const)('shows %s health on a collapsed project', async (health) => {
+    mocks.getContainers.mockResolvedValue(containerInventory({ containers: projectWithHealth(health) }))
+
+    renderPage()
+
+    const project = await screen.findByRole('button', { name: /Cubing Hub/i })
+    expect(project).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByText(health)).toBeInTheDocument()
+    expect(screen.queryByText('cubing-hub-api-1')).not.toBeInTheDocument()
+  })
 })
 
 function renderPage() {
@@ -227,6 +238,27 @@ function groupedContainers(): ContainerView[] {
       image: 'example/pokemon-api:sha',
       state: 'RUNNING',
       health: 'HEALTHY',
+      status: 'Up 10 minutes',
+      startedAt: '2026-08-04T11:50:00Z',
+      restartCount: 0,
+      cpuUsagePercent: 1.25,
+      memoryUsageBytes: 1024,
+      memoryLimitBytes: 2048,
+      ports: [],
+      managed: false,
+    },
+  ]
+}
+
+function projectWithHealth(health: 'STARTING' | 'UNKNOWN'): ContainerView[] {
+  return [
+    {
+      id: `cubing-${health.toLowerCase()}`,
+      name: 'cubing-hub-api-1',
+      composeProject: 'cubing-hub',
+      image: 'example/cubing-api:sha',
+      state: 'RUNNING',
+      health,
       status: 'Up 10 minutes',
       startedAt: '2026-08-04T11:50:00Z',
       restartCount: 0,
