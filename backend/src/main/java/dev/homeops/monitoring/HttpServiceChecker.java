@@ -9,6 +9,7 @@ import java.net.http.HttpResponse;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -17,6 +18,7 @@ public class HttpServiceChecker {
     private final Clock clock;
     private final SafeServiceUrlPolicy serviceUrlPolicy;
 
+    @Autowired
     public HttpServiceChecker(SafeServiceUrlPolicy serviceUrlPolicy) {
         this(HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)

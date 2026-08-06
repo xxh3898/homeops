@@ -41,6 +41,37 @@ class HomeOpsEventReporterTest(unittest.TestCase):
             "https://homeops.example.invalid:9443", "a" * 64, "deployments", body)
         self.assertFalse(path.exists())
 
+    def test_rejectsNewEntry_when_combinedSpoolCapacityIsExhausted(self):
+        with mock.patch.object(REPORTER, "MAX_SPOOL_ENTRIES", 3):
+            active = REPORTER.write_spool("deployments", json.dumps({"eventKey": "active"}).encode())
+            pending = REPORTER.SPOOL_DIR / ".interrupted.pending"
+            pending.write_text('{"kind":"deployments","body":"pending"}', encoding="utf-8")
+            pending.chmod(0o600)
+            quarantine = REPORTER.SPOOL_DIR / "quarantine"
+            quarantine.mkdir(mode=0o700)
+            rejected = quarantine / "rejected.json"
+            rejected.write_text('{"kind":"deployments","body":"rejected"}', encoding="utf-8")
+            rejected.chmod(0o600)
+
+            with self.assertRaises(REPORTER.SpoolCapacityError):
+                REPORTER.write_spool("deployments", json.dumps({"eventKey": "overflow"}).encode())
+
+        self.assertTrue(active.exists())
+        self.assertTrue(pending.exists())
+        self.assertTrue(rejected.exists())
+
+    def test_allowsNewEntry_when_drainingFreesSpoolCapacity(self):
+        with mock.patch.object(REPORTER, "MAX_SPOOL_ENTRIES", 1):
+            first = REPORTER.write_spool("deployments", json.dumps({"eventKey": "first"}).encode())
+
+            with mock.patch.object(REPORTER, "send"):
+                REPORTER.drain()
+
+            second = REPORTER.write_spool("deployments", json.dumps({"eventKey": "second"}).encode())
+
+        self.assertFalse(first.exists())
+        self.assertTrue(second.exists())
+
     def test_rejects_unsafe_kind_and_oversized_payload(self):
         with self.assertRaises(ValueError):
             REPORTER.validate_payload("commands", b'{"eventKey":"1"}')

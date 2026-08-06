@@ -19,6 +19,7 @@ import uuid
 
 MAX_PAYLOAD_BYTES = 16 * 1024
 MAX_DRAIN_FILES = 3
+MAX_SPOOL_ENTRIES = 128
 TIMEOUT_SECONDS = 2
 
 
@@ -37,6 +38,10 @@ APP_DIR, SPOOL_DIR = default_paths()
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, file_pointer, code, message, headers, new_url):
         return None
+
+
+class SpoolCapacityError(ValueError):
+    pass
 
 
 def private_file(path):
@@ -105,25 +110,47 @@ def validate_payload(kind, body):
     return value
 
 
+def spool_entry_count():
+    root_entries = sum(
+        1 for path in SPOOL_DIR.iterdir()
+        if path.name not in (".drain.lock", ".writer.lock", "quarantine"))
+    quarantine = SPOOL_DIR / "quarantine"
+    try:
+        quarantine.lstat()
+    except FileNotFoundError:
+        return root_entries
+    private_directory(quarantine)
+    return root_entries + sum(1 for _ in quarantine.iterdir())
+
+
 def write_spool(kind, body):
     SPOOL_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     private_directory(SPOOL_DIR)
-    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
-    target = SPOOL_DIR / f"{timestamp}-{uuid.uuid4().hex}.json"
-    pending = SPOOL_DIR / f".{timestamp}-{uuid.uuid4().hex}.pending"
-    wrapper = json.dumps({"kind": kind, "body": body.decode("utf-8")}, separators=(",", ":"))
-    try:
-        descriptor = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-            output.write(wrapper)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(pending, target)
-    except Exception:
-        if pending.exists() and not pending.is_symlink():
-            pending.unlink()
-        raise
-    return target
+    writer_lock_path = SPOOL_DIR / ".writer.lock"
+    descriptor = os.open(writer_lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(descriptor, "r+") as writer_lock:
+        lock_details = os.fstat(writer_lock.fileno())
+        if lock_details.st_uid != os.getuid() or stat.S_IMODE(lock_details.st_mode) != 0o600:
+            raise ValueError("ingestion spool writer lock owner or mode is invalid")
+        fcntl.flock(writer_lock, fcntl.LOCK_EX)
+        if spool_entry_count() >= MAX_SPOOL_ENTRIES:
+            raise SpoolCapacityError("ingestion spool capacity is exhausted")
+        timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        target = SPOOL_DIR / f"{timestamp}-{uuid.uuid4().hex}.json"
+        pending = SPOOL_DIR / f".{timestamp}-{uuid.uuid4().hex}.pending"
+        wrapper = json.dumps({"kind": kind, "body": body.decode("utf-8")}, separators=(",", ":"))
+        try:
+            descriptor = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                output.write(wrapper)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(pending, target)
+        except Exception:
+            if pending.exists() and not pending.is_symlink():
+                pending.unlink()
+            raise
+        return target
 
 
 def send(origin, secret, kind, body):

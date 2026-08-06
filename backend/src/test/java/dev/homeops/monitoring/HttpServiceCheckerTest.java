@@ -23,6 +23,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 @ExtendWith(MockitoExtension.class)
 class HttpServiceCheckerTest {
@@ -92,6 +93,22 @@ class HttpServiceCheckerTest {
                 .isInstanceOf(SafeServiceUrlPolicy.UnsafeServiceUrlException.class);
 
         verifyNoInteractions(client, clock);
+    }
+
+    @Test
+    void should_createCheckerBean_when_policyIsRegistered() {
+        try (var context = new AnnotationConfigApplicationContext()) {
+            context.registerBean(
+                    HomeOpsMonitoringProperties.class,
+                    () -> new HomeOpsMonitoringProperties(
+                            List.of("https://homeops.example.ts.net:9443"),
+                            Duration.ofDays(7), Duration.ofDays(30), 4));
+            context.register(SafeServiceUrlPolicy.class, HttpServiceChecker.class);
+
+            context.refresh();
+
+            assertThat(context.getBean(HttpServiceChecker.class)).isNotNull();
+        }
     }
 
     private static SafeServiceUrlPolicy allowedPolicy() {
