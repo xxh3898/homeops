@@ -10,10 +10,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import dev.homeops.common.ApiExceptionHandler;
 import dev.homeops.ingestion.IngestionService;
 import java.util.List;
+import java.util.stream.Stream;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
@@ -74,9 +77,100 @@ class IngestionControllerTest {
                 .andExpect(jsonPath("$.id").value(id.toString()));
     }
 
+    @ParameterizedTest
+    @MethodSource("deploymentTextFields")
+    void should_returnBadRequestWithoutServiceAccess_when_deploymentTextContainsNul(String field)
+            throws Exception {
+        mockMvc.perform(post("/api/v1/internal/ingestion/deployments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(withNul(validDeploymentJson(), field)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:homeops:problem:validation"));
+
+        verifyNoInteractions(service);
+    }
+
+    @ParameterizedTest
+    @MethodSource("backupTextFields")
+    void should_returnBadRequestWithoutServiceAccess_when_backupTextContainsNul(String field)
+            throws Exception {
+        mockMvc.perform(post("/api/v1/internal/ingestion/backups")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(withNul(validBackupJson(), field)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:homeops:problem:validation"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void should_acceptDeployment_when_textContainsNormalUnicode() throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000021");
+        when(service.acceptDeployment(any())).thenReturn(new IngestionAcceptedResponse(id, false));
+
+        mockMvc.perform(post("/api/v1/internal/ingestion/deployments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validDeploymentJson().replace("homeops", "홈옵스")))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.id").value(id.toString()));
+    }
+
+    @Test
+    void should_acceptBackup_when_textContainsNormalUnicode() throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000022");
+        when(service.acceptBackup(any())).thenReturn(new IngestionAcceptedResponse(id, false));
+
+        mockMvc.perform(post("/api/v1/internal/ingestion/backups")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validBackupJson().replace("\"failureSummary\":\"none\"",
+                                "\"failureSummary\":\"정상 백업\"")))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.id").value(id.toString()));
+    }
+
+    @Test
+    void should_acceptDeployment_when_optionalTextIsNull() throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000023");
+        when(service.acceptDeployment(any())).thenReturn(new IngestionAcceptedResponse(id, false));
+
+        mockMvc.perform(post("/api/v1/internal/ingestion/deployments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validDeploymentJson().replace("\"branch\":\"main\"", "\"branch\":null")))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.id").value(id.toString()));
+    }
+
+    @Test
+    void should_acceptBackup_when_optionalTextIsNull() throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000024");
+        when(service.acceptBackup(any())).thenReturn(new IngestionAcceptedResponse(id, false));
+
+        mockMvc.perform(post("/api/v1/internal/ingestion/backups")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validBackupJson().replace("\"logicalLocation\":\"homeops/2026-08-06.dump\"",
+                                "\"logicalLocation\":null")))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.id").value(id.toString()));
+    }
+
     private static String withOutsideTimestamp(String json, String field) {
         return json.replace("\"" + field + "\":\"2026-08-06T01:00:00Z\"",
                 "\"" + field + "\":\"" + OUTSIDE_POSTGRESQL_RANGE + "\"");
+    }
+
+    private static String withNul(String json, String field) {
+        return json.replace("\"" + field + "\":\"", "\"" + field + "\":\"\\u0000");
+    }
+
+    private static Stream<String> deploymentTextFields() {
+        return Stream.of("eventKey", "project", "environment", "branch", "commitSha", "imageTag",
+                "previousCommitSha", "failureStage", "failureSummary", "actor", "workflowRunId",
+                "workflowRunUrl");
+    }
+
+    private static Stream<String> backupTextFields() {
+        return Stream.of("eventKey", "project", "databaseType", "logicalLocation", "failureSummary",
+                "restoreTestStatus");
     }
 
     private static String validDeploymentJson() {
@@ -85,10 +179,18 @@ class IngestionControllerTest {
                   "eventKey":"deployment-1",
                   "project":"homeops",
                   "environment":"production",
+                  "branch":"main",
                   "commitSha":"0123456789012345678901234567890123456789",
+                  "imageTag":"sha-0123456",
+                  "previousCommitSha":"1111111111111111111111111111111111111111",
                   "status":"SUCCESS",
                   "startedAt":"2026-08-06T01:00:00Z",
                   "finishedAt":"2026-08-06T01:00:00Z",
+                  "failureStage":"deploy",
+                  "failureSummary":"none",
+                  "actor":"github-actions",
+                  "workflowRunId":"123",
+                  "workflowRunUrl":"https://example.invalid/runs/123",
                   "rollback":false
                 }
                 """;
@@ -100,11 +202,14 @@ class IngestionControllerTest {
                   "eventKey":"backup-1",
                   "project":"homeops",
                   "databaseType":"POSTGRESQL",
+                  "logicalLocation":"homeops/2026-08-06.dump",
                   "status":"SUCCESS",
                   "startedAt":"2026-08-06T01:00:00Z",
                   "finishedAt":"2026-08-06T01:00:00Z",
                   "expiresAt":"2026-08-06T01:00:00Z",
-                  "restoreTestedAt":"2026-08-06T01:00:00Z"
+                  "failureSummary":"none",
+                  "restoreTestedAt":"2026-08-06T01:00:00Z",
+                  "restoreTestStatus":"SUCCESS"
                 }
                 """;
     }

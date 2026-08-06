@@ -1,5 +1,6 @@
 package dev.homeops.agent.api;
 
+import dev.homeops.common.validation.NoPostgresqlNul;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
@@ -20,7 +21,7 @@ public record AgentSnapshotRequest(
         @NotBlank
         @Pattern(regexp = "[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}")
         String agentId,
-        @NotBlank @Size(max = 64) String agentVersion,
+        @NotBlank @Size(max = 64) @NoPostgresqlNul String agentVersion,
         @NotNull Instant capturedAt,
         @NotNull @Valid HostSnapshot host,
         @NotNull @Size(max = 256) List<@NotNull @Valid ContainerSnapshot> containers) {

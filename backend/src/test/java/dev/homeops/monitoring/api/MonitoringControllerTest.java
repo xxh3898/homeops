@@ -1,6 +1,7 @@
 package dev.homeops.monitoring.api;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -14,6 +15,8 @@ import java.util.UUID;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -79,6 +82,20 @@ class MonitoringControllerTest {
         mockMvc.perform(get("/api/v1/services/status"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].status").value("HEALTHY"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"name", "url"})
+    void should_returnBadRequestWithoutServiceAccess_when_persistedTextContainsNul(String field)
+            throws Exception {
+        mockMvc.perform(post("/api/v1/services")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validJson().replace("\"" + field + "\":\"",
+                                "\"" + field + "\":\"\\u0000")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:homeops:problem:validation"));
+
+        verifyNoInteractions(service);
     }
 
     private static String validJson() { return """
