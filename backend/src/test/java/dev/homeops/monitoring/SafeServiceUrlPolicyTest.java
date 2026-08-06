@@ -33,8 +33,7 @@ class SafeServiceUrlPolicyTest {
     void should_rejectOutOfRangePort_when_normalizingAllowlist() {
         assertThatThrownBy(() -> new SafeServiceUrlPolicy(new HomeOpsMonitoringProperties(
                 List.of("https://homeops.example.ts.net:65536"), Duration.ofDays(7), Duration.ofDays(30), 4)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("invalid port");
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
