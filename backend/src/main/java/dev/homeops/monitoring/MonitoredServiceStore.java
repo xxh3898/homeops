@@ -126,10 +126,10 @@ public class MonitoredServiceStore {
                 DELETE FROM health_check_result result
                 WHERE result.status = ? AND result.checked_at < ?
                   AND EXISTS (
-                    SELECT 1 FROM health_check_result newer
-                    WHERE newer.service_id = result.service_id
-                      AND newer.status = result.status
-                      AND newer.checked_at > result.checked_at
+                    SELECT 1 FROM health_check_result later
+                    WHERE later.service_id = result.service_id
+                      AND later.status <> result.status
+                      AND later.checked_at > result.checked_at
                   )
                 """,
                 status, Timestamp.from(threshold));

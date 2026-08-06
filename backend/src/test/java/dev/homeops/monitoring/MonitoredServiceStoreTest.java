@@ -13,6 +13,8 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -36,19 +38,21 @@ class MonitoredServiceStoreTest {
                 "ON CONFLICT ON CONSTRAINT uk_monitored_service_name DO NOTHING");
     }
 
-    @Test
-    void should_retainLatestResultPerStatus_when_removingExpiredResults() {
+    @ParameterizedTest
+    @ValueSource(strings = {"HEALTHY", "DOWN"})
+    void should_deleteExpiredCompletedStreakButPreserveCurrentStreak_when_removingResults(String status) {
         MonitoredServiceStore store = new MonitoredServiceStore(jdbc);
         Instant threshold = Instant.parse("2026-08-01T00:00:00Z");
 
-        store.deleteResultsOlderThan("HEALTHY", threshold);
+        store.deleteResultsOlderThan(status, threshold);
 
         ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
-        verify(jdbc).update(query.capture(), eq("HEALTHY"), eq(Timestamp.from(threshold)));
+        verify(jdbc).update(query.capture(), eq(status), eq(Timestamp.from(threshold)));
         assertThat(query.getValue().replaceAll("\\s+", " ")).contains(
-                "newer.service_id = result.service_id",
-                "newer.status = result.status",
-                "newer.checked_at > result.checked_at");
+                "later.service_id = result.service_id",
+                "later.status <> result.status",
+                "later.checked_at > result.checked_at")
+                .doesNotContain("later.status = result.status");
     }
 
     @Test
