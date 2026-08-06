@@ -58,7 +58,8 @@ class IngestionStoreTest {
         ArgumentCaptor<Object[]> arguments = ArgumentCaptor.forClass(Object[].class);
         verify(jdbcTemplate).update(sql.capture(), arguments.capture());
         assertThat(updated).isTrue();
-        assertThat(sql.getValue()).contains("image_tag = ?", "workflow_run_url = ?",
+        String normalizedSql = sql.getValue().replaceAll("\\s+", " ");
+        assertThat(normalizedSql).contains("image_tag = ?", "workflow_run_url = ?",
                 "WHERE event_key = ? AND status = ?");
         assertThat(arguments.getValue()).startsWith("main", "sha-0123456",
                 "1111111111111111111111111111111111111111", "SUCCESS")

@@ -34,7 +34,8 @@ public class ActivityStore {
                 UNION ALL
                 SELECT CAST(i.id AS text), 'INCIDENT', i.title, i.status,
                        CASE WHEN i.status = 'RESOLVED' THEN 'RECOVERY' ELSE i.severity END,
-                       i.opened_at,
+                       CASE WHEN i.status = 'RESOLVED' THEN COALESCE(i.resolved_at, i.opened_at)
+                            ELSE i.opened_at END,
                        COALESCE(s.name, i.incident_type), 'INCIDENT:' || CAST(i.id AS text)
                 FROM incident i LEFT JOIN monitored_service s ON s.id = i.service_id
                 UNION ALL

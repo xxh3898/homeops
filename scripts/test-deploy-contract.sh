@@ -10,6 +10,7 @@ readonly WORKER="${REPOSITORY_ROOT}/deploy/scripts/deploy-homeops.sh"
 readonly ORIGIN_VALIDATOR="${REPOSITORY_ROOT}/deploy/scripts/validate-https-origin.sh"
 readonly EVENT_REPORTER="${REPOSITORY_ROOT}/deploy/scripts/report-homeops-event.py"
 readonly RUNTIME_CONFIG_DOCKERFILE="${REPOSITORY_ROOT}/runtime-config.Dockerfile"
+readonly COMPOSE_EXAMPLE="${REPOSITORY_ROOT}/deploy/compose.example.yaml"
 readonly ENV_EXAMPLE="${REPOSITORY_ROOT}/deploy/env.example"
 readonly AGENT_DOCKERFILE="${REPOSITORY_ROOT}/agent-artifact.Dockerfile"
 readonly AGENT_BOOTSTRAP="${REPOSITORY_ROOT}/deploy/bootstrap/deploy-homeops-agent-rollout-ci.sh.example"
@@ -90,8 +91,12 @@ assert_contains "${RUNTIME_CONFIG_DOCKERFILE}" './scripts/validate-https-origin.
 assert_contains "${EVENT_REPORTER}" 'X-HomeOps-Ingestion-Signature'
 assert_contains "${EVENT_REPORTER}" 'NoRedirect()'
 
+assert_contains "${COMPOSE_EXAMPLE}" 'HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE: ${HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE:-5m}'
+assert_contains "${COMPOSE_EXAMPLE}" 'HOMEOPS_INGESTION_ALLOWED_FUTURE_SKEW: ${HOMEOPS_INGESTION_ALLOWED_FUTURE_SKEW:-1m}'
 assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_API_IMAGE=ghcr.io/example/homeops-api@sha256:'
 assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_WEB_IMAGE=ghcr.io/example/homeops-web@sha256:'
+assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE=5m'
+assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_INGESTION_ALLOWED_FUTURE_SKEW=1m'
 
 assert_contains "${AGENT_DOCKERFILE}" 'GOOS=darwin GOARCH=arm64'
 assert_contains "${AGENT_DOCKERFILE}" 'sha256sum homeops-agent >homeops-agent.sha256'
