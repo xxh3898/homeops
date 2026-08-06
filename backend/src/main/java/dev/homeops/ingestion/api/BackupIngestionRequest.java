@@ -1,5 +1,7 @@
 package dev.homeops.ingestion.api;
 
+import dev.homeops.common.PostgresqlTimestampRange;
+import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -21,6 +23,16 @@ public record BackupIngestionRequest(
         @Size(max = 1024) String failureSummary,
         Instant restoreTestedAt,
         @Size(max = 24) String restoreTestStatus) {
+
+    @AssertTrue(message = "Backup timestamps must be within PostgreSQL's supported range")
+    public boolean isPostgresqlTimestampRangeSupported() {
+        return isSupportedIfPresent(startedAt) && isSupportedIfPresent(finishedAt)
+                && isSupportedIfPresent(expiresAt) && isSupportedIfPresent(restoreTestedAt);
+    }
+
+    private static boolean isSupportedIfPresent(Instant timestamp) {
+        return timestamp == null || PostgresqlTimestampRange.isSupported(timestamp);
+    }
 
     public enum BackupStatus {
         RUNNING, SUCCESS, FAILED, INCOMPLETE

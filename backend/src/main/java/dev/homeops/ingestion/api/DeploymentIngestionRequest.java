@@ -1,5 +1,7 @@
 package dev.homeops.ingestion.api;
 
+import dev.homeops.common.PostgresqlTimestampRange;
+import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -23,6 +25,15 @@ public record DeploymentIngestionRequest(
         @Size(max = 64) String workflowRunId,
         @Size(max = 2048) String workflowRunUrl,
         boolean rollback) {
+
+    @AssertTrue(message = "Deployment timestamps must be within PostgreSQL's supported range")
+    public boolean isPostgresqlTimestampRangeSupported() {
+        return isSupportedIfPresent(startedAt) && isSupportedIfPresent(finishedAt);
+    }
+
+    private static boolean isSupportedIfPresent(Instant timestamp) {
+        return timestamp == null || PostgresqlTimestampRange.isSupported(timestamp);
+    }
 
     public enum DeploymentStatus {
         REQUESTED, RUNNING, SUCCESS, FAILED, ROLLED_BACK, CANCELLED
