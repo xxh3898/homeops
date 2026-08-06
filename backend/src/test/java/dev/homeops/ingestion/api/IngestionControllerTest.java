@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import dev.homeops.common.ApiExceptionHandler;
+import dev.homeops.common.PostgresqlTimestampRange;
 import dev.homeops.ingestion.IngestionService;
 import java.util.List;
 import java.util.stream.Stream;
@@ -57,6 +58,28 @@ class IngestionControllerTest {
             mockMvc.perform(post("/api/v1/internal/ingestion/backups")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(withOutsideTimestamp(validBackupJson(), field)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.type").value("urn:homeops:problem:validation"));
+        }
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void should_returnBadRequestWithoutServiceAccess_when_timestampRoundingCarryExitsPostgresqlRange()
+            throws Exception {
+        String carryPastEnd = PostgresqlTimestampRange.endExclusive().minusNanos(1).toString();
+        for (String field : List.of("startedAt", "finishedAt")) {
+            mockMvc.perform(post("/api/v1/internal/ingestion/deployments")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(withTimestamp(validDeploymentJson(), field, carryPastEnd)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.type").value("urn:homeops:problem:validation"));
+        }
+        for (String field : List.of("startedAt", "finishedAt", "expiresAt", "restoreTestedAt")) {
+            mockMvc.perform(post("/api/v1/internal/ingestion/backups")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(withTimestamp(validBackupJson(), field, carryPastEnd)))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.type").value("urn:homeops:problem:validation"));
         }
@@ -154,8 +177,12 @@ class IngestionControllerTest {
     }
 
     private static String withOutsideTimestamp(String json, String field) {
+        return withTimestamp(json, field, OUTSIDE_POSTGRESQL_RANGE);
+    }
+
+    private static String withTimestamp(String json, String field, String timestamp) {
         return json.replace("\"" + field + "\":\"2026-08-06T01:00:00Z\"",
-                "\"" + field + "\":\"" + OUTSIDE_POSTGRESQL_RANGE + "\"");
+                "\"" + field + "\":\"" + timestamp + "\"");
     }
 
     private static String withNul(String json, String field) {

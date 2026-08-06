@@ -23,6 +23,7 @@ public class IngestionDigest {
     private static String canonicalRepresentation(Object request) {
         StringBuilder value = new StringBuilder();
         if (request instanceof DeploymentIngestionRequest deployment) {
+            deployment = IngestionTimestampCanonicalizer.canonicalize(deployment);
             append(value, "deployment-v1");
             append(value, deployment.eventKey());
             append(value, deployment.project());
@@ -43,6 +44,7 @@ public class IngestionDigest {
             return value.toString();
         }
         if (request instanceof BackupIngestionRequest backup) {
+            backup = IngestionTimestampCanonicalizer.canonicalize(backup);
             append(value, "backup-v1");
             append(value, backup.eventKey());
             append(value, backup.project());

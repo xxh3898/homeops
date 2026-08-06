@@ -120,6 +120,23 @@ class AgentSnapshotServiceTest {
     }
 
     @Test
+    void should_returnDuplicate_when_captureTimestampHasPostgresqlRoundingFraction() {
+        UUID snapshotId = UUID.fromString("10000000-0000-0000-0000-000000000025");
+        Instant rawCapturedAt = NOW.minusSeconds(1).plusNanos(789);
+        Instant storedCapturedAt = NOW.minusSeconds(1).plusNanos(1_000);
+        AgentSnapshotRequest request = AgentSnapshotFixtures.snapshot(snapshotId, rawCapturedAt);
+        when(processedSnapshotStore.recordIfAbsent(anyString(), any(), any(), any())).thenReturn(false);
+        when(processedSnapshotStore.findCapturedAt("local-mac", snapshotId))
+                .thenReturn(Optional.of(storedCapturedAt));
+
+        var accepted = service.accept(request);
+
+        assertThat(accepted.duplicate()).isTrue();
+        verify(processedSnapshotStore).recordIfAbsent("local-mac", snapshotId, storedCapturedAt, NOW);
+        verify(metricRepository, never()).save(any());
+    }
+
+    @Test
     void should_notRecordActivity_when_agentVersionIsUnchanged() {
         UUID snapshotId = UUID.fromString("10000000-0000-0000-0000-000000000012");
         AgentSnapshotRequest request = AgentSnapshotFixtures.snapshot(snapshotId, NOW.minusSeconds(1));

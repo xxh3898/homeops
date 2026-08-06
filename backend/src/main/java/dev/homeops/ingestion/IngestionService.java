@@ -22,47 +22,55 @@ public class IngestionService {
 
     @Transactional
     public IngestionAcceptedResponse acceptDeployment(DeploymentIngestionRequest request) {
-        String requestDigest = digest.calculate(request);
-        var existing = deployments.find(request.eventKey());
+        DeploymentIngestionRequest canonicalRequest = IngestionTimestampCanonicalizer.canonicalize(request);
+        String requestDigest = digest.calculate(canonicalRequest);
+        var existing = deployments.find(canonicalRequest.eventKey());
         if (existing.isEmpty()) {
-            var inserted = deployments.insertIfAbsent(request, requestDigest);
+            var inserted = deployments.insertIfAbsent(canonicalRequest, requestDigest);
             if (inserted.isPresent()) {
                 return new IngestionAcceptedResponse(inserted.get(), false);
             }
-            existing = deployments.find(request.eventKey());
+            existing = deployments.find(canonicalRequest.eventKey());
         }
-        var stored = existing.orElseThrow(() -> new EventKeyConflictException(request.eventKey()));
+        var stored = existing.orElseThrow(() -> new EventKeyConflictException(canonicalRequest.eventKey()));
         if (requestDigest.equals(stored.digest())) return new IngestionAcceptedResponse(stored.id(), true);
-        if (!stored.matchesLifecycle(request)) throw new EventKeyConflictException(request.eventKey());
+        if (!stored.matchesLifecycle(canonicalRequest)) throw new EventKeyConflictException(canonicalRequest.eventKey());
         DeploymentIngestionRequest.DeploymentStatus current = DeploymentIngestionRequest.DeploymentStatus.valueOf(stored.status());
-        if (!isAllowed(current, request.status())) throw new InvalidIngestionStateTransitionException(current.name(), request.status().name());
-        if (deployments.update(request, requestDigest, current)) {
+        if (!isAllowed(current, canonicalRequest.status())) {
+            throw new InvalidIngestionStateTransitionException(current.name(), canonicalRequest.status().name());
+        }
+        if (deployments.update(canonicalRequest, requestDigest, current)) {
             return new IngestionAcceptedResponse(stored.id(), false);
         }
-        return resolveDeploymentAfterConditionalUpdateMiss(request, requestDigest);
+        return resolveDeploymentAfterConditionalUpdateMiss(canonicalRequest, requestDigest);
     }
 
     @Transactional
     public IngestionAcceptedResponse acceptBackup(BackupIngestionRequest request) {
-        String requestDigest = digest.calculate(request);
-        var existing = backups.find(request.eventKey());
+        BackupIngestionRequest canonicalRequest = IngestionTimestampCanonicalizer.canonicalize(request);
+        String requestDigest = digest.calculate(canonicalRequest);
+        var existing = backups.find(canonicalRequest.eventKey());
         if (existing.isEmpty()) {
-            var inserted = backups.insertIfAbsent(request, requestDigest);
+            var inserted = backups.insertIfAbsent(canonicalRequest, requestDigest);
             if (inserted.isPresent()) {
                 return new IngestionAcceptedResponse(inserted.get(), false);
             }
-            existing = backups.find(request.eventKey());
+            existing = backups.find(canonicalRequest.eventKey());
         }
-        var stored = existing.orElseThrow(() -> new EventKeyConflictException(request.eventKey()));
+        var stored = existing.orElseThrow(() -> new EventKeyConflictException(canonicalRequest.eventKey()));
         if (requestDigest.equals(stored.digest())) return new IngestionAcceptedResponse(stored.id(), true);
-        if (!stored.matchesLifecycle(request)) throw new EventKeyConflictException(request.eventKey());
+        if (!stored.matchesLifecycle(canonicalRequest)) throw new EventKeyConflictException(canonicalRequest.eventKey());
         BackupIngestionRequest.BackupStatus current = BackupIngestionRequest.BackupStatus.valueOf(stored.status());
-        if (current != BackupIngestionRequest.BackupStatus.RUNNING) throw new InvalidIngestionStateTransitionException(current.name(), request.status().name());
-        if (request.status() == BackupIngestionRequest.BackupStatus.RUNNING) throw new EventKeyConflictException(request.eventKey());
-        if (backups.update(request, requestDigest, current)) {
+        if (current != BackupIngestionRequest.BackupStatus.RUNNING) {
+            throw new InvalidIngestionStateTransitionException(current.name(), canonicalRequest.status().name());
+        }
+        if (canonicalRequest.status() == BackupIngestionRequest.BackupStatus.RUNNING) {
+            throw new EventKeyConflictException(canonicalRequest.eventKey());
+        }
+        if (backups.update(canonicalRequest, requestDigest, current)) {
             return new IngestionAcceptedResponse(stored.id(), false);
         }
-        return resolveBackupAfterConditionalUpdateMiss(request, requestDigest);
+        return resolveBackupAfterConditionalUpdateMiss(canonicalRequest, requestDigest);
     }
 
     private IngestionAcceptedResponse resolveDeploymentAfterConditionalUpdateMiss(

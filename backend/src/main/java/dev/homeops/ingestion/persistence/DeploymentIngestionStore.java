@@ -1,9 +1,9 @@
 package dev.homeops.ingestion.persistence;
 
 import dev.homeops.ingestion.api.DeploymentIngestionRequest;
+import dev.homeops.common.PostgresqlTimestamp;
 import java.sql.Timestamp;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -37,7 +37,7 @@ public class DeploymentIngestionStore {
                 RETURNING id
                 """, (row, index) -> row.getObject("id", UUID.class), id, request.eventKey(),
                 request.project(), request.environment(), request.branch(), request.commitSha(),
-                request.imageTag(), request.previousCommitSha(), request.status().name(), Timestamp.from(request.startedAt()),
+                request.imageTag(), request.previousCommitSha(), request.status().name(), timestamp(request.startedAt()),
                 timestamp(request.finishedAt()), request.failureStage(), request.failureSummary(), request.actor(),
                 request.workflowRunId(), request.workflowRunUrl(), request.rollback(), digest)
                 .stream()
@@ -57,7 +57,7 @@ public class DeploymentIngestionStore {
                 expectedStatus.name()) == 1;
     }
 
-    private static Timestamp timestamp(Instant value) { return value == null ? null : Timestamp.from(value); }
+    private static Timestamp timestamp(Instant value) { return PostgresqlTimestamp.toTimestamp(value); }
 
     public record StoredDeployment(UUID id, String project, String environment, String commitSha,
             Instant startedAt, String status, String digest) {
@@ -68,7 +68,6 @@ public class DeploymentIngestionStore {
     }
 
     private static boolean sameDatabaseInstant(Instant stored, Instant requested) {
-        return stored.truncatedTo(ChronoUnit.MICROS)
-                .equals(requested.truncatedTo(ChronoUnit.MICROS));
+        return PostgresqlTimestamp.canonicalize(stored).equals(PostgresqlTimestamp.canonicalize(requested));
     }
 }

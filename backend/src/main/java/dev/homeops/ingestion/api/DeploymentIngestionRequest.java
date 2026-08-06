@@ -1,6 +1,6 @@
 package dev.homeops.ingestion.api;
 
-import dev.homeops.common.PostgresqlTimestampRange;
+import dev.homeops.common.PostgresqlTimestamp;
 import dev.homeops.common.validation.NoPostgresqlNul;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotBlank;
@@ -33,7 +33,7 @@ public record DeploymentIngestionRequest(
     }
 
     private static boolean isSupportedIfPresent(Instant timestamp) {
-        return timestamp == null || PostgresqlTimestampRange.isSupported(timestamp);
+        return timestamp == null || PostgresqlTimestamp.isSupported(timestamp);
     }
 
     public enum DeploymentStatus {

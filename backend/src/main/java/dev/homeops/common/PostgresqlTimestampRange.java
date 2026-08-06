@@ -8,6 +8,14 @@ public final class PostgresqlTimestampRange {
 
     private PostgresqlTimestampRange() { }
 
+    public static Instant minimum() {
+        return MIN_TIMESTAMP;
+    }
+
+    public static Instant endExclusive() {
+        return END_TIMESTAMP;
+    }
+
     public static boolean isSupported(Instant timestamp) {
         return timestamp != null && !timestamp.isBefore(MIN_TIMESTAMP) && timestamp.isBefore(END_TIMESTAMP);
     }

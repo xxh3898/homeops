@@ -1,9 +1,9 @@
 package dev.homeops.ingestion.persistence;
 
 import dev.homeops.ingestion.api.BackupIngestionRequest;
+import dev.homeops.common.PostgresqlTimestamp;
 import java.sql.Timestamp;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -35,7 +35,7 @@ public class BackupIngestionStore {
                 RETURNING id
                 """, (row, index) -> row.getObject("id", UUID.class), id, request.eventKey(),
                 request.project(), request.databaseType(), request.logicalLocation(),
-                request.status().name(), Timestamp.from(request.startedAt()), timestamp(request.finishedAt()),
+                request.status().name(), timestamp(request.startedAt()), timestamp(request.finishedAt()),
                 request.sizeBytes(), timestamp(request.expiresAt()), request.failureSummary(),
                 timestamp(request.restoreTestedAt()), request.restoreTestStatus(), digest)
                 .stream()
@@ -55,7 +55,7 @@ public class BackupIngestionStore {
                 expectedStatus.name()) == 1;
     }
 
-    private static Timestamp timestamp(Instant value) { return value == null ? null : Timestamp.from(value); }
+    private static Timestamp timestamp(Instant value) { return PostgresqlTimestamp.toTimestamp(value); }
 
     public record StoredBackup(UUID id, String project, String databaseType, Instant startedAt,
             String status, String digest) {
@@ -66,7 +66,6 @@ public class BackupIngestionStore {
     }
 
     private static boolean sameDatabaseInstant(Instant stored, Instant requested) {
-        return stored.truncatedTo(ChronoUnit.MICROS)
-                .equals(requested.truncatedTo(ChronoUnit.MICROS));
+        return PostgresqlTimestamp.canonicalize(stored).equals(PostgresqlTimestamp.canonicalize(requested));
     }
 }
