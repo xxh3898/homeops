@@ -3,6 +3,7 @@ package dev.homeops.ingestion.persistence;
 import dev.homeops.ingestion.api.BackupIngestionRequest;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -23,28 +24,33 @@ public class BackupIngestionStore {
                 row.getString("status"), row.getString("ingestion_digest")), eventKey).stream().findFirst();
     }
 
-    public UUID insert(BackupIngestionRequest request, String digest) {
+    public Optional<UUID> insertIfAbsent(BackupIngestionRequest request, String digest) {
         UUID id = UUID.randomUUID();
-        jdbcTemplate.update("""
+        return jdbcTemplate.query("""
                 INSERT INTO backup_run (id, event_key, project, database_type, logical_location, status, started_at,
                     finished_at, size_bytes, expires_at, failure_summary, restore_tested_at, restore_test_status,
                     ingestion_digest)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, id, request.eventKey(), request.project(), request.databaseType(), request.logicalLocation(),
+                ON CONFLICT (event_key) DO NOTHING
+                RETURNING id
+                """, (row, index) -> row.getObject("id", UUID.class), id, request.eventKey(),
+                request.project(), request.databaseType(), request.logicalLocation(),
                 request.status().name(), Timestamp.from(request.startedAt()), timestamp(request.finishedAt()),
                 request.sizeBytes(), timestamp(request.expiresAt()), request.failureSummary(),
-                timestamp(request.restoreTestedAt()), request.restoreTestStatus(), digest);
-        return id;
+                timestamp(request.restoreTestedAt()), request.restoreTestStatus(), digest)
+                .stream()
+                .findFirst();
     }
 
     public void update(BackupIngestionRequest request, String digest) {
         jdbcTemplate.update("""
-                UPDATE backup_run SET status = ?, finished_at = ?, size_bytes = ?, expires_at = ?,
-                    failure_summary = ?, restore_tested_at = ?, restore_test_status = ?, ingestion_digest = ?
+                UPDATE backup_run SET logical_location = ?, status = ?, finished_at = ?, size_bytes = ?,
+                    expires_at = ?, failure_summary = ?, restore_tested_at = ?, restore_test_status = ?,
+                    ingestion_digest = ?
                 WHERE event_key = ?
-                """, request.status().name(), timestamp(request.finishedAt()), request.sizeBytes(),
-                timestamp(request.expiresAt()), request.failureSummary(), timestamp(request.restoreTestedAt()),
-                request.restoreTestStatus(), digest, request.eventKey());
+                """, request.logicalLocation(), request.status().name(), timestamp(request.finishedAt()),
+                request.sizeBytes(), timestamp(request.expiresAt()), request.failureSummary(),
+                timestamp(request.restoreTestedAt()), request.restoreTestStatus(), digest, request.eventKey());
     }
 
     private static Timestamp timestamp(Instant value) { return value == null ? null : Timestamp.from(value); }
@@ -53,7 +59,12 @@ public class BackupIngestionStore {
             String status, String digest) {
         public boolean matchesLifecycle(BackupIngestionRequest request) {
             return project.equals(request.project()) && databaseType.equals(request.databaseType())
-                    && startedAt.equals(request.startedAt());
+                    && sameDatabaseInstant(startedAt, request.startedAt());
         }
+    }
+
+    private static boolean sameDatabaseInstant(Instant stored, Instant requested) {
+        return stored.truncatedTo(ChronoUnit.MICROS)
+                .equals(requested.truncatedTo(ChronoUnit.MICROS));
     }
 }

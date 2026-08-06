@@ -21,7 +21,7 @@ class HealthCheckRetentionJobTest {
     void should_applySeparateRetention_when_cleanupRuns() {
         Instant now = Instant.parse("2026-08-06T12:00:00Z");
         HomeOpsMonitoringProperties properties = new HomeOpsMonitoringProperties(
-                List.of(), Duration.ofDays(7), Duration.ofDays(30));
+                List.of(), Duration.ofDays(7), Duration.ofDays(30), 4);
         HealthCheckRetentionJob job = new HealthCheckRetentionJob(
                 store, properties, Clock.fixed(now, ZoneOffset.UTC));
 

@@ -1,6 +1,7 @@
 package dev.homeops.activity;
 
 import java.nio.charset.StandardCharsets;
+import java.time.DateTimeException;
 import java.time.Instant;
 import java.util.Base64;
 
@@ -18,7 +19,7 @@ record ActivityCursor(Instant snapshotAt, Instant occurredAt, String sortKey) {
                 throw new InvalidActivityCursorException();
             }
             return new ActivityCursor(Instant.parse(parts[0]), Instant.parse(parts[1]), parts[2]);
-        } catch (IllegalArgumentException exception) {
+        } catch (IllegalArgumentException | DateTimeException exception) {
             throw new InvalidActivityCursorException();
         }
     }

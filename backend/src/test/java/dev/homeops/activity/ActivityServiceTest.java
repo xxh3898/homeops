@@ -13,6 +13,8 @@ import dev.homeops.activity.api.ActivityEventResponse.Type;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,6 +48,17 @@ class ActivityServiceTest {
         ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
 
         assertThatThrownBy(() -> service.page("not-a-cursor", 25))
+                .isInstanceOf(InvalidActivityCursorException.class);
+    }
+
+    @Test
+    void should_rejectRequest_when_cursorTimestampIsInvalid() {
+        ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
+        String cursor = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                "not-an-instant\n2026-08-06T12:00:00Z\nDEPLOYMENT:1"
+                        .getBytes(StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> service.page(cursor, 25))
                 .isInstanceOf(InvalidActivityCursorException.class);
     }
 

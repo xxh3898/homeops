@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 
 class SafeServiceUrlPolicyTest {
     private final SafeServiceUrlPolicy policy = new SafeServiceUrlPolicy(new HomeOpsMonitoringProperties(
-            List.of("https://homeops.example.ts.net:9443"), Duration.ofDays(7), Duration.ofDays(30)));
+            List.of("https://homeops.example.ts.net:9443"), Duration.ofDays(7), Duration.ofDays(30), 4));
 
     @Test
     void should_allowHttpsMagicDnsOrigin() {
@@ -31,7 +31,7 @@ class SafeServiceUrlPolicyTest {
     @Test
     void should_rejectEveryOrigin_when_allowlistIsEmpty() {
         SafeServiceUrlPolicy emptyPolicy = new SafeServiceUrlPolicy(new HomeOpsMonitoringProperties(
-                List.of(), Duration.ofDays(7), Duration.ofDays(30)));
+                List.of(), Duration.ofDays(7), Duration.ofDays(30), 4));
 
         assertThatThrownBy(() -> emptyPolicy.validate("https://homeops.example.ts.net:9443/health"))
                 .isInstanceOf(SafeServiceUrlPolicy.UnsafeServiceUrlException.class);

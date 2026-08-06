@@ -46,6 +46,32 @@ class IngestionServiceTest {
     }
 
     @Test
+    void should_acceptDeployment_when_eventKeyIsInsertedFirst() {
+        var request = deployment(DeploymentIngestionRequest.DeploymentStatus.RUNNING);
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000011");
+        when(deployments.find(request.eventKey())).thenReturn(Optional.empty());
+        when(deployments.insertIfAbsent(eq(request), any())).thenReturn(Optional.of(id));
+
+        var result = service.acceptDeployment(request);
+
+        assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, false));
+    }
+
+    @Test
+    void should_acceptWinningDeployment_when_concurrentInsertLoses() {
+        var request = deployment(DeploymentIngestionRequest.DeploymentStatus.RUNNING);
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000012");
+        String requestDigest = digest.calculate(request);
+        when(deployments.find(request.eventKey())).thenReturn(Optional.empty(), Optional.of(
+                deploymentStored(id, "RUNNING", requestDigest)));
+        when(deployments.insertIfAbsent(eq(request), any())).thenReturn(Optional.empty());
+
+        var result = service.acceptDeployment(request);
+
+        assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
+    }
+
+    @Test
     void should_updateDeployment_when_runningTransitionsToSuccess() {
         var request = deployment(DeploymentIngestionRequest.DeploymentStatus.SUCCESS);
         UUID id = UUID.fromString("10000000-0000-0000-0000-000000000002");
@@ -100,6 +126,37 @@ class IngestionServiceTest {
 
         assertThatThrownBy(() -> service.acceptBackup(request))
                 .isInstanceOf(EventKeyConflictException.class);
+    }
+
+    @Test
+    void should_updateBackup_when_terminalPayloadAddsLogicalLocation() {
+        var request = backup(BackupIngestionRequest.BackupStatus.SUCCESS);
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000013");
+        String requestDigest = digest.calculate(request);
+        when(backups.find(request.eventKey())).thenReturn(Optional.of(
+                backupStored(id, "RUNNING", "different")));
+
+        var result = service.acceptBackup(request);
+
+        assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, false));
+        verify(backups).update(request, requestDigest);
+    }
+
+    @Test
+    void should_markDuplicate_when_deploymentRetryUsesNanosecondTimestamp() {
+        Instant startedAt = Instant.parse("2026-08-06T01:00:00.123456789Z");
+        var request = new DeploymentIngestionRequest("deploy-nanos", "homeops", "production", "main",
+                "0123456789012345678901234567890123456789", "sha-0123456", null,
+                DeploymentIngestionRequest.DeploymentStatus.RUNNING, startedAt,
+                Instant.parse("2026-08-06T01:01:00Z"), null, null, "github-actions", "123", null, false);
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000014");
+        when(deployments.find(request.eventKey())).thenReturn(Optional.of(new DeploymentIngestionStore.StoredDeployment(
+                id, "homeops", "production", "0123456789012345678901234567890123456789",
+                startedAt.truncatedTo(java.time.temporal.ChronoUnit.MICROS), "RUNNING", digest.calculate(request))));
+
+        var result = service.acceptDeployment(request);
+
+        assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
     }
 
     private static DeploymentIngestionRequest deployment(DeploymentIngestionRequest.DeploymentStatus status) {

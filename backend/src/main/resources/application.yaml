@@ -65,5 +65,6 @@ homeops:
     allowed-origins: ${HOMEOPS_MONITORING_ALLOWED_ORIGINS:}
     healthy-result-retention: ${HOMEOPS_HEALTHY_RESULT_RETENTION:7d}
     failure-result-retention: ${HOMEOPS_FAILURE_RESULT_RETENTION:30d}
+    max-concurrent-checks: ${HOMEOPS_MONITORING_MAX_CONCURRENT_CHECKS:4}
     scheduler-delay: ${HOMEOPS_MONITORING_SCHEDULER_DELAY:5s}
     cleanup-cron: ${HOMEOPS_MONITORING_CLEANUP_CRON:0 29 3 * * *}
