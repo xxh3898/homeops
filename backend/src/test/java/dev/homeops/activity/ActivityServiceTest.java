@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import dev.homeops.activity.ActivityStore.StoredActivity;
@@ -67,12 +68,37 @@ class ActivityServiceTest {
     @Test
     void should_rejectRequest_when_cursorVisibilitySnapshotIsInvalid() {
         ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
-        String cursor = Base64.getUrlEncoder().withoutPadding().encodeToString(
-                "2026-08-06T12:00:00Z\nnot-a-snapshot\n2026-08-06T12:00:00Z\nDEPLOYMENT:1"
-                        .getBytes(StandardCharsets.UTF_8));
 
-        assertThatThrownBy(() -> service.page(cursor, 25))
+        assertThatThrownBy(() -> service.page(cursorWithVisibilitySnapshot("not-a-snapshot"), 25))
                 .isInstanceOf(InvalidActivityCursorException.class);
+    }
+
+    @Test
+    void should_rejectRequest_when_cursorVisibilitySnapshotViolatesPostgresSemantics() {
+        ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        for (String snapshot : List.of("2:1:", "0:1:", "1:2:0", "1:2:2", "1:4:3,2")) {
+            assertThatThrownBy(() -> service.page(cursorWithVisibilitySnapshot(snapshot), 25))
+                    .isInstanceOf(InvalidActivityCursorException.class);
+        }
+
+        verifyNoInteractions(store);
+    }
+
+    @Test
+    void should_decodeCursor_when_visibilitySnapshotUsesUnsigned64Boundary() {
+        String largestXid = "18446744073709551615";
+        String snapshot = "18446744073709551614:" + largestXid
+                + ":18446744073709551614,18446744073709551614";
+
+        assertThat(ActivityCursor.decode(cursorWithVisibilitySnapshot(snapshot)).visibilitySnapshot())
+                .isEqualTo(snapshot);
+    }
+
+    private static String cursorWithVisibilitySnapshot(String snapshot) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                ("2026-08-06T12:00:00Z\n" + snapshot + "\n2026-08-06T12:00:00Z\nDEPLOYMENT:1")
+                        .getBytes(StandardCharsets.UTF_8));
     }
 
     private static StoredActivity activity(String id, Instant occurredAt, String sortKey) {
