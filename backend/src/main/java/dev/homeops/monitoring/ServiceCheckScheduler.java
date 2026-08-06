@@ -58,6 +58,8 @@ public class ServiceCheckScheduler {
     private void checkSafely(MonitoredServiceResponse service) {
         try {
             coordinator.record(service, checker.check(service));
+        } catch (HttpServiceChecker.CheckInterruptedException exception) {
+            LOGGER.debug("Service check was interrupted for service {}", service.id());
         } catch (RuntimeException exception) {
             LOGGER.warn("Service check could not be recorded for service {}", service.id());
         } finally {

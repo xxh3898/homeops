@@ -1,6 +1,8 @@
 package dev.homeops.monitoring;
 
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 import dev.homeops.monitoring.api.MonitoredServiceResponse;
@@ -112,6 +114,23 @@ class ServiceCheckSchedulerTest {
         scheduler.checkEnabledServices();
 
         org.assertj.core.api.Assertions.assertThat(attempts).hasValue(2);
+    }
+
+    @Test
+    void should_skipRecordingAndReleaseService_when_checkIsInterrupted() {
+        Instant now = Instant.parse("2026-08-06T12:00:00Z");
+        MonitoredServiceResponse service = service("First");
+        when(store.findDue(now)).thenReturn(List.of(service));
+        when(checker.check(service)).thenThrow(new HttpServiceChecker.CheckInterruptedException(
+                new InterruptedException("shutdown")));
+        ServiceCheckScheduler scheduler = new ServiceCheckScheduler(
+                store, checker, coordinator, Runnable::run, Clock.fixed(now, ZoneOffset.UTC));
+
+        scheduler.checkEnabledServices();
+        scheduler.checkEnabledServices();
+
+        verify(checker, times(2)).check(service);
+        verifyNoInteractions(coordinator);
     }
 
     private static MonitoredServiceResponse service(String name) {

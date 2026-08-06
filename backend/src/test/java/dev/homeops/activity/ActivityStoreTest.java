@@ -21,7 +21,7 @@ class ActivityStoreTest {
     @Mock private JdbcTemplate jdbcTemplate;
 
     @Test
-    void should_useResolutionTime_when_resolvedIncidentIsLoaded() {
+    void should_useImmutableMembershipTime_when_activitySnapshotIsLoaded() {
         ActivityStore store = new ActivityStore(jdbcTemplate);
 
         store.find(null, SNAPSHOT_AT, 25);
@@ -31,6 +31,13 @@ class ActivityStoreTest {
                 .<RowMapper<ActivityStore.StoredActivity>>any(), eq(Timestamp.from(SNAPSHOT_AT)),
                 isNull(), isNull(), eq(""), eq(25));
         assertThat(query.getValue().replaceAll("\\s+", " ")).contains(
-                "CASE WHEN i.status = 'RESOLVED' THEN COALESCE(i.resolved_at, i.opened_at) ELSE i.opened_at END");
+                "d.started_at AS occurred_at, d.recorded_at AS recorded_at",
+                "b.started_at, b.recorded_at",
+                "a.occurred_at, a.recorded_at",
+                "WHERE recorded_at <= ?",
+                "i.opened_at, i.recorded_at",
+                "'INCIDENT_OPEN:' || CAST(i.id AS text)",
+                "'INCIDENT_RECOVERY:' || CAST(i.id AS text)",
+                "WHERE i.resolved_at IS NOT NULL");
     }
 }

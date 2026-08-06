@@ -1,6 +1,7 @@
 package dev.homeops.monitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -14,6 +15,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -24,6 +26,11 @@ class HttpServiceCheckerTest {
     @Mock private HttpClient client;
     @Mock private Clock clock;
     @Mock private HttpResponse<Void> response;
+
+    @AfterEach
+    void clearInterruptedFlag() {
+        Thread.interrupted();
+    }
 
     @Test
     void should_returnHealthyAndBoundRequest_when_expectedStatusIsReceived() throws Exception {
@@ -57,6 +64,19 @@ class HttpServiceCheckerTest {
         HttpServiceChecker.Result result = checker.check(service(200));
 
         assertThat(result).isEqualTo(new HttpServiceChecker.Result(false, null, 3_000, "IOException"));
+    }
+
+    @Test
+    void should_propagateCancellation_when_checkIsInterrupted() throws Exception {
+        when(client.send(any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<Void>>any()))
+                .thenThrow(new InterruptedException("shutdown"));
+        HttpServiceChecker checker = new HttpServiceChecker(client, clock);
+
+        assertThatThrownBy(() -> checker.check(service(200)))
+                .isInstanceOf(HttpServiceChecker.CheckInterruptedException.class);
+
+        assertThat(Thread.currentThread().isInterrupted()).isTrue();
     }
 
     private static MonitoredServiceResponse service(int expectedStatus) {

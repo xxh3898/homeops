@@ -20,7 +20,7 @@ public class ActivityStore {
                        d.project || ' deployment' AS title, d.status,
                        CASE WHEN d.status IN ('FAILED', 'ROLLED_BACK') THEN 'CRITICAL'
                             WHEN d.status IN ('RUNNING', 'REQUESTED') THEN 'WARNING' ELSE 'INFO' END AS severity,
-                       d.started_at AS occurred_at,
+                       d.started_at AS occurred_at, d.recorded_at AS recorded_at,
                        substring(d.commit_sha FROM 1 FOR 12) AS context,
                        'DEPLOYMENT:' || CAST(d.id AS text) AS sort_key
                 FROM deployment d
@@ -28,22 +28,26 @@ public class ActivityStore {
                 SELECT CAST(b.id AS text), 'BACKUP', b.project || ' backup', b.status,
                        CASE WHEN b.status IN ('FAILED', 'INCOMPLETE') THEN 'CRITICAL'
                             WHEN b.status = 'RUNNING' THEN 'WARNING' ELSE 'INFO' END,
-                       b.started_at, b.database_type,
+                       b.started_at, b.recorded_at, b.database_type,
                        'BACKUP:' || CAST(b.id AS text)
                 FROM backup_run b
                 UNION ALL
-                SELECT CAST(i.id AS text), 'INCIDENT', i.title, i.status,
-                       CASE WHEN i.status = 'RESOLVED' THEN 'RECOVERY' ELSE i.severity END,
-                       CASE WHEN i.status = 'RESOLVED' THEN COALESCE(i.resolved_at, i.opened_at)
-                            ELSE i.opened_at END,
-                       COALESCE(s.name, i.incident_type), 'INCIDENT:' || CAST(i.id AS text)
+                SELECT CAST(i.id AS text), 'INCIDENT', i.title, 'OPEN', i.severity,
+                       i.opened_at, i.recorded_at,
+                       COALESCE(s.name, i.incident_type), 'INCIDENT_OPEN:' || CAST(i.id AS text)
                 FROM incident i LEFT JOIN monitored_service s ON s.id = i.service_id
                 UNION ALL
+                SELECT CAST(i.id AS text), 'INCIDENT', i.title, 'RESOLVED', 'RECOVERY',
+                       i.resolved_at, i.resolved_at,
+                       COALESCE(s.name, i.incident_type), 'INCIDENT_RECOVERY:' || CAST(i.id AS text)
+                FROM incident i LEFT JOIN monitored_service s ON s.id = i.service_id
+                WHERE i.resolved_at IS NOT NULL
+                UNION ALL
                 SELECT CAST(a.id AS text), 'AGENT', a.summary, a.event_type, 'INFO',
-                       a.occurred_at, a.agent_version, 'AGENT:' || CAST(a.id AS text)
+                       a.occurred_at, a.recorded_at, a.agent_version, 'AGENT:' || CAST(a.id AS text)
                 FROM agent_event a
             ) events
-            WHERE occurred_at <= ?
+            WHERE recorded_at <= ?
               AND (?::timestamptz IS NULL OR (occurred_at, sort_key) < (?::timestamptz, ?))
             ORDER BY occurred_at DESC, sort_key DESC
             LIMIT ?

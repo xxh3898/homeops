@@ -38,7 +38,7 @@ public class HttpServiceChecker {
                     elapsedMillis(started), null);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            return new Result(false, null, elapsedMillis(started), "InterruptedException");
+            throw new CheckInterruptedException(exception);
         } catch (IOException | IllegalArgumentException exception) {
             return new Result(false, null, elapsedMillis(started),
                     exception.getClass().getSimpleName());
@@ -50,4 +50,10 @@ public class HttpServiceChecker {
     }
 
     public record Result(boolean healthy, Integer httpStatus, long responseTimeMs, String errorCode) { }
+
+    static final class CheckInterruptedException extends RuntimeException {
+        CheckInterruptedException(InterruptedException cause) {
+            super("Service check was interrupted", cause);
+        }
+    }
 }
