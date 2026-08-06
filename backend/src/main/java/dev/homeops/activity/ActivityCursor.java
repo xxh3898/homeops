@@ -12,6 +12,8 @@ record ActivityCursor(Instant snapshotAt, String visibilitySnapshot, Instant occ
     private static final int MAXIMUM_VISIBILITY_SNAPSHOT_LENGTH = 2048;
     private static final String VISIBILITY_SNAPSHOT_PATTERN = "[0-9]+:[0-9]+:(?:[0-9]+(?:,[0-9]+)*)?";
     private static final BigInteger MAXIMUM_XID = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
+    private static final Instant POSTGRESQL_MIN_TIMESTAMP = Instant.ofEpochSecond(-210_866_803_200L);
+    private static final Instant POSTGRESQL_END_TIMESTAMP = Instant.ofEpochSecond(9_224_318_016_000L);
 
     static ActivityCursor decode(String encoded) {
         if (encoded == null || encoded.isBlank() || encoded.length() > MAXIMUM_ENCODED_LENGTH) {
@@ -25,7 +27,8 @@ record ActivityCursor(Instant snapshotAt, String visibilitySnapshot, Instant occ
                     || parts[3].isBlank() || parts[3].length() > 160) {
                 throw new InvalidActivityCursorException();
             }
-            return new ActivityCursor(Instant.parse(parts[0]), parts[1], Instant.parse(parts[2]), parts[3]);
+            return new ActivityCursor(parsePostgresqlTimestamp(parts[0]), parts[1], parsePostgresqlTimestamp(parts[2]),
+                    parts[3]);
         } catch (IllegalArgumentException | DateTimeException exception) {
             throw new InvalidActivityCursorException();
         }
@@ -65,5 +68,13 @@ record ActivityCursor(Instant snapshotAt, String visibilitySnapshot, Instant occ
     private static BigInteger parseXid(String value) {
         BigInteger xid = new BigInteger(value);
         return xid.signum() > 0 && xid.compareTo(MAXIMUM_XID) <= 0 ? xid : null;
+    }
+
+    private static Instant parsePostgresqlTimestamp(String value) {
+        Instant timestamp = Instant.parse(value);
+        if (timestamp.isBefore(POSTGRESQL_MIN_TIMESTAMP) || !timestamp.isBefore(POSTGRESQL_END_TIMESTAMP)) {
+            throw new InvalidActivityCursorException();
+        }
+        return timestamp;
     }
 }

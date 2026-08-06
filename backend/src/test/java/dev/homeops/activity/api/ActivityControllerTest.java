@@ -38,8 +38,23 @@ class ActivityControllerTest {
         verifyNoInteractions(store);
     }
 
+    @Test
+    void should_returnBadRequest_when_cursorTimestampIsOutsidePostgresqlRange() throws Exception {
+        mockMvc.perform(get("/api/v1/activity").param("cursor", cursorWithTimestamps(
+                        "2026-08-06T12:00:00Z", "+1000000000-12-31T23:59:59.999999999Z")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:homeops:problem:invalid-activity-cursor"));
+
+        verifyNoInteractions(store);
+    }
+
     private static String cursorWithVisibilitySnapshot(String snapshot) {
         String value = "2026-08-06T12:00:00Z\n" + snapshot + "\n2026-08-06T12:00:00Z\nDEPLOYMENT:1";
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String cursorWithTimestamps(String snapshotAt, String occurredAt) {
+        String value = snapshotAt + "\n100:200:150\n" + occurredAt + "\nDEPLOYMENT:1";
         return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
 }

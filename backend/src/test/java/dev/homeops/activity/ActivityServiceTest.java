@@ -66,6 +66,28 @@ class ActivityServiceTest {
     }
 
     @Test
+    void should_rejectRequestWithoutStoreAccess_when_cursorSnapshotTimestampIsOutsidePostgresqlRange() {
+        ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThatThrownBy(() -> service.page(cursorWithTimestamps("+1000000000-12-31T23:59:59.999999999Z",
+                "2026-08-06T12:00:00Z"), 25))
+                .isInstanceOf(InvalidActivityCursorException.class);
+
+        verifyNoInteractions(store);
+    }
+
+    @Test
+    void should_rejectRequestWithoutStoreAccess_when_cursorOccurredAtTimestampIsOutsidePostgresqlRange() {
+        ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThatThrownBy(() -> service.page(cursorWithTimestamps("2026-08-06T12:00:00Z",
+                "+1000000000-12-31T23:59:59.999999999Z"), 25))
+                .isInstanceOf(InvalidActivityCursorException.class);
+
+        verifyNoInteractions(store);
+    }
+
+    @Test
     void should_rejectRequest_when_cursorVisibilitySnapshotIsInvalid() {
         ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
 
@@ -98,6 +120,12 @@ class ActivityServiceTest {
     private static String cursorWithVisibilitySnapshot(String snapshot) {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(
                 ("2026-08-06T12:00:00Z\n" + snapshot + "\n2026-08-06T12:00:00Z\nDEPLOYMENT:1")
+                        .getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String cursorWithTimestamps(String snapshotAt, String occurredAt) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                (snapshotAt + "\n" + VISIBILITY_SNAPSHOT + "\n" + occurredAt + "\nDEPLOYMENT:1")
                         .getBytes(StandardCharsets.UTF_8));
     }
 
