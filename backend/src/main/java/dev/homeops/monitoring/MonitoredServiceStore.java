@@ -99,13 +99,14 @@ public class MonitoredServiceStore {
                 row.getObject("id", UUID.class), row.getString("status")), serviceId).stream().findFirst();
     }
 
-    public void openIncident(MonitoredServiceResponse service, Instant now) {
-        jdbc.update("""
+    public boolean openIncident(MonitoredServiceResponse service, Instant now) {
+        return jdbc.update("""
                 INSERT INTO incident
                     (id, service_id, incident_type, severity, status, title, opened_at, last_observed_at)
                 VALUES (?, ?, ?, ?, 'OPEN', ?, ?, ?)
+                ON CONFLICT DO NOTHING
                 """, UUID.randomUUID(), service.id(), "HEALTH_CHECK", service.severity(),
-                service.name() + " is unavailable", Timestamp.from(now), Timestamp.from(now));
+                service.name() + " is unavailable", Timestamp.from(now), Timestamp.from(now)) == 1;
     }
 
     public void observeIncident(UUID incidentId, Instant now) {
@@ -123,13 +124,27 @@ public class MonitoredServiceStore {
 
     public int deleteResultsOlderThan(String status, Instant threshold) {
         return jdbc.update("""
+                WITH candidates AS (
+                    SELECT result.id, result.checked_at,
+                           EXISTS (
+                               SELECT 1 FROM health_check_result later
+                               WHERE later.service_id = result.service_id
+                                 AND later.status <> result.status
+                                 AND later.checked_at > result.checked_at
+                           ) AS has_later_opposite_status,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY result.service_id, result.status
+                               ORDER BY result.checked_at DESC
+                           ) AS status_rank
+                    FROM health_check_result result
+                    WHERE result.status = ?
+                )
                 DELETE FROM health_check_result result
-                WHERE result.status = ? AND result.checked_at < ?
-                  AND EXISTS (
-                    SELECT 1 FROM health_check_result later
-                    WHERE later.service_id = result.service_id
-                      AND later.status <> result.status
-                      AND later.checked_at > result.checked_at
+                USING candidates
+                WHERE result.id = candidates.id
+                  AND (
+                      (candidates.checked_at < ? AND candidates.has_later_opposite_status)
+                      OR (NOT candidates.has_later_opposite_status AND candidates.status_rank > 100)
                   )
                 """,
                 status, Timestamp.from(threshold));

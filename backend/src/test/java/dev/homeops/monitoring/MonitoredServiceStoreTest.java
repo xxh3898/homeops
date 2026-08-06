@@ -51,8 +51,25 @@ class MonitoredServiceStoreTest {
         assertThat(query.getValue().replaceAll("\\s+", " ")).contains(
                 "later.service_id = result.service_id",
                 "later.status <> result.status",
-                "later.checked_at > result.checked_at")
+                "later.checked_at > result.checked_at",
+                "ROW_NUMBER() OVER",
+                "candidates.status_rank > 100")
                 .doesNotContain("later.status = result.status");
+    }
+
+    @Test
+    void should_treatActiveIncidentConflictAsNormalCompetition_when_openingIncident() {
+        MonitoredServiceStore store = new MonitoredServiceStore(jdbc);
+        when(jdbc.update(any(String.class), any(Object[].class))).thenReturn(0);
+
+        boolean inserted = store.openIncident(new dev.homeops.monitoring.api.MonitoredServiceResponse(
+                java.util.UUID.randomUUID(), "HomeOps", "https://homeops.example.invalid/health", "GET", 200,
+                3_000, 30, 3, 2, "WARNING", true, true), Instant.parse("2026-08-06T12:00:00Z"));
+
+        assertThat(inserted).isFalse();
+        ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+        verify(jdbc).update(query.capture(), any(Object[].class));
+        assertThat(query.getValue().replaceAll("\\s+", " ")).contains("ON CONFLICT DO NOTHING");
     }
 
     @Test

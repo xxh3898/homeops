@@ -6,9 +6,11 @@ import java.net.URI;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -26,12 +28,26 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     ProblemDetail handleValidation(MethodArgumentNotValidException exception) {
+        return validationProblem(exception.getErrorCount());
+    }
+
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    ProblemDetail handleMethodValidation(HandlerMethodValidationException exception) {
+        return validationProblem(exception.getAllErrors().size());
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    ProblemDetail handleMethodArgumentTypeMismatch(MethodArgumentTypeMismatchException exception) {
+        return validationProblem(1);
+    }
+
+    private static ProblemDetail validationProblem(int errorCount) {
         ProblemDetail detail = ProblemDetail.forStatusAndDetail(
                 HttpStatus.BAD_REQUEST,
                 "Request validation failed");
         detail.setType(URI.create("urn:homeops:problem:validation"));
         detail.setTitle("Invalid request");
-        detail.setProperty("errorCount", exception.getErrorCount());
+        detail.setProperty("errorCount", errorCount);
         return detail;
     }
 
