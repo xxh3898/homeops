@@ -27,11 +27,12 @@ public class ActivityService {
     public ActivityPageResponse page(String encodedCursor, int limit) {
         ActivityCursor cursor = encodedCursor == null ? null : ActivityCursor.decode(encodedCursor);
         var snapshotAt = cursor == null ? clock.instant() : cursor.snapshotAt();
-        List<StoredActivity> fetched = store.find(cursor, snapshotAt, limit + 1);
+        String visibilitySnapshot = cursor == null ? store.currentVisibilitySnapshot() : cursor.visibilitySnapshot();
+        List<StoredActivity> fetched = store.find(cursor, visibilitySnapshot, limit + 1);
         boolean hasNext = fetched.size() > limit;
         List<StoredActivity> page = hasNext ? fetched.subList(0, limit) : fetched;
         String nextCursor = hasNext && !page.isEmpty()
-                ? new ActivityCursor(snapshotAt, page.getLast().response().occurredAt(),
+                ? new ActivityCursor(snapshotAt, visibilitySnapshot, page.getLast().response().occurredAt(),
                         page.getLast().sortKey()).encode()
                 : null;
         return new ActivityPageResponse(page.stream().map(StoredActivity::response).toList(),

@@ -51,6 +51,18 @@ class MonitoredServiceStoreTest {
                 "newer.checked_at > result.checked_at");
     }
 
+    @Test
+    void should_recordResolutionTransactionIdentity_when_resolvingIncident() {
+        MonitoredServiceStore store = new MonitoredServiceStore(jdbc);
+
+        store.resolveIncident(java.util.UUID.randomUUID(), Instant.parse("2026-08-06T12:00:00Z"));
+
+        ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+        verify(jdbc).update(query.capture(), any(Object[].class));
+        assertThat(query.getValue().replaceAll("\\s+", " ")).contains(
+                "resolved_xid = pg_current_xact_id()");
+    }
+
     private static MonitoredServiceRequest request() {
         return new MonitoredServiceRequest("HomeOps", "https://homeops.example.invalid/health",
                 MonitoredServiceRequest.Method.GET, 200, 3_000, 30, 3, 2,

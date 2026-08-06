@@ -6,7 +6,6 @@ import dev.homeops.activity.api.ActivityEventResponse.Type;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
-import java.time.Instant;
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -20,7 +19,7 @@ public class ActivityStore {
                        d.project || ' deployment' AS title, d.status,
                        CASE WHEN d.status IN ('FAILED', 'ROLLED_BACK') THEN 'CRITICAL'
                             WHEN d.status IN ('RUNNING', 'REQUESTED') THEN 'WARNING' ELSE 'INFO' END AS severity,
-                       d.started_at AS occurred_at, d.recorded_at AS recorded_at,
+                       d.started_at AS occurred_at, d.recorded_xid AS recorded_xid,
                        substring(d.commit_sha FROM 1 FOR 12) AS context,
                        'DEPLOYMENT:' || CAST(d.id AS text) AS sort_key
                 FROM deployment d
@@ -28,26 +27,26 @@ public class ActivityStore {
                 SELECT CAST(b.id AS text), 'BACKUP', b.project || ' backup', b.status,
                        CASE WHEN b.status IN ('FAILED', 'INCOMPLETE') THEN 'CRITICAL'
                             WHEN b.status = 'RUNNING' THEN 'WARNING' ELSE 'INFO' END,
-                       b.started_at, b.recorded_at, b.database_type,
+                       b.started_at, b.recorded_xid, b.database_type,
                        'BACKUP:' || CAST(b.id AS text)
                 FROM backup_run b
                 UNION ALL
                 SELECT CAST(i.id AS text), 'INCIDENT', i.title, 'OPEN', i.severity,
-                       i.opened_at, i.recorded_at,
+                       i.opened_at, i.recorded_xid,
                        COALESCE(s.name, i.incident_type), 'INCIDENT_OPEN:' || CAST(i.id AS text)
                 FROM incident i LEFT JOIN monitored_service s ON s.id = i.service_id
                 UNION ALL
                 SELECT CAST(i.id AS text), 'INCIDENT', i.title, 'RESOLVED', 'RECOVERY',
-                       i.resolved_at, i.resolved_at,
+                       i.resolved_at, COALESCE(i.resolved_xid, i.recorded_xid),
                        COALESCE(s.name, i.incident_type), 'INCIDENT_RECOVERY:' || CAST(i.id AS text)
                 FROM incident i LEFT JOIN monitored_service s ON s.id = i.service_id
                 WHERE i.resolved_at IS NOT NULL
                 UNION ALL
                 SELECT CAST(a.id AS text), 'AGENT', a.summary, a.event_type, 'INFO',
-                       a.occurred_at, a.recorded_at, a.agent_version, 'AGENT:' || CAST(a.id AS text)
+                       a.occurred_at, a.recorded_xid, a.agent_version, 'AGENT:' || CAST(a.id AS text)
                 FROM agent_event a
             ) events
-            WHERE recorded_at <= ?
+            WHERE pg_visible_in_snapshot(recorded_xid, ?::pg_snapshot)
               AND (?::timestamptz IS NULL OR (occurred_at, sort_key) < (?::timestamptz, ?))
             ORDER BY occurred_at DESC, sort_key DESC
             LIMIT ?
@@ -59,11 +58,15 @@ public class ActivityStore {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public List<StoredActivity> find(ActivityCursor cursor, Instant snapshotAt, int limit) {
+    public String currentVisibilitySnapshot() {
+        return jdbcTemplate.queryForObject("SELECT pg_current_snapshot()::text", String.class);
+    }
+
+    public List<StoredActivity> find(ActivityCursor cursor, String visibilitySnapshot, int limit) {
         Timestamp before = cursor == null ? null : Timestamp.from(cursor.occurredAt());
         String sortKey = cursor == null ? "" : cursor.sortKey();
         return jdbcTemplate.query(ACTIVITY_QUERY, ActivityStore::mapActivity,
-                Timestamp.from(snapshotAt), before, before, sortKey, limit);
+                visibilitySnapshot, before, before, sortKey, limit);
     }
 
     private static StoredActivity mapActivity(ResultSet row, int index) throws SQLException {

@@ -31,6 +31,19 @@ describe('ActivityPage', () => {
     expect(mocks.getActivity).toHaveBeenLastCalledWith('next', expect.any(AbortSignal))
   })
 
+  it('renders open and resolved entries for the same incident without duplicate keys', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    mocks.getActivity.mockResolvedValueOnce(page(null, [
+      event('INCIDENT', 'HomeOps is unavailable', 'OPEN'),
+      event('INCIDENT', 'HomeOps is unavailable', 'RESOLVED'),
+    ]))
+    renderPage()
+
+    expect(await screen.findAllByText('HomeOps is unavailable')).toHaveLength(2)
+    expect(consoleError).not.toHaveBeenCalledWith(expect.stringContaining('same key'))
+    consoleError.mockRestore()
+  })
+
   it('shows an empty state when no events exist', async () => {
     mocks.getActivity.mockResolvedValueOnce(page(null, []))
     renderPage()
@@ -66,7 +79,7 @@ function page(nextCursor: string | null, items: ReturnType<typeof event>[]) {
   return { items, nextCursor, generatedAt: '2026-08-06T12:00:00Z' }
 }
 
-function event(type: 'DEPLOYMENT' | 'BACKUP' | 'INCIDENT' | 'AGENT', title: string) {
-  return { id: `${type}-1`, type, title, status: 'SUCCESS', severity: 'INFO' as const,
+function event(type: 'DEPLOYMENT' | 'BACKUP' | 'INCIDENT' | 'AGENT', title: string, status = 'SUCCESS') {
+  return { id: `${type}-1`, type, title, status, severity: 'INFO' as const,
     occurredAt: '2026-08-06T12:00:00Z', context: 'homeops' }
 }

@@ -18,6 +18,12 @@ public record HomeOpsIngestionProperties(
             throw new IllegalArgumentException(
                     "Ingestion shared secret must be empty or 64 lowercase hexadecimal characters");
         }
+        if (maximumRequestAge != null && (maximumRequestAge.isNegative() || maximumRequestAge.isZero())) {
+            throw new IllegalArgumentException("Ingestion maximum request age must be positive");
+        }
+        if (allowedFutureSkew != null && allowedFutureSkew.isNegative()) {
+            throw new IllegalArgumentException("Ingestion allowed future skew must not be negative");
+        }
     }
 
     public boolean isConfigured() {

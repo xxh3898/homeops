@@ -24,13 +24,15 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class ActivityServiceTest {
     private static final Instant NOW = Instant.parse("2026-08-06T12:00:00Z");
+    private static final String VISIBILITY_SNAPSHOT = "100:200:150";
     @Mock private ActivityStore store;
 
     @Test
     void should_returnStableNextCursor_when_moreItemsExist() {
         StoredActivity first = activity("1", NOW, "DEPLOYMENT:1");
         StoredActivity second = activity("2", NOW.minusSeconds(1), "BACKUP:2");
-        when(store.find(isNull(), org.mockito.ArgumentMatchers.eq(NOW),
+        when(store.currentVisibilitySnapshot()).thenReturn(VISIBILITY_SNAPSHOT);
+        when(store.find(isNull(), org.mockito.ArgumentMatchers.eq(VISIBILITY_SNAPSHOT),
                 org.mockito.ArgumentMatchers.eq(2)))
                 .thenReturn(List.of(first, second));
         ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
@@ -40,7 +42,7 @@ class ActivityServiceTest {
         assertThat(response.items()).containsExactly(first.response());
         assertThat(response.nextCursor()).isNotBlank();
         assertThat(ActivityCursor.decode(response.nextCursor()))
-                .isEqualTo(new ActivityCursor(NOW, NOW, "DEPLOYMENT:1"));
+                .isEqualTo(new ActivityCursor(NOW, VISIBILITY_SNAPSHOT, NOW, "DEPLOYMENT:1"));
     }
 
     @Test
@@ -55,7 +57,18 @@ class ActivityServiceTest {
     void should_rejectRequest_when_cursorTimestampIsInvalid() {
         ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
         String cursor = Base64.getUrlEncoder().withoutPadding().encodeToString(
-                "not-an-instant\n2026-08-06T12:00:00Z\nDEPLOYMENT:1"
+                "not-an-instant\n100:200:\n2026-08-06T12:00:00Z\nDEPLOYMENT:1"
+                        .getBytes(StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> service.page(cursor, 25))
+                .isInstanceOf(InvalidActivityCursorException.class);
+    }
+
+    @Test
+    void should_rejectRequest_when_cursorVisibilitySnapshotIsInvalid() {
+        ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
+        String cursor = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                "2026-08-06T12:00:00Z\nnot-a-snapshot\n2026-08-06T12:00:00Z\nDEPLOYMENT:1"
                         .getBytes(StandardCharsets.UTF_8));
 
         assertThatThrownBy(() -> service.page(cursor, 25))

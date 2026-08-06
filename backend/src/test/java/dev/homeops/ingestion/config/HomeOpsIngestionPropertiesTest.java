@@ -29,6 +29,20 @@ class HomeOpsIngestionPropertiesTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void should_rejectInvalidAuthenticationWindows_when_durationIsNotAllowed() {
+        assertThatThrownBy(() -> new HomeOpsIngestionProperties("a".repeat(64), Duration.ZERO,
+                Duration.ZERO))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Ingestion maximum request age must be positive");
+        assertThatThrownBy(() -> new HomeOpsIngestionProperties("a".repeat(64), Duration.ofMinutes(5),
+                Duration.ofSeconds(-1)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Ingestion allowed future skew must not be negative");
+        assertThat(new HomeOpsIngestionProperties("a".repeat(64), Duration.ofMinutes(5), Duration.ZERO)
+                .isConfigured()).isTrue();
+    }
+
     private static HomeOpsIngestionProperties properties(String sharedSecret) {
         return new HomeOpsIngestionProperties(sharedSecret, Duration.ofMinutes(5), Duration.ofMinutes(1));
     }

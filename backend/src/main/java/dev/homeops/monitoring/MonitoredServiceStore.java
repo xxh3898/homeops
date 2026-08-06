@@ -115,7 +115,8 @@ public class MonitoredServiceStore {
 
     public void resolveIncident(UUID incidentId, Instant now) {
         jdbc.update("""
-                UPDATE incident SET status = 'RESOLVED', resolved_at = ?, last_observed_at = ?
+                UPDATE incident SET status = 'RESOLVED', resolved_at = ?, last_observed_at = ?,
+                    resolved_xid = pg_current_xact_id()
                 WHERE id = ? AND status IN ('OPEN', 'ACKNOWLEDGED')
                 """, Timestamp.from(now), Timestamp.from(now), incidentId);
     }

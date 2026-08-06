@@ -80,6 +80,29 @@ class HomeOpsEventReporterTest(unittest.TestCase):
         self.assertEqual(1, len(quarantined))
         self.assertEqual(0o700, (REPORTER.SPOOL_DIR / "quarantine").stat().st_mode & 0o777)
 
+    def test_quarantinesMalformedWrapper_andContinuesDrain(self):
+        REPORTER.SPOOL_DIR.mkdir(mode=0o700)
+        malformed_array = REPORTER.SPOOL_DIR / "000-malformed-array.json"
+        malformed_array.write_text('[]', encoding="utf-8")
+        malformed_array.chmod(0o600)
+        malformed_body = REPORTER.SPOOL_DIR / "001-malformed-body.json"
+        malformed_body.write_text('{"body":{}}', encoding="utf-8")
+        malformed_body.chmod(0o600)
+        body = json.dumps({"eventKey": "after-malformed"}).encode()
+        accepted = REPORTER.SPOOL_DIR / "002-valid.json"
+        accepted.write_text(json.dumps({"kind": "deployments", "body": body.decode()}), encoding="utf-8")
+        accepted.chmod(0o600)
+
+        with mock.patch.object(REPORTER, "send") as sender:
+            REPORTER.drain()
+
+        sender.assert_called_once_with(
+            "https://homeops.example.invalid:9443", "a" * 64, "deployments", body)
+        self.assertFalse(malformed_array.exists())
+        self.assertFalse(malformed_body.exists())
+        self.assertFalse(accepted.exists())
+        self.assertEqual(2, len(list((REPORTER.SPOOL_DIR / "quarantine").glob("*.json"))))
+
     def test_retainsTransientRejection_forRetry(self):
         body = json.dumps({"eventKey": "retry-1"}).encode()
         path = REPORTER.write_spool("deployments", body)

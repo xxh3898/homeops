@@ -162,8 +162,13 @@ def drain():
                 raise ValueError("ingestion spool entry is unsafe")
             try:
                 wrapper = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(wrapper, dict):
+                    raise ValueError("ingestion spool wrapper must be an object")
                 kind = wrapper.get("kind")
-                body = wrapper.get("body", "").encode("utf-8")
+                body_text = wrapper.get("body")
+                if not isinstance(kind, str) or not isinstance(body_text, str):
+                    raise ValueError("ingestion spool wrapper fields are invalid")
+                body = body_text.encode("utf-8")
                 validate_payload(kind, body)
                 send(origin, secret, kind, body)
             except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:

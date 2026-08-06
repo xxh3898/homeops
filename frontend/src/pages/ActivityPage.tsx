@@ -57,7 +57,7 @@ export function ActivityPage() {
         </Card>
       ) : (
         <div className="space-y-3" aria-label="Activity timeline">
-          {items.map((item) => <ActivityItem key={`${item.type}:${item.id}`} item={item} />)}
+          {items.map((item) => <ActivityItem key={`${item.type}:${item.id}:${item.status}`} item={item} />)}
         </div>
       )}
 
