@@ -150,9 +150,10 @@ class IngestionServiceTest {
                 DeploymentIngestionRequest.DeploymentStatus.RUNNING, startedAt,
                 Instant.parse("2026-08-06T01:01:00Z"), null, null, "github-actions", "123", null, false);
         UUID id = UUID.fromString("10000000-0000-0000-0000-000000000014");
+        String requestDigest = digest.calculate(request);
         when(deployments.find(request.eventKey())).thenReturn(Optional.of(new DeploymentIngestionStore.StoredDeployment(
                 id, "homeops", "production", "0123456789012345678901234567890123456789",
-                startedAt.truncatedTo(java.time.temporal.ChronoUnit.MICROS), "RUNNING", digest.calculate(request))));
+                startedAt.truncatedTo(java.time.temporal.ChronoUnit.MICROS), "RUNNING", requestDigest)));
 
         var result = service.acceptDeployment(request);
 

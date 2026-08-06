@@ -2,6 +2,9 @@ package dev.homeops.monitoring;
 
 import dev.homeops.monitoring.api.MonitoredServiceResponse;
 import java.time.Clock;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import org.slf4j.Logger;
@@ -19,6 +22,7 @@ public class ServiceCheckScheduler {
     private final ServiceCheckCoordinator coordinator;
     private final Clock clock;
     private final Executor executor;
+    private final Set<UUID> inFlightServiceIds = ConcurrentHashMap.newKeySet();
 
     @Autowired
     public ServiceCheckScheduler(MonitoredServiceStore services, HttpServiceChecker checker,
@@ -38,9 +42,14 @@ public class ServiceCheckScheduler {
     @Scheduled(fixedDelayString = "${homeops.monitoring.scheduler-delay}")
     public void checkEnabledServices() {
         services.findDue(clock.instant()).forEach(service -> {
+            if (!inFlightServiceIds.add(service.id())) {
+                LOGGER.debug("Service check is already in flight for service {}", service.id());
+                return;
+            }
             try {
                 executor.execute(() -> checkSafely(service));
             } catch (RejectedExecutionException exception) {
+                inFlightServiceIds.remove(service.id());
                 LOGGER.warn("Service check was deferred because the bounded executor is full for service {}", service.id());
             }
         });
@@ -51,6 +60,8 @@ public class ServiceCheckScheduler {
             coordinator.record(service, checker.check(service));
         } catch (RuntimeException exception) {
             LOGGER.warn("Service check could not be recorded for service {}", service.id());
+        } finally {
+            inFlightServiceIds.remove(service.id());
         }
     }
 }

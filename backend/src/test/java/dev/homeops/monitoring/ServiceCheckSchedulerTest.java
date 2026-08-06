@@ -10,6 +10,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import org.junit.jupiter.api.Test;
@@ -72,6 +73,45 @@ class ServiceCheckSchedulerTest {
         scheduler.checkEnabledServices();
 
         org.mockito.Mockito.verifyNoInteractions(checker, coordinator);
+    }
+
+    @Test
+    void should_notSubmitSameServiceAgain_when_previousCheckIsInFlight() {
+        Instant now = Instant.parse("2026-08-06T12:00:00Z");
+        MonitoredServiceResponse service = service("First");
+        List<Runnable> submitted = new ArrayList<>();
+        when(store.findDue(now)).thenReturn(List.of(service));
+        ServiceCheckScheduler scheduler = new ServiceCheckScheduler(
+                store, checker, coordinator, submitted::add, Clock.fixed(now, ZoneOffset.UTC));
+
+        scheduler.checkEnabledServices();
+        scheduler.checkEnabledServices();
+
+        org.assertj.core.api.Assertions.assertThat(submitted).hasSize(1);
+        submitted.getFirst().run();
+
+        scheduler.checkEnabledServices();
+
+        org.assertj.core.api.Assertions.assertThat(submitted).hasSize(2);
+    }
+
+    @Test
+    void should_allowNextTickRetry_when_executorRejectsServiceCheck() {
+        Instant now = Instant.parse("2026-08-06T12:00:00Z");
+        MonitoredServiceResponse service = service("First");
+        AtomicInteger attempts = new AtomicInteger();
+        Executor rejectingExecutor = ignored -> {
+            attempts.incrementAndGet();
+            throw new RejectedExecutionException("bounded");
+        };
+        when(store.findDue(now)).thenReturn(List.of(service));
+        ServiceCheckScheduler scheduler = new ServiceCheckScheduler(
+                store, checker, coordinator, rejectingExecutor, Clock.fixed(now, ZoneOffset.UTC));
+
+        scheduler.checkEnabledServices();
+        scheduler.checkEnabledServices();
+
+        org.assertj.core.api.Assertions.assertThat(attempts).hasValue(2);
     }
 
     private static MonitoredServiceResponse service(String name) {

@@ -7,6 +7,7 @@ import hmac
 import json
 import os
 import pathlib
+import pwd
 import re
 import ssl
 import stat
@@ -16,11 +17,21 @@ import urllib.parse
 import urllib.request
 import uuid
 
-APP_DIR = pathlib.Path("/Users/homeserver/Server/apps/homeops")
-SPOOL_DIR = pathlib.Path("/Users/homeserver/Server/data/homeops/ingestion-spool")
 MAX_PAYLOAD_BYTES = 16 * 1024
 MAX_DRAIN_FILES = 3
 TIMEOUT_SECONDS = 2
+
+
+def account_home():
+    return pathlib.Path(pwd.getpwuid(os.getuid()).pw_dir)
+
+
+def default_paths():
+    server_root = account_home() / "Server"
+    return server_root / "apps" / "homeops", server_root / "data" / "homeops" / "ingestion-spool"
+
+
+APP_DIR, SPOOL_DIR = default_paths()
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -43,6 +54,26 @@ def private_directory(path):
         raise ValueError(f"{path.name} must be a directory")
     if details.st_uid != os.getuid() or stat.S_IMODE(details.st_mode) != 0o700:
         raise ValueError(f"{path.name} owner or mode is invalid")
+
+
+def quarantine_directory():
+    path = SPOOL_DIR / "quarantine"
+    path.mkdir(mode=0o700, exist_ok=True)
+    private_directory(path)
+    return path
+
+
+def quarantine(path):
+    target = quarantine_directory() / path.name
+    if target.exists():
+        target = target.with_stem(f"{target.stem}-{uuid.uuid4().hex}")
+    path.rename(target)
+
+
+def permanently_rejected(error):
+    return (isinstance(error, urllib.error.HTTPError)
+            and 400 <= error.code < 500
+            and error.code not in (401, 403, 408, 429))
 
 
 def endpoint_origin():
@@ -111,6 +142,7 @@ def send(origin, secret, kind, body):
 def drain():
     origin = endpoint_origin()
     secret = ingestion_secret()
+    private_directory(SPOOL_DIR)
     lock_path = SPOOL_DIR / ".drain.lock"
     descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
     with os.fdopen(descriptor, "r+") as lock_file:
@@ -121,12 +153,20 @@ def drain():
         for path in sorted(SPOOL_DIR.glob("*.json"))[:MAX_DRAIN_FILES]:
             if path.is_symlink() or not path.is_file() or stat.S_IMODE(path.stat().st_mode) != 0o600:
                 raise ValueError("ingestion spool entry is unsafe")
-            wrapper = json.loads(path.read_text(encoding="utf-8"))
-            kind = wrapper.get("kind")
-            body = wrapper.get("body", "").encode("utf-8")
-            validate_payload(kind, body)
-            send(origin, secret, kind, body)
-            path.unlink()
+            try:
+                wrapper = json.loads(path.read_text(encoding="utf-8"))
+                kind = wrapper.get("kind")
+                body = wrapper.get("body", "").encode("utf-8")
+                validate_payload(kind, body)
+                send(origin, secret, kind, body)
+            except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
+                quarantine(path)
+            except urllib.error.HTTPError as error:
+                if not permanently_rejected(error):
+                    raise
+                quarantine(path)
+            else:
+                path.unlink()
 
 
 def main():

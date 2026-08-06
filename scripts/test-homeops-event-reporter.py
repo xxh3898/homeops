@@ -50,6 +50,47 @@ class HomeOpsEventReporterTest(unittest.TestCase):
         handler = REPORTER.NoRedirect()
         self.assertIsNone(handler.redirect_request(None, None, 307, None, None, None))
 
+    def test_uses_current_account_home_for_default_paths(self):
+        account = mock.Mock(pw_dir="/Users/another-account")
+
+        with mock.patch.object(REPORTER.pwd, "getpwuid", return_value=account):
+            app_dir, spool_dir = REPORTER.default_paths()
+
+        self.assertEqual(pathlib.Path("/Users/another-account/Server/apps/homeops"), app_dir)
+        self.assertEqual(pathlib.Path("/Users/another-account/Server/data/homeops/ingestion-spool"), spool_dir)
+
+    def test_quarantinesPermanentRejection_andContinuesDrain(self):
+        rejected = json.dumps({"eventKey": "reject-1"}).encode()
+        accepted = json.dumps({"eventKey": "accept-1"}).encode()
+        rejected_path = REPORTER.write_spool("deployments", rejected)
+        accepted_path = REPORTER.write_spool("deployments", accepted)
+
+        def sender(origin, secret, kind, body):
+            if body == rejected:
+                raise REPORTER.urllib.error.HTTPError(
+                    "https://homeops.example.invalid", 409, "conflict", {}, None)
+
+        with mock.patch.object(REPORTER, "send", side_effect=sender):
+            REPORTER.drain()
+
+        self.assertFalse(rejected_path.exists())
+        self.assertFalse(accepted_path.exists())
+        quarantined = list((REPORTER.SPOOL_DIR / "quarantine").glob("*.json"))
+        self.assertEqual(1, len(quarantined))
+        self.assertEqual(0o700, (REPORTER.SPOOL_DIR / "quarantine").stat().st_mode & 0o777)
+
+    def test_retainsTransientRejection_forRetry(self):
+        body = json.dumps({"eventKey": "retry-1"}).encode()
+        path = REPORTER.write_spool("deployments", body)
+
+        with mock.patch.object(REPORTER, "send", side_effect=REPORTER.urllib.error.HTTPError(
+                "https://homeops.example.invalid", 429, "busy", {}, None)):
+            with self.assertRaises(REPORTER.urllib.error.HTTPError):
+                REPORTER.drain()
+
+        self.assertTrue(path.exists())
+        self.assertFalse((REPORTER.SPOOL_DIR / "quarantine").exists())
+
     @staticmethod
     def write_private(path, value):
         path.write_text(value, encoding="utf-8")
