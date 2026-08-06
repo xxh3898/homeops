@@ -44,14 +44,17 @@ public class DeploymentIngestionStore {
                 .findFirst();
     }
 
-    public void update(DeploymentIngestionRequest request, String digest) {
-        jdbcTemplate.update("""
+    public boolean update(DeploymentIngestionRequest request, String digest,
+            DeploymentIngestionRequest.DeploymentStatus expectedStatus) {
+        return jdbcTemplate.update("""
                 UPDATE deployment SET branch = ?, image_tag = ?, previous_commit_sha = ?, status = ?,
                     finished_at = ?, failure_stage = ?, failure_summary = ?, actor = ?, workflow_run_id = ?,
                     workflow_run_url = ?, rollback = ?, ingestion_digest = ? WHERE event_key = ?
+                    AND status = ?
                 """, request.branch(), request.imageTag(), request.previousCommitSha(), request.status().name(),
                 timestamp(request.finishedAt()), request.failureStage(), request.failureSummary(), request.actor(),
-                request.workflowRunId(), request.workflowRunUrl(), request.rollback(), digest, request.eventKey());
+                request.workflowRunId(), request.workflowRunUrl(), request.rollback(), digest, request.eventKey(),
+                expectedStatus.name()) == 1;
     }
 
     private static Timestamp timestamp(Instant value) { return value == null ? null : Timestamp.from(value); }

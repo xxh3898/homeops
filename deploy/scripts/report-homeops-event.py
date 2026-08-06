@@ -171,10 +171,11 @@ def drain():
 
 def main():
     if len(sys.argv) != 2:
-        raise ValueError("usage: report-homeops-event.py <deployments|backups>")
-    body = sys.stdin.buffer.read(MAX_PAYLOAD_BYTES + 1)
-    validate_payload(sys.argv[1], body)
-    write_spool(sys.argv[1], body)
+        raise ValueError("usage: report-homeops-event.py <deployments|backups|--drain>")
+    if sys.argv[1] != "--drain":
+        body = sys.stdin.buffer.read(MAX_PAYLOAD_BYTES + 1)
+        validate_payload(sys.argv[1], body)
+        write_spool(sys.argv[1], body)
     try:
         drain()
     except (OSError, ValueError, json.JSONDecodeError, urllib.error.URLError) as exception:

@@ -78,6 +78,12 @@ The repository implements, but does not enable by default, a separate Agent roll
 
 Before enabling it, install `deploy/scripts/rollout-homeops-agent.sh` and `deploy/bootstrap/deploy-homeops-agent-rollout-ci.sh.example` as operator-owned `0700` files, create a separate SSH key restricted to that bootstrap, and populate only the two rollout SSH secrets. Do not reuse the API/Web deployment key. A checksum verifies the retrieved artifact but is not an independent code-signing guarantee.
 
+### Install the ingestion reporter retry schedule
+
+When deployment or backup ingestion is enabled, copy `deploy/launchd/dev.homeops.ingestion-reporter.plist.example` to the logged-in operator's LaunchAgents directory, replace only `REPLACE_ME` with that account name, and lint the private copy before loading it. The plist runs the fixed `runtime-config/current/scripts/report-homeops-event.py --drain` command at load and every five minutes; it does not accept event JSON, arbitrary arguments, secrets, or host paths. Create the referenced `~/Library/Logs/HomeOps` directory with restrictive ownership before activation.
+
+Loading the LaunchAgent and confirming that a retained test event drains after an API recovery are separate host acceptance gates. The repository example does not install, load, or modify an existing LaunchAgent automatically.
+
 ## 5. Start the application stack
 
 The runtime Compose bundle is built from `runtime-config.Dockerfile`. It runs a dedicated PostgreSQL, Spring API, and Nginx/React Web service. Bind both published ports to loopback. The database must remain internal.

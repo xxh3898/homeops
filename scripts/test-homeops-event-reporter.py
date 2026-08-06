@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import importlib.util
+import io
 import json
 import pathlib
 import tempfile
@@ -90,6 +91,19 @@ class HomeOpsEventReporterTest(unittest.TestCase):
 
         self.assertTrue(path.exists())
         self.assertFalse((REPORTER.SPOOL_DIR / "quarantine").exists())
+
+    def test_drainsRetainedEvent_when_drainOnlyModeRunsWithoutNewPayload(self):
+        body = json.dumps({"eventKey": "retry-then-drain"}).encode()
+        path = REPORTER.write_spool("deployments", body)
+
+        with mock.patch.object(REPORTER, "send") as sender, \
+                mock.patch.object(REPORTER.sys, "argv", ["report-homeops-event.py", "--drain"]), \
+                mock.patch.object(REPORTER.sys, "stdin", mock.Mock(buffer=io.BytesIO())):
+            REPORTER.main()
+
+        sender.assert_called_once_with(
+            "https://homeops.example.invalid:9443", "a" * 64, "deployments", body)
+        self.assertFalse(path.exists())
 
     @staticmethod
     def write_private(path, value):

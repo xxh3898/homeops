@@ -36,8 +36,10 @@ public class IngestionService {
         if (!stored.matchesLifecycle(request)) throw new EventKeyConflictException(request.eventKey());
         DeploymentIngestionRequest.DeploymentStatus current = DeploymentIngestionRequest.DeploymentStatus.valueOf(stored.status());
         if (!isAllowed(current, request.status())) throw new InvalidIngestionStateTransitionException(current.name(), request.status().name());
-        deployments.update(request, requestDigest);
-        return new IngestionAcceptedResponse(stored.id(), false);
+        if (deployments.update(request, requestDigest, current)) {
+            return new IngestionAcceptedResponse(stored.id(), false);
+        }
+        return resolveDeploymentAfterConditionalUpdateMiss(request, requestDigest);
     }
 
     @Transactional
@@ -57,8 +59,30 @@ public class IngestionService {
         BackupIngestionRequest.BackupStatus current = BackupIngestionRequest.BackupStatus.valueOf(stored.status());
         if (current != BackupIngestionRequest.BackupStatus.RUNNING) throw new InvalidIngestionStateTransitionException(current.name(), request.status().name());
         if (request.status() == BackupIngestionRequest.BackupStatus.RUNNING) throw new EventKeyConflictException(request.eventKey());
-        backups.update(request, requestDigest);
-        return new IngestionAcceptedResponse(stored.id(), false);
+        if (backups.update(request, requestDigest, current)) {
+            return new IngestionAcceptedResponse(stored.id(), false);
+        }
+        return resolveBackupAfterConditionalUpdateMiss(request, requestDigest);
+    }
+
+    private IngestionAcceptedResponse resolveDeploymentAfterConditionalUpdateMiss(
+            DeploymentIngestionRequest request, String requestDigest) {
+        var stored = deployments.find(request.eventKey())
+                .orElseThrow(() -> new EventKeyConflictException(request.eventKey()));
+        if (requestDigest.equals(stored.digest())) return new IngestionAcceptedResponse(stored.id(), true);
+        if (!stored.matchesLifecycle(request)) throw new EventKeyConflictException(request.eventKey());
+        DeploymentIngestionRequest.DeploymentStatus current = DeploymentIngestionRequest.DeploymentStatus.valueOf(stored.status());
+        throw new InvalidIngestionStateTransitionException(current.name(), request.status().name());
+    }
+
+    private IngestionAcceptedResponse resolveBackupAfterConditionalUpdateMiss(
+            BackupIngestionRequest request, String requestDigest) {
+        var stored = backups.find(request.eventKey())
+                .orElseThrow(() -> new EventKeyConflictException(request.eventKey()));
+        if (requestDigest.equals(stored.digest())) return new IngestionAcceptedResponse(stored.id(), true);
+        if (!stored.matchesLifecycle(request)) throw new EventKeyConflictException(request.eventKey());
+        BackupIngestionRequest.BackupStatus current = BackupIngestionRequest.BackupStatus.valueOf(stored.status());
+        throw new InvalidIngestionStateTransitionException(current.name(), request.status().name());
     }
 
     private static boolean isAllowed(DeploymentIngestionRequest.DeploymentStatus current,

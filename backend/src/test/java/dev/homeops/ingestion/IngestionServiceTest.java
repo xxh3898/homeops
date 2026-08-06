@@ -42,7 +42,7 @@ class IngestionServiceTest {
         var result = service.acceptDeployment(request);
 
         assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
-        verify(deployments, never()).update(any(), any());
+        verify(deployments, never()).update(any(), any(), any());
     }
 
     @Test
@@ -78,11 +78,14 @@ class IngestionServiceTest {
         String requestDigest = digest.calculate(request);
         when(deployments.find(request.eventKey())).thenReturn(Optional.of(
                 deploymentStored(id, "RUNNING", "different")));
+        when(deployments.update(request, requestDigest,
+                DeploymentIngestionRequest.DeploymentStatus.RUNNING)).thenReturn(true);
 
         var result = service.acceptDeployment(request);
 
         assertThat(result.duplicate()).isFalse();
-        verify(deployments).update(eq(request), eq(requestDigest));
+        verify(deployments).update(eq(request), eq(requestDigest),
+                eq(DeploymentIngestionRequest.DeploymentStatus.RUNNING));
     }
 
     @Test
@@ -135,11 +138,57 @@ class IngestionServiceTest {
         String requestDigest = digest.calculate(request);
         when(backups.find(request.eventKey())).thenReturn(Optional.of(
                 backupStored(id, "RUNNING", "different")));
+        when(backups.update(request, requestDigest, BackupIngestionRequest.BackupStatus.RUNNING)).thenReturn(true);
 
         var result = service.acceptBackup(request);
 
         assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, false));
-        verify(backups).update(request, requestDigest);
+        verify(backups).update(request, requestDigest, BackupIngestionRequest.BackupStatus.RUNNING);
+    }
+
+    @Test
+    void should_markDuplicate_when_concurrentDeploymentUpdateAlreadyStoredMatchingTerminalEvent() {
+        var request = deployment(DeploymentIngestionRequest.DeploymentStatus.SUCCESS);
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000015");
+        String requestDigest = digest.calculate(request);
+        when(deployments.find(request.eventKey())).thenReturn(
+                Optional.of(deploymentStored(id, "RUNNING", "running-digest")),
+                Optional.of(deploymentStored(id, "SUCCESS", requestDigest)));
+        when(deployments.update(request, requestDigest,
+                DeploymentIngestionRequest.DeploymentStatus.RUNNING)).thenReturn(false);
+
+        var result = service.acceptDeployment(request);
+
+        assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
+    }
+
+    @Test
+    void should_rejectDeployment_when_concurrentTerminalEventChangedStoredState() {
+        var request = deployment(DeploymentIngestionRequest.DeploymentStatus.SUCCESS);
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000016");
+        String requestDigest = digest.calculate(request);
+        when(deployments.find(request.eventKey())).thenReturn(
+                Optional.of(deploymentStored(id, "RUNNING", "running-digest")),
+                Optional.of(deploymentStored(id, "FAILED", "other-terminal-digest")));
+        when(deployments.update(request, requestDigest,
+                DeploymentIngestionRequest.DeploymentStatus.RUNNING)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.acceptDeployment(request))
+                .isInstanceOf(InvalidIngestionStateTransitionException.class);
+    }
+
+    @Test
+    void should_rejectBackup_when_concurrentTerminalEventChangedStoredState() {
+        var request = backup(BackupIngestionRequest.BackupStatus.SUCCESS);
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000017");
+        String requestDigest = digest.calculate(request);
+        when(backups.find(request.eventKey())).thenReturn(
+                Optional.of(backupStored(id, "RUNNING", "running-digest")),
+                Optional.of(backupStored(id, "FAILED", "other-terminal-digest")));
+        when(backups.update(request, requestDigest, BackupIngestionRequest.BackupStatus.RUNNING)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.acceptBackup(request))
+                .isInstanceOf(InvalidIngestionStateTransitionException.class);
     }
 
     @Test

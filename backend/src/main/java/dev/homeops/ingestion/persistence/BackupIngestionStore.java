@@ -42,15 +42,17 @@ public class BackupIngestionStore {
                 .findFirst();
     }
 
-    public void update(BackupIngestionRequest request, String digest) {
-        jdbcTemplate.update("""
+    public boolean update(BackupIngestionRequest request, String digest,
+            BackupIngestionRequest.BackupStatus expectedStatus) {
+        return jdbcTemplate.update("""
                 UPDATE backup_run SET logical_location = ?, status = ?, finished_at = ?, size_bytes = ?,
                     expires_at = ?, failure_summary = ?, restore_tested_at = ?, restore_test_status = ?,
                     ingestion_digest = ?
-                WHERE event_key = ?
+                WHERE event_key = ? AND status = ?
                 """, request.logicalLocation(), request.status().name(), timestamp(request.finishedAt()),
                 request.sizeBytes(), timestamp(request.expiresAt()), request.failureSummary(),
-                timestamp(request.restoreTestedAt()), request.restoreTestStatus(), digest, request.eventKey());
+                timestamp(request.restoreTestedAt()), request.restoreTestStatus(), digest, request.eventKey(),
+                expectedStatus.name()) == 1;
     }
 
     private static Timestamp timestamp(Instant value) { return value == null ? null : Timestamp.from(value); }

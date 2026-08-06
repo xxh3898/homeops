@@ -31,7 +31,7 @@ Before running, confirm memory pressure, disk headroom, active production health
 
 ## Deployment transaction
 
-Phase 3 ingestion activation is a separate host operation after the source releases are merged. Confirm the HomeOps `.env` contains one generated 64-character lowercase hexadecimal `HOMEOPS_INGESTION_SHARED_SECRET`, `smoke.origin` is the intended tailnet HTTPS origin, both files remain owner-only mode `0600`, and `~/Server/data/homeops/ingestion-spool` for the deployment account is owner-only mode `0700`. Cubing Hub and Guess Pokémon begin emitting events only after their own runtime-config releases containing the hook are deployed. A reporter warning must not be treated as a failed application deploy or backup; inspect the spool and HomeOps ingestion health separately.
+Phase 3 ingestion activation is a separate host operation after the source releases are merged. Confirm the HomeOps `.env` contains one generated 64-character lowercase hexadecimal `HOMEOPS_INGESTION_SHARED_SECRET`, `smoke.origin` is the intended tailnet HTTPS origin, both files remain owner-only mode `0600`, and `~/Server/data/homeops/ingestion-spool` for the deployment account is owner-only mode `0700`. Install the separate `dev.homeops.ingestion-reporter` LaunchAgent only after linting its private copy; it invokes the fixed `--drain` mode at a bounded interval and is the retry owner for retained transient event deliveries. Cubing Hub and Guess Pokémon begin emitting events only after their own runtime-config releases containing the hook are deployed. A reporter warning must not be treated as a failed application deploy or backup; inspect the spool and HomeOps ingestion health separately.
 
 The GitHub workflow performs:
 
@@ -72,6 +72,7 @@ If `pending` remains, do not delete it automatically. Inspect the deployment log
 | first-deploy verification failure | API/Web are stopped; no accepted `current` state exists | preserve `pending` and the dedicated DB for diagnosis; do not delete the volume automatically |
 | Agent delivery failure | retryable pending delivery failure preserves FIFO and suppresses newer collection; a newly collected snapshot is queued when its delivery fails | verify API, mTLS, spool capacity, and clock without deleting spool files |
 | snapshot permanently rejected | consecutive permanent rejects are renamed to hidden `.rejected-*.json` evidence files in the same FIFO drain; fresh collection resumes after no retryable pending item remains | inspect only metadata and safe error status; rejected evidence still counts toward bounded spool capacity, so decide exact retention manually |
+| event reporter transient failure | event remains in the private ingestion spool; the `dev.homeops.ingestion-reporter` LaunchAgent invokes bounded `--drain` retries every five minutes | inspect API ingestion health, origin, secret configuration, and spool count without deleting spool entries |
 | stale Agent | UI warns stale/offline | inspect the native process and Docker Desktop; no automatic restart |
 
 Because Flyway may already have changed the database, an image rollback is safe only for backward-compatible migrations. Never use an incompatible migration in the automatic path.
