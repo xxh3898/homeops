@@ -3,9 +3,11 @@ package dev.homeops.monitoring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import dev.homeops.monitoring.api.MonitoredServiceResponse;
+import dev.homeops.monitoring.config.HomeOpsMonitoringProperties;
 import java.io.IOException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -13,6 +15,7 @@ import java.net.http.HttpResponse;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
@@ -40,7 +43,7 @@ class HttpServiceCheckerTest {
         when(client.send(any(HttpRequest.class),
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<Void>>any()))
                 .thenReturn(response);
-        HttpServiceChecker checker = new HttpServiceChecker(client, clock);
+        HttpServiceChecker checker = new HttpServiceChecker(client, clock, allowedPolicy());
 
         HttpServiceChecker.Result result = checker.check(service(204));
 
@@ -59,7 +62,7 @@ class HttpServiceCheckerTest {
         when(client.send(any(HttpRequest.class),
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<Void>>any()))
                 .thenThrow(new IOException("connection failed"));
-        HttpServiceChecker checker = new HttpServiceChecker(client, clock);
+        HttpServiceChecker checker = new HttpServiceChecker(client, clock, allowedPolicy());
 
         HttpServiceChecker.Result result = checker.check(service(200));
 
@@ -71,12 +74,29 @@ class HttpServiceCheckerTest {
         when(client.send(any(HttpRequest.class),
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<Void>>any()))
                 .thenThrow(new InterruptedException("shutdown"));
-        HttpServiceChecker checker = new HttpServiceChecker(client, clock);
+        HttpServiceChecker checker = new HttpServiceChecker(client, clock, allowedPolicy());
 
         assertThatThrownBy(() -> checker.check(service(200)))
                 .isInstanceOf(HttpServiceChecker.CheckInterruptedException.class);
 
         assertThat(Thread.currentThread().isInterrupted()).isTrue();
+    }
+
+    @Test
+    void should_notIssueHttpRequest_when_persistedServiceOriginIsNoLongerAllowed() {
+        SafeServiceUrlPolicy emptyPolicy = new SafeServiceUrlPolicy(new HomeOpsMonitoringProperties(
+                List.of(), Duration.ofDays(7), Duration.ofDays(30), 4));
+        HttpServiceChecker checker = new HttpServiceChecker(client, clock, emptyPolicy);
+
+        assertThatThrownBy(() -> checker.check(service(200)))
+                .isInstanceOf(SafeServiceUrlPolicy.UnsafeServiceUrlException.class);
+
+        verifyNoInteractions(client, clock);
+    }
+
+    private static SafeServiceUrlPolicy allowedPolicy() {
+        return new SafeServiceUrlPolicy(new HomeOpsMonitoringProperties(
+                List.of("https://homeops.example.ts.net:9443"), Duration.ofDays(7), Duration.ofDays(30), 4));
     }
 
     private static MonitoredServiceResponse service(int expectedStatus) {

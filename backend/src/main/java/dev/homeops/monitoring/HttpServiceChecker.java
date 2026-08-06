@@ -15,19 +15,22 @@ import org.springframework.stereotype.Component;
 public class HttpServiceChecker {
     private final HttpClient client;
     private final Clock clock;
+    private final SafeServiceUrlPolicy serviceUrlPolicy;
 
-    public HttpServiceChecker() {
+    public HttpServiceChecker(SafeServiceUrlPolicy serviceUrlPolicy) {
         this(HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)
-                .build(), Clock.systemUTC());
+                .build(), Clock.systemUTC(), serviceUrlPolicy);
     }
 
-    HttpServiceChecker(HttpClient client, Clock clock) {
+    HttpServiceChecker(HttpClient client, Clock clock, SafeServiceUrlPolicy serviceUrlPolicy) {
         this.client = client;
         this.clock = clock;
+        this.serviceUrlPolicy = serviceUrlPolicy;
     }
 
     public Result check(MonitoredServiceResponse service) {
+        serviceUrlPolicy.validate(service.url());
         Instant started = clock.instant();
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(service.url()))

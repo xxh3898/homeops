@@ -103,6 +103,35 @@ class HomeOpsEventReporterTest(unittest.TestCase):
         self.assertFalse(accepted.exists())
         self.assertEqual(2, len(list((REPORTER.SPOOL_DIR / "quarantine").glob("*.json"))))
 
+    def test_quarantinesUnsafeEntries_andContinuesDrainWithoutReadingSymlinkTarget(self):
+        REPORTER.SPOOL_DIR.mkdir(mode=0o700)
+        unsafe_mode = REPORTER.SPOOL_DIR / "000-unsafe-mode.json"
+        unsafe_mode.write_text('{"kind":"deployments","body":"unsafe"}', encoding="utf-8")
+        unsafe_mode.chmod(0o644)
+        sentinel = pathlib.Path(self.temporary.name) / "symlink-target"
+        sentinel.write_text("must-not-be-read", encoding="utf-8")
+        unsafe_link = REPORTER.SPOOL_DIR / "001-unsafe-link.json"
+        unsafe_link.symlink_to(sentinel)
+        unsafe_directory = REPORTER.SPOOL_DIR / "002-unsafe-directory.json"
+        unsafe_directory.mkdir(mode=0o700)
+        body = json.dumps({"eventKey": "after-unsafe"}).encode()
+        accepted = REPORTER.SPOOL_DIR / "003-valid.json"
+        accepted.write_text(json.dumps({"kind": "deployments", "body": body.decode()}), encoding="utf-8")
+        accepted.chmod(0o600)
+
+        with mock.patch.object(REPORTER, "MAX_DRAIN_FILES", 4), \
+                mock.patch.object(REPORTER, "send") as sender:
+            REPORTER.drain()
+
+        sender.assert_called_once_with(
+            "https://homeops.example.invalid:9443", "a" * 64, "deployments", body)
+        self.assertEqual("must-not-be-read", sentinel.read_text(encoding="utf-8"))
+        self.assertFalse(unsafe_mode.exists())
+        self.assertFalse(unsafe_link.exists())
+        self.assertFalse(unsafe_directory.exists())
+        self.assertFalse(accepted.exists())
+        self.assertEqual(3, len(list((REPORTER.SPOOL_DIR / "quarantine").glob("*.json"))))
+
     def test_retainsTransientRejection_forRetry(self):
         body = json.dumps({"eventKey": "retry-1"}).encode()
         path = REPORTER.write_spool("deployments", body)

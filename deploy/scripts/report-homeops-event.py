@@ -146,6 +146,13 @@ def send(origin, secret, kind, body):
             raise urllib.error.HTTPError(request.full_url, response.status, "unexpected response", response.headers, None)
 
 
+def validate_spool_entry(path):
+    details = path.lstat()
+    if not stat.S_ISREG(details.st_mode) or details.st_uid != os.getuid() \
+            or stat.S_IMODE(details.st_mode) != 0o600:
+        raise ValueError("ingestion spool entry is unsafe")
+
+
 def drain():
     origin = endpoint_origin()
     secret = ingestion_secret()
@@ -158,9 +165,8 @@ def drain():
             raise ValueError("ingestion spool lock owner or mode is invalid")
         fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         for path in sorted(SPOOL_DIR.glob("*.json"))[:MAX_DRAIN_FILES]:
-            if path.is_symlink() or not path.is_file() or stat.S_IMODE(path.stat().st_mode) != 0o600:
-                raise ValueError("ingestion spool entry is unsafe")
             try:
+                validate_spool_entry(path)
                 wrapper = json.loads(path.read_text(encoding="utf-8"))
                 if not isinstance(wrapper, dict):
                     raise ValueError("ingestion spool wrapper must be an object")
