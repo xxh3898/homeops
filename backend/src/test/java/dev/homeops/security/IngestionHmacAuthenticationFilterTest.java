@@ -15,7 +15,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 class IngestionHmacAuthenticationFilterTest {
-    private static final String SECRET = "test-ingestion-secret";
+    private static final String SECRET = "a".repeat(64);
 
     @AfterEach
     void clearSecurityContext() { SecurityContextHolder.clearContext(); }
