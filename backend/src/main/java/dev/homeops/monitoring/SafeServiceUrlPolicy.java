@@ -56,7 +56,8 @@ public class SafeServiceUrlPolicy {
 
     private static String targetOrigin(URI uri) {
         int port = uri.getPort();
-        if (uri.getHost() == null || uri.getHost().contains(":") || port < -1 || port == 0) {
+        if (uri.getHost() == null || uri.getHost().contains(":")
+                || port < -1 || port == 0 || port > 65535) {
             throw new IllegalArgumentException("Monitoring allowlist contains an invalid port");
         }
         return "https://" + uri.getHost().toLowerCase()
