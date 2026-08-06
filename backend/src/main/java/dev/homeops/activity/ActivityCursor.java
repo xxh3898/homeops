@@ -6,12 +6,16 @@ import java.nio.charset.StandardCharsets;
 import java.time.DateTimeException;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.regex.Pattern;
 
 record ActivityCursor(Instant snapshotAt, String visibilitySnapshot, Instant occurredAt, String sortKey) {
     private static final String SEPARATOR = "\n";
     private static final int MAXIMUM_ENCODED_LENGTH = 4096;
     private static final int MAXIMUM_VISIBILITY_SNAPSHOT_LENGTH = 2048;
     private static final String VISIBILITY_SNAPSHOT_PATTERN = "[0-9]+:[0-9]+:(?:[0-9]+(?:,[0-9]+)*)?";
+    private static final Pattern SORT_KEY_PATTERN = Pattern.compile(
+            "^(?:DEPLOYMENT|BACKUP|INCIDENT_OPEN|INCIDENT_RECOVERY|AGENT):"
+                    + "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
     private static final BigInteger MAXIMUM_XID = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
 
     static ActivityCursor decode(String encoded) {
@@ -23,7 +27,7 @@ record ActivityCursor(Instant snapshotAt, String visibilitySnapshot, Instant occ
             String[] parts = value.split(SEPARATOR, 4);
             if (parts.length != 4 || parts[1].length() > MAXIMUM_VISIBILITY_SNAPSHOT_LENGTH
                     || !isValidVisibilitySnapshot(parts[1])
-                    || parts[3].isBlank() || parts[3].length() > 160) {
+                    || !isValidSortKey(parts[3])) {
                 throw new InvalidActivityCursorException();
             }
             return new ActivityCursor(parsePostgresqlTimestamp(parts[0]), parts[1], parsePostgresqlTimestamp(parts[2]),
@@ -62,6 +66,10 @@ record ActivityCursor(Instant snapshotAt, String visibilitySnapshot, Instant occ
             previous = value;
         }
         return true;
+    }
+
+    private static boolean isValidSortKey(String sortKey) {
+        return SORT_KEY_PATTERN.matcher(sortKey).matches();
     }
 
     private static BigInteger parseXid(String value) {

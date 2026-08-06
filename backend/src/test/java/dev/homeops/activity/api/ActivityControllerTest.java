@@ -48,13 +48,30 @@ class ActivityControllerTest {
         verifyNoInteractions(store);
     }
 
+    @Test
+    void should_returnBadRequest_when_cursorSortKeyIsNotServerGeneratedFormat() throws Exception {
+        mockMvc.perform(get("/api/v1/activity").param("cursor", cursorWithSortKey(
+                        "DEPLOYMENT:10000000-0000-0000-0000-000000000001\u0000")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:homeops:problem:invalid-activity-cursor"));
+
+        verifyNoInteractions(store);
+    }
+
     private static String cursorWithVisibilitySnapshot(String snapshot) {
-        String value = "2026-08-06T12:00:00Z\n" + snapshot + "\n2026-08-06T12:00:00Z\nDEPLOYMENT:1";
+        String value = "2026-08-06T12:00:00Z\n" + snapshot + "\n2026-08-06T12:00:00Z\n"
+                + "DEPLOYMENT:10000000-0000-0000-0000-000000000001";
         return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
 
     private static String cursorWithTimestamps(String snapshotAt, String occurredAt) {
-        String value = snapshotAt + "\n100:200:150\n" + occurredAt + "\nDEPLOYMENT:1";
+        String value = snapshotAt + "\n100:200:150\n" + occurredAt + "\n"
+                + "DEPLOYMENT:10000000-0000-0000-0000-000000000001";
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String cursorWithSortKey(String sortKey) {
+        String value = "2026-08-06T12:00:00Z\n100:200:150\n2026-08-06T12:00:00Z\n" + sortKey;
         return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
 }

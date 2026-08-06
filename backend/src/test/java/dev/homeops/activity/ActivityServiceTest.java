@@ -26,12 +26,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class ActivityServiceTest {
     private static final Instant NOW = Instant.parse("2026-08-06T12:00:00Z");
     private static final String VISIBILITY_SNAPSHOT = "100:200:150";
+    private static final String DEPLOYMENT_SORT_KEY = "DEPLOYMENT:10000000-0000-0000-0000-000000000001";
     @Mock private ActivityStore store;
 
     @Test
     void should_returnStableNextCursor_when_moreItemsExist() {
-        StoredActivity first = activity("1", NOW, "DEPLOYMENT:1");
-        StoredActivity second = activity("2", NOW.minusSeconds(1), "BACKUP:2");
+        StoredActivity first = activity("1", NOW, DEPLOYMENT_SORT_KEY);
+        StoredActivity second = activity("2", NOW.minusSeconds(1), "BACKUP:10000000-0000-0000-0000-000000000002");
         when(store.currentVisibilitySnapshot()).thenReturn(VISIBILITY_SNAPSHOT);
         when(store.find(isNull(), org.mockito.ArgumentMatchers.eq(VISIBILITY_SNAPSHOT),
                 org.mockito.ArgumentMatchers.eq(2)))
@@ -43,7 +44,7 @@ class ActivityServiceTest {
         assertThat(response.items()).containsExactly(first.response());
         assertThat(response.nextCursor()).isNotBlank();
         assertThat(ActivityCursor.decode(response.nextCursor()))
-                .isEqualTo(new ActivityCursor(NOW, VISIBILITY_SNAPSHOT, NOW, "DEPLOYMENT:1"));
+                .isEqualTo(new ActivityCursor(NOW, VISIBILITY_SNAPSHOT, NOW, DEPLOYMENT_SORT_KEY));
     }
 
     @Test
@@ -58,7 +59,7 @@ class ActivityServiceTest {
     void should_rejectRequest_when_cursorTimestampIsInvalid() {
         ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
         String cursor = Base64.getUrlEncoder().withoutPadding().encodeToString(
-                "not-an-instant\n100:200:\n2026-08-06T12:00:00Z\nDEPLOYMENT:1"
+                ("not-an-instant\n100:200:\n2026-08-06T12:00:00Z\n" + DEPLOYMENT_SORT_KEY)
                         .getBytes(StandardCharsets.UTF_8));
 
         assertThatThrownBy(() -> service.page(cursor, 25))
@@ -119,13 +120,13 @@ class ActivityServiceTest {
 
     private static String cursorWithVisibilitySnapshot(String snapshot) {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(
-                ("2026-08-06T12:00:00Z\n" + snapshot + "\n2026-08-06T12:00:00Z\nDEPLOYMENT:1")
+                ("2026-08-06T12:00:00Z\n" + snapshot + "\n2026-08-06T12:00:00Z\n" + DEPLOYMENT_SORT_KEY)
                         .getBytes(StandardCharsets.UTF_8));
     }
 
     private static String cursorWithTimestamps(String snapshotAt, String occurredAt) {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(
-                (snapshotAt + "\n" + VISIBILITY_SNAPSHOT + "\n" + occurredAt + "\nDEPLOYMENT:1")
+                (snapshotAt + "\n" + VISIBILITY_SNAPSHOT + "\n" + occurredAt + "\n" + DEPLOYMENT_SORT_KEY)
                         .getBytes(StandardCharsets.UTF_8));
     }
 
