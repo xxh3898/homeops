@@ -115,6 +115,21 @@ class HomeOpsEventReporterTest(unittest.TestCase):
         self.assertTrue(path.exists())
         self.assertFalse((REPORTER.SPOOL_DIR / "quarantine").exists())
 
+    def test_retainsUnavailableIngestionRoute_forRetry(self):
+        for status in (404, 405):
+            with self.subTest(status=status):
+                body = json.dumps({"eventKey": f"unavailable-route-{status}"}).encode()
+                path = REPORTER.write_spool("deployments", body)
+
+                with mock.patch.object(REPORTER, "send", side_effect=REPORTER.urllib.error.HTTPError(
+                        "https://homeops.example.invalid", status, "unavailable", {}, None)):
+                    with self.assertRaises(REPORTER.urllib.error.HTTPError):
+                        REPORTER.drain()
+
+                self.assertTrue(path.exists())
+                self.assertFalse((REPORTER.SPOOL_DIR / "quarantine").exists())
+                path.unlink()
+
     def test_drainsRetainedEvent_when_drainOnlyModeRunsWithoutNewPayload(self):
         body = json.dumps({"eventKey": "retry-then-drain"}).encode()
         path = REPORTER.write_spool("deployments", body)

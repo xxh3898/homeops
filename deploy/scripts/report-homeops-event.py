@@ -73,7 +73,7 @@ def quarantine(path):
 def permanently_rejected(error):
     return (isinstance(error, urllib.error.HTTPError)
             and 400 <= error.code < 500
-            and error.code not in (401, 403, 408, 429))
+            and error.code not in (401, 403, 404, 405, 408, 429))
 
 
 def endpoint_origin():
