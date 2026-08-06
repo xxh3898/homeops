@@ -1,5 +1,6 @@
 package dev.homeops.monitoring;
 
+import dev.homeops.common.DuplicateMonitoredServiceNameException;
 import dev.homeops.monitoring.api.MonitoredServiceRequest;
 import dev.homeops.monitoring.api.MonitoredServiceResponse;
 import dev.homeops.monitoring.api.IncidentResponse;
@@ -22,15 +23,17 @@ public class MonitoredServiceStore {
 
     public MonitoredServiceResponse create(MonitoredServiceRequest request) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        int inserted = jdbc.update("""
                 INSERT INTO monitored_service
                     (id, name, url, http_method, expected_status, timeout_ms, interval_seconds,
                      failure_threshold, recovery_threshold, severity, enabled, notification_enabled)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT ON CONSTRAINT uk_monitored_service_name DO NOTHING
                 """, id, request.name(), request.url(), request.method().name(),
                 request.expectedStatus(), request.timeoutMs(), request.intervalSeconds(),
                 request.failureThreshold(), request.recoveryThreshold(), request.severity().name(),
                 request.enabled(), request.notificationEnabled());
+        if (inserted == 0) throw new DuplicateMonitoredServiceNameException();
         return response(id, request);
     }
 

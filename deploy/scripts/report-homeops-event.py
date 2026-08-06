@@ -110,12 +110,19 @@ def write_spool(kind, body):
     private_directory(SPOOL_DIR)
     timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     target = SPOOL_DIR / f"{timestamp}-{uuid.uuid4().hex}.json"
+    pending = SPOOL_DIR / f".{timestamp}-{uuid.uuid4().hex}.pending"
     wrapper = json.dumps({"kind": kind, "body": body.decode("utf-8")}, separators=(",", ":"))
-    descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-        output.write(wrapper)
-        output.flush()
-        os.fsync(output.fileno())
+    try:
+        descriptor = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(wrapper)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(pending, target)
+    except Exception:
+        if pending.exists() and not pending.is_symlink():
+            pending.unlink()
+        raise
     return target
 
 

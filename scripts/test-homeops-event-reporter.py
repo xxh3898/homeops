@@ -105,6 +105,32 @@ class HomeOpsEventReporterTest(unittest.TestCase):
             "https://homeops.example.invalid:9443", "a" * 64, "deployments", body)
         self.assertFalse(path.exists())
 
+    def test_doesNotExposeSpoolEntryBefore_atomicPublishCompletes(self):
+        observed = []
+        original_replace = REPORTER.os.replace
+
+        def capture_replace(source, target):
+            observed.append((pathlib.Path(source), pathlib.Path(target),
+                             list(REPORTER.SPOOL_DIR.glob("*.json"))))
+            original_replace(source, target)
+
+        with mock.patch.object(REPORTER.os, "replace", side_effect=capture_replace):
+            path = REPORTER.write_spool("deployments", json.dumps({"eventKey": "atomic-1"}).encode())
+
+        pending, published, visible_entries = observed[0]
+        self.assertFalse(pending.exists())
+        self.assertEqual(path, published)
+        self.assertEqual([], visible_entries)
+        self.assertTrue(path.exists())
+
+    def test_removesPendingSpoolEntry_when_atomicPublishFails(self):
+        with mock.patch.object(REPORTER.os, "replace", side_effect=OSError("disk failure")):
+            with self.assertRaises(OSError):
+                REPORTER.write_spool("deployments", json.dumps({"eventKey": "atomic-2"}).encode())
+
+        self.assertEqual([], list(REPORTER.SPOOL_DIR.glob("*.json")))
+        self.assertEqual([], list(REPORTER.SPOOL_DIR.glob(".*.pending")))
+
     @staticmethod
     def write_private(path, value):
         path.write_text(value, encoding="utf-8")

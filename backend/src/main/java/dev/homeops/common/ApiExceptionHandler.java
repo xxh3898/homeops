@@ -54,6 +54,14 @@ public class ApiExceptionHandler {
         return detail;
     }
 
+    @ExceptionHandler(DuplicateMonitoredServiceNameException.class)
+    ProblemDetail handleDuplicateMonitoredServiceName(DuplicateMonitoredServiceNameException exception) {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+        detail.setType(URI.create("urn:homeops:problem:duplicate-service-name"));
+        detail.setTitle("Service name already exists");
+        return detail;
+    }
+
     @ExceptionHandler(UnsafeServiceUrlException.class)
     ProblemDetail handleUnsafeServiceUrl(UnsafeServiceUrlException exception) {
         ProblemDetail detail = ProblemDetail.forStatusAndDetail(

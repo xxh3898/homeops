@@ -1,7 +1,6 @@
 package dev.homeops.activity;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
@@ -14,6 +13,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 
 @ExtendWith(MockitoExtension.class)
 class ActivityStoreTest {
@@ -27,7 +27,8 @@ class ActivityStoreTest {
         store.find(null, SNAPSHOT_AT, 25);
 
         ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
-        verify(jdbcTemplate).query(query.capture(), any(), eq(Timestamp.from(SNAPSHOT_AT)),
+        verify(jdbcTemplate).query(query.capture(), org.mockito.ArgumentMatchers
+                .<RowMapper<ActivityStore.StoredActivity>>any(), eq(Timestamp.from(SNAPSHOT_AT)),
                 isNull(), isNull(), eq(""), eq(25));
         assertThat(query.getValue().replaceAll("\\s+", " ")).contains(
                 "CASE WHEN i.status = 'RESOLVED' THEN COALESCE(i.resolved_at, i.opened_at) ELSE i.opened_at END");

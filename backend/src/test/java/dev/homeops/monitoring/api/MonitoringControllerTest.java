@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import dev.homeops.common.ApiExceptionHandler;
+import dev.homeops.common.DuplicateMonitoredServiceNameException;
 import dev.homeops.monitoring.SafeServiceUrlPolicy.UnsafeServiceUrlException;
 import java.util.UUID;
 import java.util.List;
@@ -55,6 +56,17 @@ class MonitoringControllerTest {
                         .content(validJson()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.title").value("Unsafe service URL"));
+    }
+
+    @Test
+    void should_returnConflict_when_serviceNameAlreadyExists() throws Exception {
+        when(service.create(any())).thenThrow(new DuplicateMonitoredServiceNameException());
+
+        mockMvc.perform(post("/api/v1/services")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validJson()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.title").value("Service name already exists"));
     }
 
     @Test
