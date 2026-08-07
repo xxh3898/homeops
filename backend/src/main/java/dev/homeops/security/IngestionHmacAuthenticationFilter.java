@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import javax.crypto.Mac;
@@ -28,9 +29,15 @@ public class IngestionHmacAuthenticationFilter extends OncePerRequestFilter {
     static final String SIGNATURE_HEADER = "X-HomeOps-Ingestion-Signature";
     private static final int MAXIMUM_BODY_BYTES = 32 * 1024;
     private final HomeOpsIngestionProperties properties;
+    private final Clock clock;
 
     public IngestionHmacAuthenticationFilter(HomeOpsIngestionProperties properties) {
+        this(properties, Clock.systemUTC());
+    }
+
+    IngestionHmacAuthenticationFilter(HomeOpsIngestionProperties properties, Clock clock) {
         this.properties = properties;
+        this.clock = clock;
     }
 
     @Override
@@ -54,7 +61,7 @@ public class IngestionHmacAuthenticationFilter extends OncePerRequestFilter {
             response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid ingestion authentication");
             return;
         }
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         if (sentAt.isBefore(now.minus(properties.maximumRequestAge()))
                 || sentAt.isAfter(now.plus(properties.allowedFutureSkew()))) {
             response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid ingestion authentication");

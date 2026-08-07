@@ -17,7 +17,21 @@ public record HomeOpsAgentProperties(
         @Positive int maximumContainers,
         @NotNull Duration processedSnapshotRetention) {
 
+    private static final Duration MAXIMUM_STALE_AFTER = Duration.ofDays(30);
+    private static final Duration MAXIMUM_ALLOWED_FUTURE_SKEW = Duration.ofMinutes(15);
+
     public HomeOpsAgentProperties {
+        if (staleAfter != null && (staleAfter.isNegative() || staleAfter.isZero()
+                || staleAfter.compareTo(MAXIMUM_STALE_AFTER) > 0)) {
+            throw new IllegalArgumentException("Agent stale threshold must be positive and at most 30 days");
+        }
+        if (maximumSnapshotAge != null && (maximumSnapshotAge.isNegative() || maximumSnapshotAge.isZero())) {
+            throw new IllegalArgumentException("Agent maximum snapshot age must be positive");
+        }
+        if (allowedFutureSkew != null && (allowedFutureSkew.isNegative()
+                || allowedFutureSkew.compareTo(MAXIMUM_ALLOWED_FUTURE_SKEW) > 0)) {
+            throw new IllegalArgumentException("Agent allowed future skew must be between zero and 15 minutes");
+        }
         if (processedSnapshotRetention != null
                 && maximumSnapshotAge != null
                 && (processedSnapshotRetention.compareTo(maximumSnapshotAge) <= 0

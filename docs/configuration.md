@@ -24,17 +24,17 @@ Every secret and host-specific value stays outside Git. Example values use reser
 | `HOMEOPS_API_MEMORY_LIMIT` | no | no | API container memory limit; default `640m` |
 | `HOMEOPS_WEB_MEMORY_LIMIT` | no | no | Web container memory limit; default `64m` |
 | `HOMEOPS_JAVA_TOOL_OPTIONS` | no | no | JVM memory options; default `-Xms128m -Xmx384m` |
-| `HOMEOPS_AGENT_STALE_AFTER` | no | no | Stale threshold; default `30s` |
-| `HOMEOPS_AGENT_MAXIMUM_SNAPSHOT_AGE` | no | no | Oldest accepted Agent snapshot; default `5m` |
-| `HOMEOPS_AGENT_ALLOWED_FUTURE_SKEW` | no | no | Accepted clock skew; default `1m` |
+| `HOMEOPS_AGENT_STALE_AFTER` | no | no | Stale threshold; positive through `30d`, default `30s` |
+| `HOMEOPS_AGENT_MAXIMUM_SNAPSHOT_AGE` | no | no | Oldest accepted Agent snapshot; positive, below processed-snapshot retention, default `5m` |
+| `HOMEOPS_AGENT_ALLOWED_FUTURE_SKEW` | no | no | Accepted clock skew; `0` through `15m`, default `1m` |
 | `HOMEOPS_AGENT_MAXIMUM_CONTAINERS` | no | no | Snapshot bound; default `128`, hard maximum `256` in the Agent |
 | `HOMEOPS_AGENT_PROCESSED_SNAPSHOT_RETENTION` | no | no | Durable idempotency ledger retention; default `1d`, must exceed maximum snapshot age |
 | `HOMEOPS_AGENT_PROCESSED_SNAPSHOT_CLEANUP_CRON` | no | no | Idempotency ledger cleanup cron in UTC; default `0 47 3 * * *` |
 | `HOMEOPS_METRIC_RETENTION` | no | no | One-minute aggregate retention; default `30d`, maximum `365d` |
 | `HOMEOPS_METRIC_CLEANUP_CRON` | no | no | UTC cleanup cron; default `0 17 3 * * *` |
 | `HOMEOPS_INGESTION_SHARED_SECRET` | Phase 3 integration | yes | Shared HMAC secret for trusted deployment/backup-result scripts; blank disables ingestion (fail closed) |
-| `HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE` | no | no | Oldest accepted signed request; default `5m` |
-| `HOMEOPS_INGESTION_ALLOWED_FUTURE_SKEW` | no | no | Accepted sender clock skew; default `1m` |
+| `HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE` | no | no | Oldest accepted signed request; positive through `24h`, default `5m` |
+| `HOMEOPS_INGESTION_ALLOWED_FUTURE_SKEW` | no | no | Accepted sender clock skew; `0` through `15m`, default `1m` |
 | `HOMEOPS_MONITORING_ALLOWED_ORIGINS` | Phase 3 checks | private | Comma-separated exact HTTPS origins allowed for service checks; blank disables registration |
 | `HOMEOPS_HEALTHY_RESULT_RETENTION` | no | no | Healthy check retention; default `7d` |
 | `HOMEOPS_FAILURE_RESULT_RETENTION` | no | no | Failed check retention; default `30d` |
