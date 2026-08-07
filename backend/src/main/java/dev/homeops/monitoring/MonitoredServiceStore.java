@@ -122,32 +122,60 @@ public class MonitoredServiceStore {
                 """, Timestamp.from(now), Timestamp.from(now), incidentId);
     }
 
-    public int deleteResultsOlderThan(String status, Instant threshold) {
+    public int deleteExpiredResults(Instant healthyThreshold, Instant failureThreshold) {
         return jdbc.update("""
-                WITH candidates AS (
-                    SELECT result.id, result.checked_at,
+                WITH ordered_results AS (
+                    SELECT result.id, result.service_id, result.status, result.checked_at,
+                           FIRST_VALUE(result.status) OVER (
+                               PARTITION BY result.service_id
+                               ORDER BY result.checked_at DESC, result.id DESC
+                           ) AS current_status,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY result.service_id
+                               ORDER BY result.checked_at DESC, result.id DESC
+                           ) AS recency_rank
+                    FROM health_check_result result
+                ), classified_results AS (
+                    SELECT result.*,
                            EXISTS (
-                               SELECT 1 FROM health_check_result later
+                               SELECT 1 FROM ordered_results later
                                WHERE later.service_id = result.service_id
                                  AND later.status <> result.status
-                                 AND later.checked_at > result.checked_at
-                           ) AS has_later_opposite_status,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY result.service_id, result.status
-                               ORDER BY result.checked_at DESC
-                           ) AS status_rank
-                    FROM health_check_result result
-                    WHERE result.status = ?
+                                 AND later.recency_rank < result.recency_rank
+                           ) AS has_later_opposite_status
+                    FROM ordered_results result
+                ), current_streak_boundaries AS (
+                    SELECT DISTINCT ON (result.service_id) result.id
+                    FROM classified_results result
+                    WHERE result.status <> result.current_status
+                      AND EXISTS (
+                          SELECT 1 FROM classified_results older
+                          WHERE older.service_id = result.service_id
+                            AND older.recency_rank > result.recency_rank
+                            AND older.status = result.current_status
+                      )
+                    ORDER BY result.service_id, result.checked_at DESC, result.id DESC
                 )
                 DELETE FROM health_check_result result
-                USING candidates
+                USING classified_results candidates
                 WHERE result.id = candidates.id
+                  AND NOT EXISTS (
+                      SELECT 1 FROM current_streak_boundaries boundary
+                      WHERE boundary.id = candidates.id
+                  )
                   AND (
-                      (candidates.checked_at < ? AND candidates.has_later_opposite_status)
-                      OR (NOT candidates.has_later_opposite_status AND candidates.status_rank > 100)
+                      (candidates.status = 'HEALTHY'
+                       AND candidates.checked_at < ?
+                       AND candidates.has_later_opposite_status)
+                      OR (candidates.status = 'DOWN'
+                          AND candidates.checked_at < ?
+                          AND candidates.has_later_opposite_status)
+                      OR (candidates.status IN ('HEALTHY', 'DOWN')
+                          AND NOT candidates.has_later_opposite_status
+                          AND candidates.recency_rank > 100)
                   )
                 """,
-                status, Timestamp.from(threshold));
+                Timestamp.from(healthyThreshold), Timestamp.from(failureThreshold));
     }
 
     public List<IncidentResponse> recentIncidents() {

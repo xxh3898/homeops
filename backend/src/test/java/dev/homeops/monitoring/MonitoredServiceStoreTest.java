@@ -13,8 +13,6 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -38,23 +36,25 @@ class MonitoredServiceStoreTest {
                 "ON CONFLICT ON CONSTRAINT uk_monitored_service_name DO NOTHING");
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"HEALTHY", "DOWN"})
-    void should_deleteExpiredCompletedStreakButPreserveCurrentStreak_when_removingResults(String status) {
+    @Test
+    void should_calculateBothRetentionSetsAndCurrentBoundary_when_removingResults() {
         MonitoredServiceStore store = new MonitoredServiceStore(jdbc);
-        Instant threshold = Instant.parse("2026-08-01T00:00:00Z");
+        Instant healthyThreshold = Instant.parse("2026-08-01T00:00:00Z");
+        Instant failureThreshold = Instant.parse("2026-07-01T00:00:00Z");
 
-        store.deleteResultsOlderThan(status, threshold);
+        store.deleteExpiredResults(healthyThreshold, failureThreshold);
 
         ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
-        verify(jdbc).update(query.capture(), eq(status), eq(Timestamp.from(threshold)));
+        verify(jdbc).update(query.capture(), eq(Timestamp.from(healthyThreshold)), eq(Timestamp.from(failureThreshold)));
         assertThat(query.getValue().replaceAll("\\s+", " ")).contains(
-                "later.service_id = result.service_id",
-                "later.status <> result.status",
-                "later.checked_at > result.checked_at",
+                "WITH ordered_results AS",
+                "classified_results AS",
+                "current_streak_boundaries AS",
+                "FIRST_VALUE(result.status)",
+                "later.recency_rank < result.recency_rank",
                 "ROW_NUMBER() OVER",
-                "candidates.status_rank > 100")
-                .doesNotContain("later.status = result.status");
+                "candidates.recency_rank > 100",
+                "NOT EXISTS ( SELECT 1 FROM current_streak_boundaries boundary");
     }
 
     @Test

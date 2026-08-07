@@ -2,6 +2,7 @@ package dev.homeops.monitoring;
 
 import dev.homeops.monitoring.config.HomeOpsMonitoringProperties;
 import java.time.Clock;
+import java.time.Instant;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -27,7 +28,9 @@ public class HealthCheckRetentionJob {
     @Transactional
     @Scheduled(cron = "${homeops.monitoring.cleanup-cron}", zone = "UTC")
     public void removeExpiredResults() {
-        store.deleteResultsOlderThan("HEALTHY", clock.instant().minus(properties.healthyResultRetention()));
-        store.deleteResultsOlderThan("DOWN", clock.instant().minus(properties.failureResultRetention()));
+        Instant now = clock.instant();
+        store.deleteExpiredResults(
+                now.minus(properties.healthyResultRetention()),
+                now.minus(properties.failureResultRetention()));
     }
 }

@@ -1,6 +1,7 @@
 package dev.homeops.monitoring;
 
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import dev.homeops.monitoring.config.HomeOpsMonitoringProperties;
 import java.time.Clock;
@@ -18,7 +19,7 @@ class HealthCheckRetentionJobTest {
     @Mock private MonitoredServiceStore store;
 
     @Test
-    void should_applySeparateRetention_when_cleanupRuns() {
+    void should_applyBothRetentionsInSingleStoreCall_when_cleanupRuns() {
         Instant now = Instant.parse("2026-08-06T12:00:00Z");
         HomeOpsMonitoringProperties properties = new HomeOpsMonitoringProperties(
                 List.of(), Duration.ofDays(7), Duration.ofDays(30), 4);
@@ -27,7 +28,7 @@ class HealthCheckRetentionJobTest {
 
         job.removeExpiredResults();
 
-        verify(store).deleteResultsOlderThan("HEALTHY", now.minus(Duration.ofDays(7)));
-        verify(store).deleteResultsOlderThan("DOWN", now.minus(Duration.ofDays(30)));
+        verify(store).deleteExpiredResults(now.minus(Duration.ofDays(7)), now.minus(Duration.ofDays(30)));
+        verifyNoMoreInteractions(store);
     }
 }

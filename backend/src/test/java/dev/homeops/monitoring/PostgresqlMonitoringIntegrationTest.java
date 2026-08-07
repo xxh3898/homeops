@@ -90,7 +90,8 @@ class PostgresqlMonitoringIntegrationTest {
         record(service.id(), NOW.minus(Duration.ofDays(2)), status);
         record(service.id(), NOW.minus(Duration.ofDays(1)), oppositeStatus(status));
 
-        int deleted = store.deleteResultsOlderThan(status, NOW.minus(Duration.ofHours(12)));
+        int deleted = store.deleteExpiredResults(
+                NOW.minus(Duration.ofHours(12)), NOW.minus(Duration.ofHours(12)));
 
         assertThat(deleted).isEqualTo(1);
         assertThat(resultCount(service.id(), status)).isZero();
@@ -102,7 +103,8 @@ class PostgresqlMonitoringIntegrationTest {
         MonitoredServiceResponse service = createService();
         record(service.id(), NOW.minus(Duration.ofDays(2)), status);
 
-        int deleted = store.deleteResultsOlderThan(status, NOW.minus(Duration.ofHours(12)));
+        int deleted = store.deleteExpiredResults(
+                NOW.minus(Duration.ofHours(12)), NOW.minus(Duration.ofHours(12)));
 
         assertThat(deleted).isZero();
         assertThat(resultCount(service.id(), status)).isEqualTo(1);
@@ -111,17 +113,82 @@ class PostgresqlMonitoringIntegrationTest {
 
     @ParameterizedTest
     @MethodSource("statuses")
-    void should_preserveLatestHundredActiveResults_when_thresholdIsHundred(String status) {
+    void should_preserveExactlyOneHundredActiveResults_when_thresholdIsHundred(String status) {
+        MonitoredServiceResponse service = createService();
+        for (int index = 0; index < 100; index++) {
+            record(service.id(), NOW.minus(Duration.ofDays(2)).plusSeconds(index), status);
+        }
+
+        int before = store.consecutiveStatusCount(service.id(), status);
+        int deleted = store.deleteExpiredResults(
+                NOW.minus(Duration.ofHours(12)), NOW.minus(Duration.ofHours(12)));
+
+        assertThat(deleted).isZero();
+        assertThat(resultCount(service.id(), status)).isEqualTo(100);
+        assertThat(before).isEqualTo(100);
+        assertThat(store.consecutiveStatusCount(service.id(), status)).isEqualTo(100);
+    }
+
+    @ParameterizedTest
+    @MethodSource("statuses")
+    void should_keepLatestHundredActiveResults_when_activeStreakHasOneHundredOneRows(String status) {
         MonitoredServiceResponse service = createService();
         for (int index = 0; index < 101; index++) {
             record(service.id(), NOW.minus(Duration.ofDays(2)).plusSeconds(index), status);
         }
 
-        int deleted = store.deleteResultsOlderThan(status, NOW.minus(Duration.ofHours(12)));
+        int before = store.consecutiveStatusCount(service.id(), status);
+        int deleted = store.deleteExpiredResults(
+                NOW.minus(Duration.ofHours(12)), NOW.minus(Duration.ofHours(12)));
 
         assertThat(deleted).isEqualTo(1);
         assertThat(resultCount(service.id(), status)).isEqualTo(100);
+        assertThat(before).isEqualTo(100);
         assertThat(store.consecutiveStatusCount(service.id(), status)).isEqualTo(100);
+    }
+
+    @Test
+    void should_preserveExpiredHealthyBoundary_when_currentDownStreakFollowsOlderDownStreak() {
+        MonitoredServiceResponse service = createService();
+        record(service.id(), NOW.minus(Duration.ofDays(40)).minusSeconds(1), "DOWN");
+        record(service.id(), NOW.minus(Duration.ofDays(40)), "DOWN");
+        record(service.id(), NOW.minus(Duration.ofDays(8)).minusSeconds(1), "HEALTHY");
+        record(service.id(), NOW.minus(Duration.ofDays(8)), "HEALTHY");
+        record(service.id(), NOW.minus(Duration.ofMinutes(2)), "DOWN");
+        record(service.id(), NOW.minus(Duration.ofMinutes(1)), "DOWN");
+        record(service.id(), NOW, "DOWN");
+
+        int before = store.consecutiveStatusCount(service.id(), "DOWN");
+        int deleted = store.deleteExpiredResults(
+                NOW.minus(Duration.ofDays(7)), NOW.minus(Duration.ofDays(30)));
+
+        assertThat(deleted).isEqualTo(3);
+        assertThat(resultCount(service.id(), "HEALTHY")).isEqualTo(1);
+        assertThat(resultCount(service.id(), "DOWN")).isEqualTo(3);
+        assertThat(before).isEqualTo(3);
+        assertThat(store.consecutiveStatusCount(service.id(), "DOWN")).isEqualTo(3);
+    }
+
+    @Test
+    void should_preserveExpiredDownBoundary_when_currentHealthyStreakFollowsOlderHealthyStreak() {
+        MonitoredServiceResponse service = createService();
+        record(service.id(), NOW.minus(Duration.ofDays(40)).minusSeconds(1), "HEALTHY");
+        record(service.id(), NOW.minus(Duration.ofDays(40)), "HEALTHY");
+        record(service.id(), NOW.minus(Duration.ofDays(31)).minusSeconds(1), "DOWN");
+        record(service.id(), NOW.minus(Duration.ofDays(31)), "DOWN");
+        record(service.id(), NOW.minus(Duration.ofMinutes(2)), "HEALTHY");
+        record(service.id(), NOW.minus(Duration.ofMinutes(1)), "HEALTHY");
+        record(service.id(), NOW, "HEALTHY");
+
+        int before = store.consecutiveStatusCount(service.id(), "HEALTHY");
+        int deleted = store.deleteExpiredResults(
+                NOW.minus(Duration.ofDays(7)), NOW.minus(Duration.ofDays(30)));
+
+        assertThat(deleted).isEqualTo(3);
+        assertThat(resultCount(service.id(), "DOWN")).isEqualTo(1);
+        assertThat(resultCount(service.id(), "HEALTHY")).isEqualTo(3);
+        assertThat(before).isEqualTo(3);
+        assertThat(store.consecutiveStatusCount(service.id(), "HEALTHY")).isEqualTo(3);
     }
 
     private boolean openWhenReleased(
