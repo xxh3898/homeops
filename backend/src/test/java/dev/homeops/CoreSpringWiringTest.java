@@ -7,6 +7,7 @@ import dev.homeops.agent.AgentSnapshotService;
 import dev.homeops.agent.ProcessedAgentSnapshotRetentionJob;
 import dev.homeops.agent.config.HomeOpsAgentProperties;
 import dev.homeops.agent.persistence.AgentStatusRepository;
+import dev.homeops.agent.persistence.AgentStatusStore;
 import dev.homeops.agent.persistence.AgentActivityStore;
 import dev.homeops.agent.persistence.HostMetricAggregateRepository;
 import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
@@ -36,6 +37,9 @@ class CoreSpringWiringTest {
             context.registerBean(
                     AgentStatusRepository.class,
                     () -> mock(AgentStatusRepository.class));
+            context.registerBean(
+                    AgentStatusStore.class,
+                    () -> mock(AgentStatusStore.class));
             context.registerBean(
                     HostMetricAggregateRepository.class,
                     () -> mock(HostMetricAggregateRepository.class));

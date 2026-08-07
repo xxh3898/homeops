@@ -8,9 +8,10 @@ import dev.homeops.agent.api.AgentStatusResponse;
 import dev.homeops.agent.api.AgentStatusResponse.ConnectionStatus;
 import dev.homeops.agent.config.HomeOpsAgentProperties;
 import dev.homeops.agent.domain.ReceivedAgentSnapshot;
+import dev.homeops.agent.persistence.AgentActivityStore;
 import dev.homeops.agent.persistence.AgentStatusEntity;
 import dev.homeops.agent.persistence.AgentStatusRepository;
-import dev.homeops.agent.persistence.AgentActivityStore;
+import dev.homeops.agent.persistence.AgentStatusStore;
 import dev.homeops.agent.persistence.HostMetricAggregateEntity;
 import dev.homeops.agent.persistence.HostMetricAggregateRepository;
 import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
@@ -38,6 +39,7 @@ public class AgentSnapshotService {
 
     private final HomeOpsAgentProperties properties;
     private final AgentStatusRepository agentStatusRepository;
+    private final AgentStatusStore agentStatusStore;
     private final HostMetricAggregateRepository metricRepository;
     private final ProcessedAgentSnapshotStore processedSnapshotStore;
     private final AgentActivityStore agentActivityStore;
@@ -49,12 +51,14 @@ public class AgentSnapshotService {
     public AgentSnapshotService(
             HomeOpsAgentProperties properties,
             AgentStatusRepository agentStatusRepository,
+            AgentStatusStore agentStatusStore,
             HostMetricAggregateRepository metricRepository,
             ProcessedAgentSnapshotStore processedSnapshotStore,
             AgentActivityStore agentActivityStore) {
         this(
                 properties,
                 agentStatusRepository,
+                agentStatusStore,
                 metricRepository,
                 processedSnapshotStore,
                 agentActivityStore,
@@ -64,12 +68,14 @@ public class AgentSnapshotService {
     AgentSnapshotService(
             HomeOpsAgentProperties properties,
             AgentStatusRepository agentStatusRepository,
+            AgentStatusStore agentStatusStore,
             HostMetricAggregateRepository metricRepository,
             ProcessedAgentSnapshotStore processedSnapshotStore,
             AgentActivityStore agentActivityStore,
             Clock clock) {
         this.properties = properties;
         this.agentStatusRepository = agentStatusRepository;
+        this.agentStatusStore = agentStatusStore;
         this.metricRepository = metricRepository;
         this.processedSnapshotStore = processedSnapshotStore;
         this.agentActivityStore = agentActivityStore;
@@ -105,11 +111,17 @@ public class AgentSnapshotService {
                     true);
         }
 
-        Optional<AgentStatusEntity> persistedStatus = agentStatusRepository.findById(canonicalRequest.agentId());
-        AgentStatusEntity status = persistedStatus.orElseGet(() -> AgentStatusEntity.create(canonicalRequest.agentId()));
-        boolean firstConnection = persistedStatus.isEmpty();
+        boolean firstConnection = agentStatusStore.insertIfAbsent(
+                canonicalRequest.agentId(),
+                canonicalRequest.snapshotId(),
+                canonicalRequest.agentVersion(),
+                canonicalRequest.capturedAt(),
+                receivedAt);
+        Optional<AgentStatusEntity> persistedStatus = firstConnection
+                ? Optional.empty()
+                : agentStatusRepository.findById(canonicalRequest.agentId());
         boolean versionChanged = persistedStatus
-                .map(existing -> !existing.getAgentVersion().equals(request.agentVersion()))
+                .map(existing -> !existing.getAgentVersion().equals(canonicalRequest.agentVersion()))
                 .orElse(false);
         Instant bucket = canonicalRequest.capturedAt().truncatedTo(ChronoUnit.MINUTES);
         Optional<HostMetricAggregateEntity> existingAggregate = metricRepository
@@ -126,13 +138,13 @@ public class AgentSnapshotService {
         }
         metricRepository.save(aggregate);
 
-        status.recordSnapshot(
+        boolean currentStatusUpdated = firstConnection || agentStatusStore.updateIfCapturedAtIsNotOlder(
+                canonicalRequest.agentId(),
                 canonicalRequest.snapshotId(),
                 canonicalRequest.agentVersion(),
                 canonicalRequest.capturedAt(),
                 receivedAt);
-        agentStatusRepository.save(status);
-        if (firstConnection || versionChanged) {
+        if (currentStatusUpdated && (firstConnection || versionChanged)) {
             agentActivityStore.recordConnection(
                     canonicalRequest.agentId(), canonicalRequest.agentVersion(), receivedAt, versionChanged);
         }
