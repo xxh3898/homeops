@@ -50,6 +50,10 @@ The GitHub workflow performs:
 
 The runtime-config image is rebuilt on every release. This costs a small extra build but avoids a hidden Compose/script synchronization path in the first public release.
 
+## Docker network topology
+
+`application` is the internal east-west network for Web, API, PostgreSQL, and one-shot migration. `ingress` is a non-internal bridge attached only to Web because Docker Desktop needs it for the loopback-published browser/Tailscale Serve entry. `egress` is a separate non-internal bridge attached only to API for monitored-service HTTPS checks. Docker network names do not create directional firewall rules: Web's ingress attachment does not guarantee Docker-level outbound blocking. The Web image has only static-file and Nginx reverse-proxy roles; API check destinations remain constrained by `SafeServiceUrlPolicy`. A host firewall, proxy, or separate edge network policy is required if stronger Web egress isolation becomes necessary.
+
 ## State files and pointers
 
 - `runtime-config/pending` identifies an incomplete candidate transaction.

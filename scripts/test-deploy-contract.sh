@@ -68,32 +68,31 @@ def is_internal(network):
 attachments = {service: attached_networks(service) for service in required_services}
 if "application" not in networks or not is_internal("application"):
     raise SystemExit("application network must render with internal=true")
-for service in required_services:
-    if "application" not in attachments[service]:
-        raise SystemExit(f"{service} must attach to the internal application network")
-
-api_non_internal = {network for network in attachments["api"] if not is_internal(network)}
-if not api_non_internal:
-    raise SystemExit("api must have at least one non-internal network")
-if "egress" not in api_non_internal:
-    raise SystemExit("api egress attachment must be non-internal")
-if is_internal("egress"):
+if "egress" not in networks or is_internal("egress"):
     raise SystemExit("egress network must render with internal=false")
+if "ingress" not in networks or is_internal("ingress"):
+    raise SystemExit("ingress network must render with internal=false")
 
-for service in ("web", "db", "migration"):
-    non_internal = sorted(network for network in attachments[service] if not is_internal(network))
-    if non_internal:
-        raise SystemExit(f"{service} must only use internal networks: " + ", ".join(non_internal))
+expected_attachments = {
+    "db": {"application"},
+    "migration": {"application"},
+    "api": {"application", "egress"},
+    "web": {"application", "ingress"},
+}
+for service, expected in expected_attachments.items():
+    if attachments[service] != expected:
+        raise SystemExit(
+            f"{service} networks must be {sorted(expected)}, got {sorted(attachments[service])}"
+        )
 
-non_internal_services = sorted(
-    service
-    for service, service_networks in attachments.items()
-    if any(not is_internal(network) for network in service_networks)
-)
-if non_internal_services != ["api"]:
-    raise SystemExit(
-        "only api may attach to non-internal networks: " + ", ".join(non_internal_services)
-    )
+for network, expected_services in (("egress", {"api"}), ("ingress", {"web"})):
+    attached_services = {
+        service for service, service_networks in attachments.items() if network in service_networks
+    }
+    if attached_services != expected_services:
+        raise SystemExit(
+            f"{network} consumers must be {sorted(expected_services)}, got {sorted(attached_services)}"
+        )
 
 for left, right, purpose in (
     ("web", "api", "web to api"),

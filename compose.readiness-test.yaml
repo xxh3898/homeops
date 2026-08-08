@@ -112,6 +112,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    ports:
+      - "${HOMEOPS_READINESS_WEB_BIND:-127.0.0.1:18081}:8080"
     volumes:
       - ${HOMEOPS_READINESS_TLS_DIR:?HOMEOPS_READINESS_TLS_DIR must be set}:/run/homeops/tls:ro
     healthcheck:
@@ -128,9 +130,12 @@ services:
       start_period: 5s
     networks:
       - application
+      - ingress
 
 networks:
   application:
     internal: true
+  ingress:
+    internal: ${HOMEOPS_READINESS_INGRESS_INTERNAL:-false}
   egress:
     internal: false
