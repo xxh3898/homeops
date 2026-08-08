@@ -43,7 +43,7 @@ services:
       - homeops-dev-backend-project-cache:/workspace/.gradle
     networks:
       - application
-      - ingress
+      - egress
 
   web:
     build:
@@ -89,3 +89,6 @@ networks:
   application:
     internal: true
   ingress:
+    internal: true
+  egress:
+    internal: false

@@ -90,6 +90,7 @@ services:
       start_period: 5s
     networks:
       - application
+      - egress
 
   web:
     image: homeops-web:readiness-test
@@ -131,3 +132,5 @@ services:
 networks:
   application:
     internal: true
+  egress:
+    internal: false

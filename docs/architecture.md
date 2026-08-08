@@ -12,8 +12,9 @@ The current milestone remains read-only for host and container operations. It im
 flowchart LR
     phone["iPhone PWA"] -->|"Tailnet HTTPS"| serve["Tailscale Serve"]
     serve -->|"Loopback HTTP + identity headers"| web["Nginx + React PWA"]
-    web -->|"Internal network"| api["Spring Boot API"]
+    web -->|"Internal application network"| api["Spring Boot API"]
     api --> db["Dedicated PostgreSQL"]
+    api -->|"Exact-origin HTTPS checks"| monitored["Configured service origins"]
     agent["Native macOS Go Agent"] -->|"Loopback TLS 1.3 + client certificate"| web
     agent -->|"Read-only fixed Docker API calls"| docker["Docker Desktop Engine"]
     agent -->|"Fixed macOS commands and syscalls"| mac["macOS host"]
@@ -46,7 +47,7 @@ There are two independent ingress paths:
 1. The browser path is bound to host loopback and expected to be reached only through Tailscale Serve. Nginx forwards Tailscale identity headers and clears the Agent verification header.
 2. The Agent path is a separate loopback TLS listener. Nginx requires a client certificate and creates the internal verification header only after successful mutual TLS.
 
-The API network is internal to the Compose project. A browser cannot directly reach the API or database port. A local process that can reach the loopback Web port may spoof Tailscale headers; HomeOps does not claim to protect against a compromised macOS account. Keep the Mac account, Docker Desktop, and tailnet account strongly protected.
+The API shares an internal `application` network with Web and PostgreSQL, and is the only service attached to a separate non-internal `egress` network. Web also attaches to the internal `ingress` network for the published host-port boundary; PostgreSQL and migration never join `egress`. `ingress` and `egress` are names, not directional controls: Docker's `internal: true` property is what removes a network's external default route. The egress attachment exists solely for API-initiated exact-origin HTTPS service checks. It is not a browser proxy or an arbitrary network request API: configured targets must pass the operator-provided `SafeServiceUrlPolicy` allowlist. A browser cannot directly reach the API or database port. A local process that can reach the loopback Web port may spoof Tailscale headers; HomeOps does not claim to protect against a compromised macOS account. Keep the Mac account, Docker Desktop, and tailnet account strongly protected.
 
 ## Authentication and refresh model
 
