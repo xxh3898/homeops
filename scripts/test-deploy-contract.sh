@@ -15,6 +15,8 @@ readonly ENV_EXAMPLE="${REPOSITORY_ROOT}/deploy/env.example"
 readonly AGENT_DOCKERFILE="${REPOSITORY_ROOT}/agent-artifact.Dockerfile"
 readonly AGENT_BOOTSTRAP="${REPOSITORY_ROOT}/deploy/bootstrap/deploy-homeops-agent-rollout-ci.sh.example"
 readonly AGENT_WORKER="${REPOSITORY_ROOT}/deploy/scripts/rollout-homeops-agent.sh"
+readonly DOCKER_BIN="${DOCKER_BIN:-docker}"
+readonly PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 assert_contains() {
   local file="$1"
@@ -36,58 +38,73 @@ assert_absent() {
   fi
 }
 
-assert_service_network() {
-  local file="$1"
-  local service="$2"
-  local network="$3"
+assert_rendered_production_topology() {
+  if ! "${DOCKER_BIN}" compose --profile operations --env-file "${ENV_EXAMPLE}" --file "${COMPOSE_EXAMPLE}" config --format json |
+    "${PYTHON_BIN}" -c '
+import json
+import sys
 
-  if ! /usr/bin/awk -v service="${service}" -v network="${network}" '
-      $0 == "  " service ":" { in_service = 1; next }
-      in_service && $0 ~ /^  [A-Za-z0-9_-]+:$/ { exit }
-      in_service && $0 == "    networks:" { in_networks = 1; next }
-      in_service && in_networks && $0 == "      - " network { found = 1; exit }
-      END { exit found ? 0 : 1 }
-    ' "${file}"
-  then
-    printf 'Missing service network contract in %s: %s -> %s\n' \
-      "${file#"${REPOSITORY_ROOT}/"}" "${service}" "${network}" >&2
-    exit 1
-  fi
-}
+compose = json.load(sys.stdin)
+services = compose.get("services", {})
+networks = compose.get("networks", {})
+required_services = ("api", "web", "db", "migration")
 
-assert_service_not_on_network() {
-  local file="$1"
-  local service="$2"
-  local network="$3"
+missing_services = [service for service in required_services if service not in services]
+if missing_services:
+    raise SystemExit("missing rendered services: " + ", ".join(missing_services))
 
-  if /usr/bin/awk -v service="${service}" -v network="${network}" '
-      $0 == "  " service ":" { in_service = 1; next }
-      in_service && $0 ~ /^  [A-Za-z0-9_-]+:$/ { exit }
-      in_service && $0 == "    networks:" { in_networks = 1; next }
-      in_service && in_networks && $0 == "      - " network { found = 1; exit }
-      END { exit found ? 0 : 1 }
-    ' "${file}"
-  then
-    printf 'Unexpected service network contract in %s: %s -> %s\n' \
-      "${file#"${REPOSITORY_ROOT}/"}" "${service}" "${network}" >&2
-    exit 1
-  fi
-}
+def attached_networks(service):
+    attachments = services[service].get("networks", {})
+    if not isinstance(attachments, dict) or not attachments:
+        raise SystemExit(f"{service} must have rendered network attachments")
+    missing_networks = [network for network in attachments if network not in networks]
+    if missing_networks:
+        raise SystemExit(f"{service} references undefined networks: " + ", ".join(missing_networks))
+    return set(attachments)
 
-assert_network_internal_value() {
-  local file="$1"
-  local network="$2"
-  local expected="$3"
+def is_internal(network):
+    return bool(networks[network].get("internal", False))
 
-  if ! /usr/bin/awk -v network="${network}" -v expected="${expected}" '
-      $0 == "  " network ":" { in_network = 1; next }
-      in_network && $0 ~ /^  [A-Za-z0-9_-]+:$/ { exit }
-      in_network && $0 == "    internal: " expected { found = 1; exit }
-      END { exit found ? 0 : 1 }
-    ' "${file}"
-  then
-    printf 'Missing network isolation contract in %s: %s internal=%s\n' \
-      "${file#"${REPOSITORY_ROOT}/"}" "${network}" "${expected}" >&2
+attachments = {service: attached_networks(service) for service in required_services}
+if "application" not in networks or not is_internal("application"):
+    raise SystemExit("application network must render with internal=true")
+for service in required_services:
+    if "application" not in attachments[service]:
+        raise SystemExit(f"{service} must attach to the internal application network")
+
+api_non_internal = {network for network in attachments["api"] if not is_internal(network)}
+if not api_non_internal:
+    raise SystemExit("api must have at least one non-internal network")
+if "egress" not in api_non_internal:
+    raise SystemExit("api egress attachment must be non-internal")
+if is_internal("egress"):
+    raise SystemExit("egress network must render with internal=false")
+
+for service in ("web", "db", "migration"):
+    non_internal = sorted(network for network in attachments[service] if not is_internal(network))
+    if non_internal:
+        raise SystemExit(f"{service} must only use internal networks: " + ", ".join(non_internal))
+
+non_internal_services = sorted(
+    service
+    for service, service_networks in attachments.items()
+    if any(not is_internal(network) for network in service_networks)
+)
+if non_internal_services != ["api"]:
+    raise SystemExit(
+        "only api may attach to non-internal networks: " + ", ".join(non_internal_services)
+    )
+
+for left, right, purpose in (
+    ("web", "api", "web to api"),
+    ("api", "db", "api to db"),
+):
+    shared_internal = attachments[left] & attachments[right]
+    shared_internal = {network for network in shared_internal if is_internal(network)}
+    if not shared_internal:
+        raise SystemExit(f"{purpose} requires a shared internal network")
+'; then
+    printf 'Rendered production network topology contract failed\n' >&2
     exit 1
   fi
 }
@@ -150,13 +167,7 @@ assert_contains "${EVENT_REPORTER}" 'NoRedirect()'
 assert_contains "${COMPOSE_EXAMPLE}" 'HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE: ${HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE:-5m}'
 assert_contains "${COMPOSE_EXAMPLE}" 'HOMEOPS_INGESTION_ALLOWED_FUTURE_SKEW: ${HOMEOPS_INGESTION_ALLOWED_FUTURE_SKEW:-1m}'
 assert_contains "${COMPOSE_EXAMPLE}" 'HOMEOPS_MONITORING_MAX_CONCURRENT_CHECKS: ${HOMEOPS_MONITORING_MAX_CONCURRENT_CHECKS:-4}'
-assert_service_network "${COMPOSE_EXAMPLE}" 'api' 'application'
-assert_service_network "${COMPOSE_EXAMPLE}" 'api' 'egress'
-assert_service_not_on_network "${COMPOSE_EXAMPLE}" 'db' 'egress'
-assert_service_not_on_network "${COMPOSE_EXAMPLE}" 'migration' 'egress'
-assert_service_not_on_network "${COMPOSE_EXAMPLE}" 'web' 'egress'
-assert_network_internal_value "${COMPOSE_EXAMPLE}" 'application' 'true'
-assert_network_internal_value "${COMPOSE_EXAMPLE}" 'egress' 'false'
+assert_rendered_production_topology
 assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_API_IMAGE=ghcr.io/example/homeops-api@sha256:'
 assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_WEB_IMAGE=ghcr.io/example/homeops-web@sha256:'
 assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE=5m'
@@ -173,4 +184,4 @@ assert_contains "${AGENT_WORKER}" 'readonly AGENT_LABEL=dev.homeops.agent'
 assert_contains "${AGENT_WORKER}" 'candidate Agent restart or fresh snapshot confirmation failed; previous release restored'
 assert_absent "${AGENT_WORKER}" 'SSH_ORIGINAL_COMMAND'
 
-printf 'Deployment static contract checks passed\n'
+printf 'Deployment contract checks passed\n'

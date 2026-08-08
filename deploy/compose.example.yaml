@@ -168,5 +168,6 @@ networks:
   application:
     internal: true
   ingress:
+    internal: true
   egress:
     internal: false
