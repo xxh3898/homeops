@@ -100,6 +100,9 @@ jobs:
       - name: Test Nginx Web-to-API readiness
         if: needs.changes.outputs.infrastructure == 'true'
         run: ./scripts/test-nginx-readiness.sh
+      - name: Test Nginx host-facing ingress regression
+        if: needs.changes.outputs.infrastructure == 'true'
+        run: ./scripts/test-nginx-host-ingress-regression.sh
       - name: Test deployment runtime state transitions
         if: needs.changes.outputs.infrastructure == 'true'
         run: ./scripts/test-deploy-runtime.sh
