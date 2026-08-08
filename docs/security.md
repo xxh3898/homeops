@@ -20,6 +20,7 @@
 | Docker socket compromise | low | critical | Socket only in native Agent, no inbound Agent API, fixed GET endpoints | The Agent process still has Docker Engine-equivalent read/control potential at the OS boundary |
 | Agent client key theft | low | high | `0600` key, operator-only directories, mTLS, exact Agent ID, payload limits | Stolen key can submit false snapshots from the same Mac account context |
 | API vulnerability | medium | high | same-origin, Spring Security, validation, no-store, minimal endpoints, dependency scanning | Unknown framework or application defects remain possible |
+| API outbound egress abuse | low/medium | medium/high | API-only egress network, exact HTTPS origin allowlist, no general request endpoint | Docker does not enforce the FQDN allowlist; a compromised API process can initiate outbound traffic |
 | CSRF | low now | high for future control | SameSite session, CSRF token contract, no mutation API in current milestone | Future control endpoints require explicit CSRF and Origin tests |
 | XSS | low/medium | high | React escaping, restrictive CSP, no raw log rendering, no HTML injection | A vulnerable future log/UI component could steal visible data |
 | Secret in container logs | medium | high | no env/inspect persistence, safe error summaries, bounded structured fields | Existing managed services may themselves log secrets |

@@ -79,6 +79,7 @@ services:
       start_period: 40s
     networks:
       - application
+      - egress
     labels:
       homeops.managed: "false"
     logging:
@@ -167,3 +168,5 @@ networks:
   application:
     internal: true
   ingress:
+  egress:
+    internal: false

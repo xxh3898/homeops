@@ -36,6 +36,62 @@ assert_absent() {
   fi
 }
 
+assert_service_network() {
+  local file="$1"
+  local service="$2"
+  local network="$3"
+
+  if ! /usr/bin/awk -v service="${service}" -v network="${network}" '
+      $0 == "  " service ":" { in_service = 1; next }
+      in_service && $0 ~ /^  [A-Za-z0-9_-]+:$/ { exit }
+      in_service && $0 == "    networks:" { in_networks = 1; next }
+      in_service && in_networks && $0 == "      - " network { found = 1; exit }
+      END { exit found ? 0 : 1 }
+    ' "${file}"
+  then
+    printf 'Missing service network contract in %s: %s -> %s\n' \
+      "${file#"${REPOSITORY_ROOT}/"}" "${service}" "${network}" >&2
+    exit 1
+  fi
+}
+
+assert_service_not_on_network() {
+  local file="$1"
+  local service="$2"
+  local network="$3"
+
+  if /usr/bin/awk -v service="${service}" -v network="${network}" '
+      $0 == "  " service ":" { in_service = 1; next }
+      in_service && $0 ~ /^  [A-Za-z0-9_-]+:$/ { exit }
+      in_service && $0 == "    networks:" { in_networks = 1; next }
+      in_service && in_networks && $0 == "      - " network { found = 1; exit }
+      END { exit found ? 0 : 1 }
+    ' "${file}"
+  then
+    printf 'Unexpected service network contract in %s: %s -> %s\n' \
+      "${file#"${REPOSITORY_ROOT}/"}" "${service}" "${network}" >&2
+    exit 1
+  fi
+}
+
+assert_network_internal_value() {
+  local file="$1"
+  local network="$2"
+  local expected="$3"
+
+  if ! /usr/bin/awk -v network="${network}" -v expected="${expected}" '
+      $0 == "  " network ":" { in_network = 1; next }
+      in_network && $0 ~ /^  [A-Za-z0-9_-]+:$/ { exit }
+      in_network && $0 == "    internal: " expected { found = 1; exit }
+      END { exit found ? 0 : 1 }
+    ' "${file}"
+  then
+    printf 'Missing network isolation contract in %s: %s internal=%s\n' \
+      "${file#"${REPOSITORY_ROOT}/"}" "${network}" "${expected}" >&2
+    exit 1
+  fi
+}
+
 assert_contains "${DEPLOY_WORKFLOW}" 'api_digest: ${{ steps.publish-api.outputs.digest }}'
 assert_contains "${DEPLOY_WORKFLOW}" 'web_digest: ${{ steps.publish-web.outputs.digest }}'
 assert_contains "${DEPLOY_WORKFLOW}" 'deploy-homeops-v2 ${GITHUB_SHA} ${API_IMAGE_DIGEST} ${WEB_IMAGE_DIGEST} ${RUNTIME_CONFIG_DIGEST} ${REGISTRY_OWNER} ${registry_user}'
@@ -94,6 +150,13 @@ assert_contains "${EVENT_REPORTER}" 'NoRedirect()'
 assert_contains "${COMPOSE_EXAMPLE}" 'HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE: ${HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE:-5m}'
 assert_contains "${COMPOSE_EXAMPLE}" 'HOMEOPS_INGESTION_ALLOWED_FUTURE_SKEW: ${HOMEOPS_INGESTION_ALLOWED_FUTURE_SKEW:-1m}'
 assert_contains "${COMPOSE_EXAMPLE}" 'HOMEOPS_MONITORING_MAX_CONCURRENT_CHECKS: ${HOMEOPS_MONITORING_MAX_CONCURRENT_CHECKS:-4}'
+assert_service_network "${COMPOSE_EXAMPLE}" 'api' 'application'
+assert_service_network "${COMPOSE_EXAMPLE}" 'api' 'egress'
+assert_service_not_on_network "${COMPOSE_EXAMPLE}" 'db' 'egress'
+assert_service_not_on_network "${COMPOSE_EXAMPLE}" 'migration' 'egress'
+assert_service_not_on_network "${COMPOSE_EXAMPLE}" 'web' 'egress'
+assert_network_internal_value "${COMPOSE_EXAMPLE}" 'application' 'true'
+assert_network_internal_value "${COMPOSE_EXAMPLE}" 'egress' 'false'
 assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_API_IMAGE=ghcr.io/example/homeops-api@sha256:'
 assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_WEB_IMAGE=ghcr.io/example/homeops-web@sha256:'
 assert_contains "${ENV_EXAMPLE}" 'HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE=5m'
