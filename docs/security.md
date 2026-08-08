@@ -28,6 +28,7 @@
 | PostgreSQL credential leak | low | high | private `.env`, internal DB port, dedicated role/database | Volume and history are exposed after host account compromise |
 | Backup path disclosure | low | medium | only logical identifiers belong in metadata | Future ingestion must reject raw private paths |
 | Forged deploy request | low | critical | Tailscale OIDC, separate CI key, forced command grammar, exact SHA/digest, GHCR token on stdin | Compromised GitHub production secrets can deploy approved package names |
+| Forged history ingestion | low | high | bounded-time HMAC over raw JSON, fail-closed secret configuration, event key idempotency and state transitions | A caller with the dedicated ingestion secret can submit false history until the secret is rotated |
 | Repeated restart API | none now | high later | control excluded | Requires rate limit, idempotency, lock, audit, and confirmation before implementation |
 | HomeOps outage | medium | medium | Kuma remains independent; stale UI; health checks | HomeOps cannot alert while it is down |
 | Entire Mac outage | medium | high | optional external heartbeat | No same-host component can report total power/network loss |

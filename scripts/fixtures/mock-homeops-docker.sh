@@ -61,8 +61,10 @@ case "${command_name}" in
     /bin/cp "${FAKE_RUNTIME_COMPOSE}" "${destination}/compose.yaml"
     /bin/cp "${FAKE_RUNTIME_WORKER}" "${destination}/scripts/deploy-homeops.sh"
     /bin/cp "${FAKE_RUNTIME_VALIDATOR}" "${destination}/scripts/validate-https-origin.sh"
+    /bin/cp "${FAKE_RUNTIME_REPORTER}" "${destination}/scripts/report-homeops-event.py"
     /bin/chmod 700 \
       "${destination}/scripts/deploy-homeops.sh" \
+      "${destination}/scripts/report-homeops-event.py" \
       "${destination}/scripts/validate-https-origin.sh"
     if [[ "${FAKE_RUNTIME_EXTRA_FILE:-false}" == true ]]; then
       printf 'unexpected\n' >"${destination}/unexpected"

@@ -4,7 +4,7 @@
 
 HomeOps is a single-administrator dashboard for an Apple Silicon Mac that runs Docker Desktop. The source can be forked and self-hosted, but the supported ingress is a private tailnet. Internet exposure, Funnel, multi-tenant isolation, and arbitrary Docker or shell input are not supported.
 
-The current milestone is deliberately read-only. It implements host and container inventory; incidents, service checks, deployment ingestion, notifications, logs, and container control remain later milestones even though their durable table shapes are reserved by the first migration.
+The current milestone remains read-only for host and container operations. It implements host and container inventory, HMAC-authenticated deployment/backup ingestion, exact-origin HTTP service checks, incident state transitions, bounded check-result retention, and a paginated Activity timeline. These operational-history inputs are fail-closed until their operator-managed secret or origin allowlist is configured. Notifications, logs, and container control remain later milestones.
 
 ## Runtime topology
 
@@ -58,9 +58,11 @@ Status uses five-second HTTP polling while the page is visible. TanStack Query r
 
 HomeOps has a dedicated PostgreSQL instance and volume. It does not share a database with another project. The current implementation persists one-minute host metric aggregates, Agent liveness, and a bounded processed-snapshot idempotency ledger, while the latest detailed container snapshot remains in API memory. Container inventory responses include Agent freshness so a stopped Agent cannot leave old RUNNING or HEALTHY states presented as current.
 
-The default metric policy keeps one-minute aggregates for 30 days, about 43,200 rows for one Agent, and deletes only older aggregate rows in a daily transaction. The retention value is bounded to 365 days. The schema also reserves normalized tables for monitored services, check results, incidents, deployment events, backup metadata from other projects, notification attempts, control audit events, settings, and Spring sessions. JSONB is restricted to auxiliary metadata; searchable state and identity fields remain normal columns.
+The current deployment supports one API replica and one in-process service-check scheduler; distributed scheduler claims are not implemented. Incident creation nevertheless has a PostgreSQL partial unique index for each service's `OPEN` or `ACKNOWLEDGED` incident, so the maximum-one-active-incident invariant remains database-enforced even if concurrent callers race.
 
-HomeOps does not store container logs, Docker inspect documents, `.env` content, credentials, or webhook URLs. `backup_run` describes backup results from other projects; it does not mean HomeOps automatically backs up its own database.
+The default metric policy keeps one-minute aggregates for 30 days, about 43,200 rows for one Agent, and deletes only older aggregate rows in a daily transaction. Healthy service-check results default to seven days and failures to 30 days. Agent Activity records are written only on first connection or version change, never for every five-second snapshot. The schema also reserves normalized tables for notification attempts, control audit events, settings, and Spring sessions. JSONB is restricted to auxiliary metadata; searchable state and identity fields remain normal columns.
+
+HomeOps does not store container logs, Docker inspect documents, `.env` content, credentials, or webhook URLs. `backup_run` describes backup results from other projects; it does not mean HomeOps automatically backs up its own database. A trusted script can submit a deployment or backup result only after it has a bounded-time HMAC signature; event keys make retried delivery idempotent and terminal state changes are rejected. Service-check targets must match an operator-provided exact HTTPS origin, redirects are not followed, and request timeouts are bounded.
 
 ## Uptime Kuma role
 

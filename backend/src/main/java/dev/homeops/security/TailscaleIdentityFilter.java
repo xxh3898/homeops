@@ -32,7 +32,8 @@ public class TailscaleIdentityFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
         return !path.startsWith("/api/")
-                || path.startsWith("/api/v1/internal/agent/");
+                || path.startsWith("/api/v1/internal/agent/")
+                || path.startsWith("/api/v1/internal/ingestion/");
     }
 
     @Override

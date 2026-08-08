@@ -8,12 +8,15 @@ import dev.homeops.agent.api.AgentStatusResponse;
 import dev.homeops.agent.api.AgentStatusResponse.ConnectionStatus;
 import dev.homeops.agent.config.HomeOpsAgentProperties;
 import dev.homeops.agent.domain.ReceivedAgentSnapshot;
+import dev.homeops.agent.persistence.AgentActivityStore;
 import dev.homeops.agent.persistence.AgentStatusEntity;
 import dev.homeops.agent.persistence.AgentStatusRepository;
+import dev.homeops.agent.persistence.AgentStatusStore;
 import dev.homeops.agent.persistence.HostMetricAggregateEntity;
 import dev.homeops.agent.persistence.HostMetricAggregateRepository;
 import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
 import dev.homeops.common.AgentSnapshotRejectedException;
+import dev.homeops.common.PostgresqlTimestamp;
 import dev.homeops.system.api.ContainerInventoryResponse;
 import dev.homeops.system.api.ContainerView;
 import dev.homeops.system.api.SystemSummaryResponse;
@@ -36,8 +39,10 @@ public class AgentSnapshotService {
 
     private final HomeOpsAgentProperties properties;
     private final AgentStatusRepository agentStatusRepository;
+    private final AgentStatusStore agentStatusStore;
     private final HostMetricAggregateRepository metricRepository;
     private final ProcessedAgentSnapshotStore processedSnapshotStore;
+    private final AgentActivityStore agentActivityStore;
     private final Clock clock;
     private final AtomicReference<ReceivedAgentSnapshot> latest =
             new AtomicReference<>();
@@ -46,26 +51,34 @@ public class AgentSnapshotService {
     public AgentSnapshotService(
             HomeOpsAgentProperties properties,
             AgentStatusRepository agentStatusRepository,
+            AgentStatusStore agentStatusStore,
             HostMetricAggregateRepository metricRepository,
-            ProcessedAgentSnapshotStore processedSnapshotStore) {
+            ProcessedAgentSnapshotStore processedSnapshotStore,
+            AgentActivityStore agentActivityStore) {
         this(
                 properties,
                 agentStatusRepository,
+                agentStatusStore,
                 metricRepository,
                 processedSnapshotStore,
+                agentActivityStore,
                 Clock.systemUTC());
     }
 
     AgentSnapshotService(
             HomeOpsAgentProperties properties,
             AgentStatusRepository agentStatusRepository,
+            AgentStatusStore agentStatusStore,
             HostMetricAggregateRepository metricRepository,
             ProcessedAgentSnapshotStore processedSnapshotStore,
+            AgentActivityStore agentActivityStore,
             Clock clock) {
         this.properties = properties;
         this.agentStatusRepository = agentStatusRepository;
+        this.agentStatusStore = agentStatusStore;
         this.metricRepository = metricRepository;
         this.processedSnapshotStore = processedSnapshotStore;
+        this.agentActivityStore = agentActivityStore;
         this.clock = clock;
     }
 
@@ -73,58 +86,72 @@ public class AgentSnapshotService {
     public AgentSnapshotAcceptedResponse accept(AgentSnapshotRequest request) {
         Instant receivedAt = clock.instant();
         validate(request, receivedAt);
+        AgentSnapshotRequest canonicalRequest = canonicalize(request);
 
         boolean firstProcessing = processedSnapshotStore.recordIfAbsent(
-                request.agentId(),
-                request.snapshotId(),
-                request.capturedAt(),
+                canonicalRequest.agentId(),
+                canonicalRequest.snapshotId(),
+                canonicalRequest.capturedAt(),
                 receivedAt);
         if (!firstProcessing) {
             Instant processedCapturedAt = processedSnapshotStore
-                    .findCapturedAt(request.agentId(), request.snapshotId())
+                    .findCapturedAt(canonicalRequest.agentId(), canonicalRequest.snapshotId())
                     .orElseThrow(() -> new IllegalStateException(
                             "Processed snapshot claim is missing"));
             if (!sameDatabaseTimestamp(
-                    request.capturedAt(),
+                    canonicalRequest.capturedAt(),
                     processedCapturedAt)) {
                 throw new AgentSnapshotRejectedException(
                         "Snapshot identifier conflicts with a prior capture time");
             }
-            publishLatestAfterCommit(new ReceivedAgentSnapshot(request, receivedAt));
+            publishLatestAfterCommit(new ReceivedAgentSnapshot(canonicalRequest, receivedAt));
             return new AgentSnapshotAcceptedResponse(
-                    request.snapshotId(),
+                    canonicalRequest.snapshotId(),
                     receivedAt,
                     true);
         }
 
-        AgentStatusEntity status = agentStatusRepository
-                .findById(request.agentId())
-                .orElseGet(() -> AgentStatusEntity.create(request.agentId()));
-        Instant bucket = request.capturedAt().truncatedTo(ChronoUnit.MINUTES);
+        boolean firstConnection = agentStatusStore.insertIfAbsent(
+                canonicalRequest.agentId(),
+                canonicalRequest.snapshotId(),
+                canonicalRequest.agentVersion(),
+                canonicalRequest.capturedAt(),
+                receivedAt);
+        Optional<AgentStatusEntity> persistedStatus = firstConnection
+                ? Optional.empty()
+                : agentStatusRepository.findById(canonicalRequest.agentId());
+        boolean versionChanged = persistedStatus
+                .map(existing -> !existing.getAgentVersion().equals(canonicalRequest.agentVersion()))
+                .orElse(false);
+        Instant bucket = canonicalRequest.capturedAt().truncatedTo(ChronoUnit.MINUTES);
         Optional<HostMetricAggregateEntity> existingAggregate = metricRepository
-                .findByAgentIdAndBucketStart(request.agentId(), bucket);
+                .findByAgentIdAndBucketStart(canonicalRequest.agentId(), bucket);
         HostMetricAggregateEntity aggregate;
         if (existingAggregate.isPresent()) {
             aggregate = existingAggregate.get();
-            aggregate.addSample(request.host());
+            aggregate.addSample(canonicalRequest.host());
         } else {
             aggregate = HostMetricAggregateEntity.create(
-                    request.agentId(),
+                    canonicalRequest.agentId(),
                     bucket,
-                    request.host());
+                    canonicalRequest.host());
         }
         metricRepository.save(aggregate);
 
-        status.recordSnapshot(
-                request.snapshotId(),
-                request.agentVersion(),
-                request.capturedAt(),
+        boolean currentStatusUpdated = firstConnection || agentStatusStore.updateIfCapturedAtIsNotOlder(
+                canonicalRequest.agentId(),
+                canonicalRequest.snapshotId(),
+                canonicalRequest.agentVersion(),
+                canonicalRequest.capturedAt(),
                 receivedAt);
-        agentStatusRepository.save(status);
-        publishLatestAfterCommit(new ReceivedAgentSnapshot(request, receivedAt));
+        if (currentStatusUpdated && (firstConnection || versionChanged)) {
+            agentActivityStore.recordConnection(
+                    canonicalRequest.agentId(), canonicalRequest.agentVersion(), receivedAt, versionChanged);
+        }
+        publishLatestAfterCommit(new ReceivedAgentSnapshot(canonicalRequest, receivedAt));
 
         return new AgentSnapshotAcceptedResponse(
-                request.snapshotId(),
+                canonicalRequest.snapshotId(),
                 receivedAt,
                 false);
     }
@@ -304,10 +331,13 @@ public class AgentSnapshotService {
         return timestamp.isBefore(now.minus(properties.staleAfter()));
     }
 
+    private static AgentSnapshotRequest canonicalize(AgentSnapshotRequest request) {
+        return new AgentSnapshotRequest(request.snapshotId(), request.agentId(), request.agentVersion(),
+                PostgresqlTimestamp.canonicalize(request.capturedAt()), request.host(), request.containers());
+    }
+
     private boolean sameDatabaseTimestamp(Instant left, Instant right) {
-        return right != null
-                && left.truncatedTo(ChronoUnit.MICROS)
-                .equals(right.truncatedTo(ChronoUnit.MICROS));
+        return right != null && PostgresqlTimestamp.canonicalize(left).equals(PostgresqlTimestamp.canonicalize(right));
     }
 
     private void publishLatestAfterCommit(ReceivedAgentSnapshot candidate) {

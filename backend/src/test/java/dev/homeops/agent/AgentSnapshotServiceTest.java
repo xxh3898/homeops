@@ -14,7 +14,9 @@ import dev.homeops.agent.api.AgentSnapshotRequest;
 import dev.homeops.agent.api.AgentStatusResponse.ConnectionStatus;
 import dev.homeops.agent.config.HomeOpsAgentProperties;
 import dev.homeops.agent.persistence.AgentStatusEntity;
+import dev.homeops.agent.persistence.AgentActivityStore;
 import dev.homeops.agent.persistence.AgentStatusRepository;
+import dev.homeops.agent.persistence.AgentStatusStore;
 import dev.homeops.agent.persistence.HostMetricAggregateRepository;
 import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
 import dev.homeops.common.AgentSnapshotRejectedException;
@@ -39,10 +41,16 @@ class AgentSnapshotServiceTest {
     private AgentStatusRepository agentStatusRepository;
 
     @Mock
+    private AgentStatusStore agentStatusStore;
+
+    @Mock
     private HostMetricAggregateRepository metricRepository;
 
     @Mock
     private ProcessedAgentSnapshotStore processedSnapshotStore;
+
+    @Mock
+    private AgentActivityStore agentActivityStore;
 
     private AgentSnapshotService service;
 
@@ -58,11 +66,16 @@ class AgentSnapshotServiceTest {
         service = new AgentSnapshotService(
                 properties,
                 agentStatusRepository,
+                agentStatusStore,
                 metricRepository,
                 processedSnapshotStore,
+                agentActivityStore,
                 Clock.fixed(NOW, ZoneOffset.UTC));
         lenient().when(processedSnapshotStore.recordIfAbsent(
                 anyString(), any(), any(), any()))
+                .thenReturn(true);
+        lenient().when(agentStatusStore.insertIfAbsent(
+                anyString(), any(), anyString(), any(), any()))
                 .thenReturn(true);
     }
 
@@ -73,8 +86,6 @@ class AgentSnapshotServiceTest {
         AgentSnapshotRequest request = AgentSnapshotFixtures.snapshot(
                 snapshotId,
                 NOW.minusSeconds(2));
-        when(agentStatusRepository.findById("local-mac"))
-                .thenReturn(Optional.empty());
         when(metricRepository.findByAgentIdAndBucketStart(any(), any()))
                 .thenReturn(Optional.empty());
 
@@ -87,8 +98,10 @@ class AgentSnapshotServiceTest {
         assertThat(summary.docker().total()).isEqualTo(1);
         assertThat(summary.docker().running()).isEqualTo(1);
         assertThat(service.containerInventory().containers()).hasSize(1);
-        verify(agentStatusRepository).save(any(AgentStatusEntity.class));
+        verify(agentStatusStore).insertIfAbsent(
+                "local-mac", snapshotId, request.agentVersion(), request.capturedAt(), NOW);
         verify(metricRepository).save(any());
+        verify(agentActivityStore).recordConnection("local-mac", request.agentVersion(), NOW, false);
     }
 
     @Test
@@ -108,7 +121,140 @@ class AgentSnapshotServiceTest {
 
         assertThat(accepted.duplicate()).isTrue();
         verify(metricRepository, never()).save(any());
-        verify(agentStatusRepository, never()).save(any());
+        verify(agentStatusStore, never()).insertIfAbsent(anyString(), any(), anyString(), any(), any());
+        verify(agentActivityStore, never()).recordConnection(anyString(), anyString(), any(),
+                org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void should_returnDuplicate_when_captureTimestampHasPostgresqlRoundingFraction() {
+        UUID snapshotId = UUID.fromString("10000000-0000-0000-0000-000000000025");
+        Instant rawCapturedAt = NOW.minusSeconds(1).plusNanos(789);
+        Instant storedCapturedAt = NOW.minusSeconds(1).plusNanos(1_000);
+        AgentSnapshotRequest request = AgentSnapshotFixtures.snapshot(snapshotId, rawCapturedAt);
+        when(processedSnapshotStore.recordIfAbsent(anyString(), any(), any(), any())).thenReturn(false);
+        when(processedSnapshotStore.findCapturedAt("local-mac", snapshotId))
+                .thenReturn(Optional.of(storedCapturedAt));
+
+        var accepted = service.accept(request);
+
+        assertThat(accepted.duplicate()).isTrue();
+        verify(processedSnapshotStore).recordIfAbsent("local-mac", snapshotId, storedCapturedAt, NOW);
+        verify(metricRepository, never()).save(any());
+    }
+
+    @Test
+    void should_notRecordActivity_when_agentVersionIsUnchanged() {
+        UUID snapshotId = UUID.fromString("10000000-0000-0000-0000-000000000012");
+        AgentSnapshotRequest request = AgentSnapshotFixtures.snapshot(snapshotId, NOW.minusSeconds(1));
+        AgentStatusEntity status = AgentStatusEntity.create("local-mac");
+        status.recordSnapshot(UUID.randomUUID(), request.agentVersion(), NOW.minusSeconds(6), NOW.minusSeconds(5));
+        when(agentStatusStore.insertIfAbsent(anyString(), any(), anyString(), any(), any())).thenReturn(false);
+        when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(true);
+        when(agentStatusRepository.findById("local-mac")).thenReturn(Optional.of(status));
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any())).thenReturn(Optional.empty());
+
+        service.accept(request);
+
+        verify(agentActivityStore, never()).recordConnection(anyString(), anyString(), any(),
+                org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void should_updateCurrentStatusAndRecordVersionChange_when_snapshotIsNewer() {
+        Instant previousCapturedAt = NOW.minusSeconds(3);
+        Instant newerCapturedAt = NOW.minusSeconds(1);
+        AgentSnapshotRequest request = snapshot(
+                "10000000-0000-0000-0000-000000000026", newerCapturedAt, "v2");
+        when(agentStatusStore.insertIfAbsent(anyString(), any(), anyString(), any(), any())).thenReturn(false);
+        when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(true);
+        when(agentStatusRepository.findById("local-mac"))
+                .thenReturn(Optional.of(status("v1", previousCapturedAt)));
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any())).thenReturn(Optional.empty());
+
+        service.accept(request);
+
+        assertThat(service.latest()).map(snapshot -> snapshot.snapshot().agentVersion()).contains("v2");
+        verify(agentStatusStore).updateIfCapturedAtIsNotOlder(
+                "local-mac", request.snapshotId(), "v2", newerCapturedAt, NOW);
+        verify(agentActivityStore).recordConnection("local-mac", "v2", NOW, true);
+    }
+
+    @Test
+    void should_keepCurrentVersionAndLatest_when_delayedOlderSnapshotReturnsToPreviousVersion() {
+        Instant olderCapturedAt = NOW.minusSeconds(3);
+        Instant newerCapturedAt = NOW.minusSeconds(1);
+        AgentSnapshotRequest newer = snapshot(
+                "10000000-0000-0000-0000-000000000027", newerCapturedAt, "v2");
+        AgentSnapshotRequest delayed = snapshot(
+                "10000000-0000-0000-0000-000000000028", olderCapturedAt, "v1");
+        when(agentStatusStore.insertIfAbsent(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(false, false);
+        when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(true, false);
+        when(agentStatusRepository.findById("local-mac"))
+                .thenReturn(Optional.of(status("v1", olderCapturedAt)), Optional.of(status("v2", newerCapturedAt)));
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any())).thenReturn(Optional.empty());
+
+        service.accept(newer);
+        service.accept(delayed);
+
+        assertThat(service.latest()).map(snapshot -> snapshot.snapshot().agentVersion()).contains("v2");
+        assertThat(service.containerInventory().lastUpdatedAt()).isEqualTo(newerCapturedAt);
+        verify(metricRepository, times(2)).save(any());
+        verify(agentActivityStore, times(1)).recordConnection("local-mac", "v2", NOW, true);
+        verify(agentActivityStore, never()).recordConnection("local-mac", "v1", NOW, true);
+    }
+
+    @Test
+    void should_notRecordVersionChange_when_delayedOlderSnapshotHasDifferentNewVersion() {
+        Instant olderCapturedAt = NOW.minusSeconds(3);
+        Instant newerCapturedAt = NOW.minusSeconds(1);
+        AgentSnapshotRequest newer = snapshot(
+                "10000000-0000-0000-0000-000000000029", newerCapturedAt, "v2");
+        AgentSnapshotRequest delayed = snapshot(
+                "10000000-0000-0000-0000-000000000030", olderCapturedAt, "v3");
+        when(agentStatusStore.insertIfAbsent(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(false, false);
+        when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(true, false);
+        when(agentStatusRepository.findById("local-mac"))
+                .thenReturn(Optional.of(status("v1", olderCapturedAt)), Optional.of(status("v2", newerCapturedAt)));
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any())).thenReturn(Optional.empty());
+
+        service.accept(newer);
+        service.accept(delayed);
+
+        assertThat(service.latest()).map(snapshot -> snapshot.snapshot().agentVersion()).contains("v2");
+        verify(metricRepository, times(2)).save(any());
+        verify(agentActivityStore, times(1)).recordConnection("local-mac", "v2", NOW, true);
+        verify(agentActivityStore, never()).recordConnection("local-mac", "v3", NOW, true);
+    }
+
+    @Test
+    void should_notUpdateCurrentStatus_when_delayedOlderSnapshotHasSameVersion() {
+        Instant olderCapturedAt = NOW.minusSeconds(3);
+        Instant newerCapturedAt = NOW.minusSeconds(1);
+        AgentSnapshotRequest newer = snapshot(
+                "10000000-0000-0000-0000-000000000031", newerCapturedAt, "v2");
+        AgentSnapshotRequest delayed = snapshot(
+                "10000000-0000-0000-0000-000000000032", olderCapturedAt, "v2");
+        when(agentStatusStore.insertIfAbsent(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(false, false);
+        when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(true, false);
+        when(agentStatusRepository.findById("local-mac"))
+                .thenReturn(Optional.of(status("v1", olderCapturedAt)), Optional.of(status("v2", newerCapturedAt)));
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any())).thenReturn(Optional.empty());
+
+        service.accept(newer);
+        service.accept(delayed);
+
+        assertThat(service.latest()).map(snapshot -> snapshot.snapshot().capturedAt()).contains(newerCapturedAt);
+        verify(metricRepository, times(2)).save(any());
+        verify(agentActivityStore, times(1)).recordConnection("local-mac", "v2", NOW, true);
     }
 
     @Test
@@ -130,8 +276,13 @@ class AgentSnapshotServiceTest {
                 .thenReturn(true, true, false);
         when(processedSnapshotStore.findCapturedAt("local-mac", firstId))
                 .thenReturn(Optional.of(firstCapturedAt));
+        AgentStatusEntity firstStatus = status("0.1.0", firstCapturedAt);
+        when(agentStatusStore.insertIfAbsent(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(true, false);
+        when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(true);
         when(agentStatusRepository.findById("local-mac"))
-                .thenReturn(Optional.empty());
+                .thenReturn(Optional.of(firstStatus));
         when(metricRepository.findByAgentIdAndBucketStart(any(), any()))
                 .thenReturn(Optional.empty());
 
@@ -143,7 +294,7 @@ class AgentSnapshotServiceTest {
         assertThat(service.containerInventory().lastUpdatedAt())
                 .isEqualTo(secondCapturedAt);
         verify(metricRepository, times(2)).save(any());
-        verify(agentStatusRepository, times(2)).save(any());
+        verify(agentStatusStore, times(2)).insertIfAbsent(anyString(), any(), anyString(), any(), any());
     }
 
     @Test
@@ -161,8 +312,6 @@ class AgentSnapshotServiceTest {
         AgentSnapshotRequest request = AgentSnapshotFixtures.snapshot(
                 UUID.fromString("10000000-0000-0000-0000-000000000008"),
                 NOW.minus(Duration.ofMinutes(4)));
-        when(agentStatusRepository.findById("local-mac"))
-                .thenReturn(Optional.empty());
         when(metricRepository.findByAgentIdAndBucketStart(any(), any()))
                 .thenReturn(Optional.empty());
 
@@ -189,7 +338,7 @@ class AgentSnapshotServiceTest {
         assertThatThrownBy(() -> service.accept(request))
                 .isInstanceOf(AgentSnapshotRejectedException.class)
                 .hasMessage("Snapshot is older than the configured limit");
-        verify(agentStatusRepository, never()).save(any());
+        verify(agentStatusStore, never()).insertIfAbsent(anyString(), any(), anyString(), any(), any());
         verify(metricRepository, never()).save(any());
     }
 
@@ -229,5 +378,18 @@ class AgentSnapshotServiceTest {
                 .hasMessage(
                         "Snapshot identifier conflicts with a prior capture time");
         verify(metricRepository, never()).save(any());
+    }
+
+    private static AgentStatusEntity status(String version, Instant capturedAt) {
+        AgentStatusEntity status = AgentStatusEntity.create("local-mac");
+        status.recordSnapshot(UUID.randomUUID(), version, capturedAt, capturedAt.plusSeconds(1));
+        return status;
+    }
+
+    private static AgentSnapshotRequest snapshot(String snapshotId, Instant capturedAt, String version) {
+        AgentSnapshotRequest fixture = AgentSnapshotFixtures.snapshot(UUID.fromString(snapshotId), capturedAt);
+        return new AgentSnapshotRequest(
+                fixture.snapshotId(), fixture.agentId(), version, fixture.capturedAt(),
+                fixture.host(), fixture.containers());
     }
 }

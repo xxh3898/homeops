@@ -1,6 +1,28 @@
 name: homeops-test
 
 services:
+  postgres-test:
+    image: postgres:18.4-alpine3.24
+    restart: "no"
+    mem_limit: 384m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_DB: homeops_test
+      POSTGRES_USER: homeops_test
+      POSTGRES_PASSWORD: homeops_test
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+    tmpfs:
+      - /var/lib/postgresql:size=384m,mode=0755
+
   backend-test:
     image: gradle:9.5.1-jdk21-alpine
     mem_limit: 2g
@@ -10,6 +32,13 @@ services:
       sh -lc "cp -R /source/backend /workspace/backend
       && cd /workspace/backend
       && ./gradlew test --no-daemon"
+    environment:
+      HOMEOPS_TEST_POSTGRES_URL: jdbc:postgresql://postgres-test:5432/homeops_test
+      HOMEOPS_TEST_POSTGRES_USERNAME: homeops_test
+      HOMEOPS_TEST_POSTGRES_PASSWORD: homeops_test
+    depends_on:
+      postgres-test:
+        condition: service_healthy
     volumes:
       - ./backend:/source/backend:ro
       - homeops-test-gradle:/home/gradle/.gradle

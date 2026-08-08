@@ -1,5 +1,6 @@
 package dev.homeops.agent.persistence;
 
+import dev.homeops.common.PostgresqlTimestamp;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Optional;
@@ -33,8 +34,8 @@ public class ProcessedAgentSnapshotStore {
                 """,
                 agentId,
                 snapshotId,
-                Timestamp.from(capturedAt),
-                Timestamp.from(processedAt));
+                PostgresqlTimestamp.toTimestamp(capturedAt),
+                PostgresqlTimestamp.toTimestamp(processedAt));
         return inserted == 1;
     }
 

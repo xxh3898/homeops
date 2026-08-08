@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 readonly DOCKER_BIN=/usr/local/bin/docker
 readonly LOCKF_BIN=/usr/bin/lockf
+readonly PYTHON_BIN=/usr/bin/python3
 readonly APP_DIR=/Users/REPLACE_ME/Server/apps/homeops
 readonly RUNTIME_CONFIG_REPOSITORY=ghcr.io/REPLACE_ME/homeops-runtime-config
 readonly RUNTIME_CONFIG_ROOT="${APP_DIR}/runtime-config"
@@ -24,6 +25,7 @@ validate_release_shape() {
     || [[ ! -f "${release_dir}/compose.yaml" || -L "${release_dir}/compose.yaml" ]] \
     || [[ ! -d "${release_dir}/scripts" || -L "${release_dir}/scripts" ]] \
     || [[ ! -f "${release_dir}/scripts/deploy-homeops.sh" || -L "${release_dir}/scripts/deploy-homeops.sh" ]] \
+    || [[ ! -f "${release_dir}/scripts/report-homeops-event.py" || -L "${release_dir}/scripts/report-homeops-event.py" ]] \
     || [[ ! -f "${release_dir}/scripts/validate-https-origin.sh" || -L "${release_dir}/scripts/validate-https-origin.sh" ]]
   then
     fail "runtime config release shape is invalid"
@@ -33,7 +35,7 @@ validate_release_shape() {
     fail "runtime config release must not contain symbolic links"
   fi
   entry_count="$(/usr/bin/find "${release_dir}" -mindepth 1 -print | /usr/bin/wc -l | /usr/bin/tr -d '[:space:]')"
-  if [[ "${entry_count}" != 4 ]]; then
+  if [[ "${entry_count}" != 5 ]]; then
     fail "runtime config release contains unexpected entries"
   fi
 }
@@ -62,6 +64,7 @@ validate_release_metadata() {
   validate_release_entry "${release_dir}/compose.yaml" 600
   validate_release_entry "${release_dir}/scripts" 700
   validate_release_entry "${release_dir}/scripts/deploy-homeops.sh" 700
+  validate_release_entry "${release_dir}/scripts/report-homeops-event.py" 700
   validate_release_entry "${release_dir}/scripts/validate-https-origin.sh" 700
 }
 
@@ -91,8 +94,8 @@ install_compose_plugin() {
   fi
 }
 
-if [[ ! -x "${DOCKER_BIN}" ]] || [[ ! -x "${LOCKF_BIN}" ]]; then
-  fail "required Docker or lockf executable is unavailable"
+if [[ ! -x "${DOCKER_BIN}" ]] || [[ ! -x "${LOCKF_BIN}" ]] || [[ ! -x "${PYTHON_BIN}" ]]; then
+  fail "required Docker, lockf, or Python executable is unavailable"
 fi
 if [[ -L "${BOOTSTRAP_LOCK}" ]] \
   || { [[ -e "${BOOTSTRAP_LOCK}" ]] && [[ ! -f "${BOOTSTRAP_LOCK}" ]]; }
@@ -198,12 +201,19 @@ validate_release_shape "${release_temp}"
   "${release_temp}" \
   "${release_temp}/scripts" \
   "${release_temp}/scripts/deploy-homeops.sh" \
+  "${release_temp}/scripts/report-homeops-event.py" \
   "${release_temp}/scripts/validate-https-origin.sh"
 /bin/chmod 600 "${release_temp}/compose.yaml"
 if ! /bin/bash -n "${release_temp}/scripts/deploy-homeops.sh" >/dev/null 2>&1 \
   || ! /bin/bash -n "${release_temp}/scripts/validate-https-origin.sh" >/dev/null 2>&1
 then
   fail "runtime config script syntax is invalid"
+fi
+if ! "${PYTHON_BIN}" -c \
+  'import pathlib, sys; source = pathlib.Path(sys.argv[1]).read_text(); compile(source, sys.argv[1], "exec")' \
+  "${release_temp}/scripts/report-homeops-event.py"
+then
+  fail "runtime config reporter syntax is invalid"
 fi
 validate_release_metadata "${release_temp}"
 

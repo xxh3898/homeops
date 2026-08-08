@@ -6,7 +6,7 @@ The source is public, but the supported deployment boundary is private: a single
 
 ## Status
 
-HomeOps is pre-release software. The implemented first milestone is read-only host metrics and container inventory. Service checks, incidents, deployments, notifications, bounded logs, and container control remain follow-up milestones. Container start, stop, and restart are deliberately excluded until label allowlists, operation locks, idempotency, and audit controls are complete.
+HomeOps is pre-release software. The implemented functionality includes read-only host metrics and container inventory, HMAC-authenticated deployment and backup-result ingestion, allowlisted HTTP service checks with incident history, and a paginated mobile Activity timeline. Ingestion and service checks remain disabled until an operator supplies their secrets and exact origin allowlist. Notifications, bounded logs, and container control remain follow-up milestones. Container start, stop, and restart are deliberately excluded until label allowlists, operation locks, idempotency, and audit controls are complete.
 
 The macOS Agent is installed by an operator. Agent code releases are published as immutable GHCR artifacts, but host rollout is separately disabled by default and uses a distinct restricted SSH key. The standard `main` deployment workflow continues to deploy only API, Web, and runtime-config images unless the independent Agent rollout switch is explicitly enabled after a staging/rollback drill. See the [implementation roadmap](docs/roadmap.md) before treating a future milestone as supported behavior.
 
@@ -16,6 +16,8 @@ The macOS Agent is installed by an operator. Agent code releases are published a
 - `backend`: Java 21, Spring Boot 4.1, PostgreSQL, Flyway, server-side sessions
 - `agent`: macOS Go process for real host metrics and restricted Docker Engine reads
 - `deploy`: generic Docker Compose, Nginx, and LaunchAgent examples
+
+The runtime-config image also contains a bounded host-side event reporter used by trusted project deployment and backup workers. It spools before sending and owns HMAC signing so the secret is not passed through the caller interface.
 
 The API container never mounts the Docker socket. A native user-level Agent reads the host and Docker Engine, then sends bounded snapshots through a loopback mTLS ingress.
 
@@ -55,10 +57,14 @@ The pinned frontend dependency graph requires a committed `package-lock.json`; g
 - `GET /api/v1/system/summary`
 - `GET /api/v1/agent/status`
 - `GET /api/v1/containers`, with Agent freshness metadata and read-only inventory
+- `GET /api/v1/activity`, with a bounded stable cursor
+- `GET /api/v1/services`, `/status`, and `/incidents`
+- `POST /api/v1/services`, protected by administrator authentication and CSRF
 - `POST /api/v1/internal/agent/snapshots`, available only through the loopback mTLS ingress
+- `POST /api/v1/internal/ingestion/deployments` and `/backups`, disabled until an operator configures the ingestion secret and explicitly connects a trusted script
 - `GET /actuator/health/readiness`
 
-There is no container mutation, arbitrary command, log, webhook, or settings mutation endpoint in this milestone.
+There is no container mutation, arbitrary command, log, notification delivery, or general network request endpoint in this milestone.
 
 ## Data-loss policy
 

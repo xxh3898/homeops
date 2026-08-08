@@ -24,16 +24,39 @@ Every secret and host-specific value stays outside Git. Example values use reser
 | `HOMEOPS_API_MEMORY_LIMIT` | no | no | API container memory limit; default `640m` |
 | `HOMEOPS_WEB_MEMORY_LIMIT` | no | no | Web container memory limit; default `64m` |
 | `HOMEOPS_JAVA_TOOL_OPTIONS` | no | no | JVM memory options; default `-Xms128m -Xmx384m` |
-| `HOMEOPS_AGENT_STALE_AFTER` | no | no | Stale threshold; default `30s` |
-| `HOMEOPS_AGENT_MAXIMUM_SNAPSHOT_AGE` | no | no | Oldest accepted Agent snapshot; default `5m` |
-| `HOMEOPS_AGENT_ALLOWED_FUTURE_SKEW` | no | no | Accepted clock skew; default `1m` |
+| `HOMEOPS_AGENT_STALE_AFTER` | no | no | Stale threshold; positive through `30d`, default `30s` |
+| `HOMEOPS_AGENT_MAXIMUM_SNAPSHOT_AGE` | no | no | Oldest accepted Agent snapshot; positive, below processed-snapshot retention, default `5m` |
+| `HOMEOPS_AGENT_ALLOWED_FUTURE_SKEW` | no | no | Accepted clock skew; `0` through `15m`, default `1m` |
 | `HOMEOPS_AGENT_MAXIMUM_CONTAINERS` | no | no | Snapshot bound; default `128`, hard maximum `256` in the Agent |
 | `HOMEOPS_AGENT_PROCESSED_SNAPSHOT_RETENTION` | no | no | Durable idempotency ledger retention; default `1d`, must exceed maximum snapshot age |
 | `HOMEOPS_AGENT_PROCESSED_SNAPSHOT_CLEANUP_CRON` | no | no | Idempotency ledger cleanup cron in UTC; default `0 47 3 * * *` |
 | `HOMEOPS_METRIC_RETENTION` | no | no | One-minute aggregate retention; default `30d`, maximum `365d` |
 | `HOMEOPS_METRIC_CLEANUP_CRON` | no | no | UTC cleanup cron; default `0 17 3 * * *` |
+| `HOMEOPS_INGESTION_SHARED_SECRET` | Phase 3 integration | yes | Shared HMAC secret for trusted deployment/backup-result scripts; blank disables ingestion (fail closed) |
+| `HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE` | no | no | Oldest accepted signed request; positive through `24h`, default `5m` |
+| `HOMEOPS_INGESTION_ALLOWED_FUTURE_SKEW` | no | no | Accepted sender clock skew; `0` through `15m`, default `1m` |
+| `HOMEOPS_MONITORING_ALLOWED_ORIGINS` | Phase 3 checks | private | Comma-separated exact HTTPS origins allowed for service checks; blank disables registration |
+| `HOMEOPS_HEALTHY_RESULT_RETENTION` | no | no | Healthy check retention; default `7d` |
+| `HOMEOPS_FAILURE_RESULT_RETENTION` | no | no | Failed check retention; default `30d` |
+| `HOMEOPS_MONITORING_SCHEDULER_DELAY` | no | no | Due-service scan delay; default `5s` |
+| `HOMEOPS_MONITORING_CLEANUP_CRON` | no | no | Check-result cleanup cron in UTC |
 
 `HOMEOPS_AUTH_MODE=DEV` is accepted only with the Spring `dev` profile. Never set it in a production environment.
+
+## Deployment and backup ingestion
+
+The ingestion endpoints are intentionally disabled while `HOMEOPS_INGESTION_SHARED_SECRET` is blank. When a later integration step enables them, the trusted caller sends a compact JSON request to either `POST /api/v1/internal/ingestion/deployments` or `POST /api/v1/internal/ingestion/backups` with:
+
+- `X-HomeOps-Ingestion-Timestamp`: an ISO-8601 UTC instant.
+- `X-HomeOps-Ingestion-Signature`: lowercase hexadecimal HMAC-SHA-256 of `timestamp + "." + raw-request-body`, using the shared secret.
+
+The API accepts only requests inside the configured time window. Never put the secret in a command line, repository variable, shell trace, deployment output, or the event payload. An event key identifies one deployment or backup lifecycle: the exact retry is accepted as a duplicate, a valid active-state transition updates the event, and a conflicting or terminal-state change is rejected. Backup `logicalLocation` is a logical identifier, never an absolute host path.
+
+The bundled host reporter is `runtime-config/current/scripts/report-homeops-event.py`. It reads `HOMEOPS_INGESTION_SHARED_SECRET` from the mode-`0600` HomeOps `.env` and the HTTPS origin from the existing mode-`0600` `smoke.origin`; use a generated 64-character lowercase hexadecimal secret so the reporter and API share one value without a second secret file. It derives its HomeOps paths from the current macOS account, then writes a mode-`0600` event under `~/Server/data/homeops/ingestion-spool`, serializes drains with a file lock, limits each drain, and refuses redirects. The combined active, pending, and quarantine capacity is 128 entries; when it is full, the reporter keeps existing evidence and rejects the new event rather than deleting an older entry. Transient failures remain in the spool for retry; malformed entries and permanent API client rejections move to its mode-`0700` `quarantine` subdirectory so they do not block later events. Invoke `--drain` without an event payload from a separate periodic LaunchAgent so a retained transient failure is retried even when no later deployment or backup occurs. The integration protocol does not pass the secret to a caller, but this is not an isolation boundary against another process already compromised under the same macOS account.
+
+## Service check boundary
+
+Service checks are fail-closed until `HOMEOPS_MONITORING_ALLOWED_ORIGINS` contains one or more exact HTTPS origins. Include an explicit non-default port when the service uses one, for example `https://homeops.example.ts.net:9443`. Paths and query parameters belong to each monitored service URL, not to the origin allowlist. User info and URL fragments are rejected, redirects are not followed, and each request uses the configured timeout. This exact-origin policy prevents an authenticated settings request from turning HomeOps into a general-purpose network client.
 
 ## Native Agent environment
 

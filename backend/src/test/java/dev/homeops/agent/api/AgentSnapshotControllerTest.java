@@ -1,6 +1,7 @@
 package dev.homeops.agent.api;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -80,6 +81,21 @@ class AgentSnapshotControllerTest {
                                 .replace("\"containers\": []", "\"containers\": null")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.title").value("Invalid request"));
+    }
+
+    @Test
+    void should_returnBadRequestWithoutServiceAccess_when_agentVersionContainsNul()
+            throws Exception {
+        UUID snapshotId = UUID.fromString(
+                "10000000-0000-0000-0000-000000000013");
+
+        mockMvc.perform(post("/api/v1/internal/agent/snapshots")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validJson(snapshotId).replace("0.1.0", "\\u0000.1.0")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:homeops:problem:validation"));
+
+        verifyNoInteractions(service);
     }
 
     private static String validJson(UUID snapshotId) {

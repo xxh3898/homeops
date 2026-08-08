@@ -50,6 +50,8 @@ The supported baseline is a tailnet-only, read-only PWA with host metrics and co
 
 ## Phase 3: operational history
 
+**Status:** implemented in source; production ingestion and checks remain fail-closed until operator configuration.
+
 **Goal:** turn the reserved data model into bounded, auditable operational history.
 
 | Item | Scope | Completion evidence |

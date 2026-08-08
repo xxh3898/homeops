@@ -3,6 +3,7 @@ import { NavLink, Route, Routes } from 'react-router'
 import { ContainersPage } from './pages/ContainersPage'
 import { OverviewPage } from './pages/OverviewPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
+import { ActivityPage } from './pages/ActivityPage'
 import { ConnectionBanner } from './ui/ConnectionBanner'
 import { PwaUpdatePrompt } from './ui/PwaUpdatePrompt'
 import { cn } from './utils/cn'
@@ -30,10 +31,7 @@ export function App() {
           <Routes>
             <Route path="/" element={<OverviewPage />} />
             <Route path="/containers" element={<ContainersPage />} />
-            <Route
-              path="/activity"
-              element={<PlaceholderPage title="Activity" description="Incident, deployment, and notification history arrives in the next milestone." />}
-            />
+            <Route path="/activity" element={<ActivityPage />} />
             <Route
               path="/settings"
               element={<PlaceholderPage title="Settings" description="Security-sensitive settings remain server-managed during the read-only milestone." />}
@@ -66,4 +64,3 @@ export function App() {
     </div>
   )
 }
-
