@@ -10,9 +10,9 @@ on:
       - main
   workflow_call:
     outputs:
-      agent_artifact:
-        description: Whether the changed revision needs a native Agent artifact.
-        value: ${{ jobs.changes.outputs.agent_artifact }}
+      agent_release:
+        description: Whether verified changed paths affect the persistent native Agent artifact.
+        value: ${{ jobs.changes.outputs.agent_release }}
 
 permissions:
   contents: read
@@ -34,40 +34,61 @@ jobs:
       api_image: ${{ steps.classify.outputs.api_image }}
       web_image: ${{ steps.classify.outputs.web_image }}
       agent_artifact: ${{ steps.classify.outputs.agent_artifact }}
+      agent_release: ${{ steps.classify.outputs.agent_release }}
     steps:
       - name: Check out repository history
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-      - name: Classify changed paths
+      - name: Classify validation and release scopes
         id: classify
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref }}
           BEFORE_SHA: ${{ github.event.before }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -Eeuo pipefail
-          if [[ "${REF_NAME}" == "refs/heads/main" ]]; then
-            ./scripts/classify-ci-paths.sh .github/workflows/validate.yml
-            exit 0
-          fi
+
+          classify_full_validation_and_close_release() {
+            ./scripts/classify-ci-paths.sh
+            ./scripts/classify-agent-release-paths.sh
+          }
+
           case "${EVENT_NAME}" in
             pull_request) base_sha="${PR_BASE_SHA}" ;;
             push) base_sha="${BEFORE_SHA}" ;;
             *) base_sha="" ;;
           esac
-          if [[ -z "${base_sha}" || "${base_sha}" =~ ^0{40}$ ]] \
-            || ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null
+
+          if [[ ! "${base_sha}" =~ ^[0-9a-f]{40}$ ]] \
+            || [[ "${base_sha}" =~ ^0{40}$ ]] \
+            || [[ ! "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]] \
+            || [[ "${HEAD_SHA}" =~ ^0{40}$ ]] \
+            || ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null \
+            || ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null
           then
-            ./scripts/classify-ci-paths.sh .github/workflows/validate.yml
+            printf 'Changed paths are unavailable; running full validation and disabling Agent release.\n'
+            classify_full_validation_and_close_release
             exit 0
           fi
+
           changed_paths_file="$(mktemp "${RUNNER_TEMP}/homeops-paths.XXXXXX")"
           trap 'rm -f -- "${changed_paths_file}"' EXIT
-          git diff --no-renames --name-only -z "${base_sha}" "${GITHUB_SHA}" >"${changed_paths_file}"
+          if ! git diff --no-renames --name-only -z "${base_sha}" "${HEAD_SHA}" >"${changed_paths_file}"; then
+            printf 'Changed path detection failed; running full validation and disabling Agent release.\n'
+            classify_full_validation_and_close_release
+            exit 0
+          fi
+
           mapfile -d '' -t changed_paths <"${changed_paths_file}"
-          ./scripts/classify-ci-paths.sh "${changed_paths[@]}"
+          if [[ "${REF_NAME}" == "refs/heads/main" ]]; then
+            ./scripts/classify-ci-paths.sh
+          else
+            ./scripts/classify-ci-paths.sh "${changed_paths[@]}"
+          fi
+          ./scripts/classify-agent-release-paths.sh "${changed_paths[@]}"
 
   infrastructure:
     name: Infrastructure checks
@@ -91,6 +112,9 @@ jobs:
       - name: Test path classifier
         if: needs.changes.outputs.infrastructure == 'true'
         run: ./scripts/test-classify-ci-paths.sh
+      - name: Test Agent release path classifier
+        if: needs.changes.outputs.infrastructure == 'true'
+        run: ./scripts/test-classify-agent-release-paths.sh
       - name: Test deployment contract
         if: needs.changes.outputs.infrastructure == 'true'
         run: ./scripts/test-deploy-contract.sh

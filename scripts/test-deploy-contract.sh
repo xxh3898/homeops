@@ -4,7 +4,9 @@ set -Eeuo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && /bin/pwd -P)"
 readonly REPOSITORY_ROOT="$(cd "${SCRIPT_DIR}/.." && /bin/pwd -P)"
+readonly VALIDATE_WORKFLOW="${REPOSITORY_ROOT}/.github/workflows/validate.yml"
 readonly DEPLOY_WORKFLOW="${REPOSITORY_ROOT}/.github/workflows/deploy.yml"
+readonly AGENT_RELEASE_CLASSIFIER="${REPOSITORY_ROOT}/scripts/classify-agent-release-paths.sh"
 readonly BOOTSTRAP="${REPOSITORY_ROOT}/deploy/bootstrap/deploy-homeops-ci.sh.example"
 readonly WORKER="${REPOSITORY_ROOT}/deploy/scripts/deploy-homeops.sh"
 readonly ORIGIN_VALIDATOR="${REPOSITORY_ROOT}/deploy/scripts/validate-https-origin.sh"
@@ -108,14 +110,27 @@ for left, right, purpose in (
   fi
 }
 
+assert_contains "${VALIDATE_WORKFLOW}" 'value: ${{ jobs.changes.outputs.agent_release }}'
+assert_contains "${VALIDATE_WORKFLOW}" 'HEAD_SHA: ${{ github.sha }}'
+assert_contains "${VALIDATE_WORKFLOW}" 'git diff --no-renames --name-only -z "${base_sha}" "${HEAD_SHA}"'
+assert_contains "${VALIDATE_WORKFLOW}" 'if [[ "${REF_NAME}" == "refs/heads/main" ]]; then'
+assert_contains "${VALIDATE_WORKFLOW}" './scripts/classify-agent-release-paths.sh "${changed_paths[@]}"'
+assert_contains "${VALIDATE_WORKFLOW}" 'Changed paths are unavailable; running full validation and disabling Agent release.'
+assert_contains "${VALIDATE_WORKFLOW}" 'Changed path detection failed; running full validation and disabling Agent release.'
+assert_absent "${VALIDATE_WORKFLOW}" './scripts/classify-ci-paths.sh .github/workflows/validate.yml'
+assert_contains "${AGENT_RELEASE_CLASSIFIER}" 'agent/*|agent-artifact.Dockerfile|.dockerignore|.gitattributes)'
+assert_absent "${AGENT_RELEASE_CLASSIFIER}" 'force_all'
+
 assert_contains "${DEPLOY_WORKFLOW}" 'api_digest: ${{ steps.publish-api.outputs.digest }}'
 assert_contains "${DEPLOY_WORKFLOW}" 'web_digest: ${{ steps.publish-web.outputs.digest }}'
 assert_contains "${DEPLOY_WORKFLOW}" 'deploy-homeops-v2 ${GITHUB_SHA} ${API_IMAGE_DIGEST} ${WEB_IMAGE_DIGEST} ${RUNTIME_CONFIG_DIGEST} ${REGISTRY_OWNER} ${registry_user}'
 assert_contains "${DEPLOY_WORKFLOW}" './deploy/scripts/validate-https-origin.sh "${HOMEOPS_SMOKE_URL}"'
 assert_contains "${DEPLOY_WORKFLOW}" 'persist-credentials: false'
+assert_contains "${DEPLOY_WORKFLOW}" 'needs.validate.outputs.agent_release == '\''true'\'''
 assert_contains "${DEPLOY_WORKFLOW}" 'HOMEOPS_AGENT_ROLLOUT_ENABLED == '\''true'\'''
 assert_contains "${DEPLOY_WORKFLOW}" 'rollout-homeops-agent-v1 ${GITHUB_SHA} ${AGENT_DIGEST} ${REGISTRY_OWNER} ${registry_user}'
 assert_contains "${DEPLOY_WORKFLOW}" 'HOMEOPS_AGENT_ROLLOUT_SSH_KEY'
+assert_absent "${DEPLOY_WORKFLOW}" 'needs.validate.outputs.agent_artifact == '\''true'\'''
 assert_absent "${DEPLOY_WORKFLOW}" 'deploy-homeops-v1'
 assert_absent "${DEPLOY_WORKFLOW}" '^https://[^/[:space:]]+$'
 

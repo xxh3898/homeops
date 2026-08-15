@@ -17,7 +17,7 @@ fi
 
 for path in "$@"; do
   case "${path}" in
-    .github/workflows/*|scripts/classify-ci-paths.sh|scripts/test-classify-ci-paths.sh|.gitattributes)
+    .github/workflows/*|scripts/classify-ci-paths.sh|scripts/test-classify-ci-paths.sh|scripts/classify-agent-release-paths.sh|scripts/test-classify-agent-release-paths.sh|.gitattributes)
       force_all=true
       ;;
     backend/*)
@@ -40,6 +40,11 @@ for path in "$@"; do
       infrastructure=true
       api_image=true
       web_image=true
+      agent_artifact=true
+      ;;
+    agent-artifact.Dockerfile)
+      infrastructure=true
+      agent_artifact=true
       ;;
     compose.test.yaml)
       backend=true
