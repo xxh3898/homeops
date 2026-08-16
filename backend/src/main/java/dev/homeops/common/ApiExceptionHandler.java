@@ -1,6 +1,7 @@
 package dev.homeops.common;
 
 import dev.homeops.activity.InvalidActivityCursorException;
+import dev.homeops.metrics.InvalidMetricHistoryPeriodException;
 import dev.homeops.monitoring.SafeServiceUrlPolicy.UnsafeServiceUrlException;
 import java.net.URI;
 import org.springframework.http.HttpStatus;
@@ -38,6 +39,11 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     ProblemDetail handleMethodArgumentTypeMismatch(MethodArgumentTypeMismatchException exception) {
+        return validationProblem(1);
+    }
+
+    @ExceptionHandler(InvalidMetricHistoryPeriodException.class)
+    ProblemDetail handleInvalidMetricHistoryPeriod() {
         return validationProblem(1);
     }
 

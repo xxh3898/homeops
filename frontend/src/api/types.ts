@@ -15,6 +15,30 @@ export interface HostMetric {
   uptimeSeconds: number
 }
 
+export const metricHistoryPeriods = ['1h', '6h', '24h', '7d'] as const
+
+export type MetricHistoryPeriod = (typeof metricHistoryPeriods)[number]
+
+export interface MetricHistory {
+  period: MetricHistoryPeriod
+  from: string
+  to: string
+  bucketSeconds: number
+  points: MetricHistoryPoint[]
+}
+
+export interface MetricHistoryPoint {
+  bucketStart: string
+  sampleCount: number
+  cpuUsageAverage: number
+  cpuUsagePeak: number
+  memoryTotalBytes: number
+  memoryUsedAverageBytes: number
+  memoryUsedPeakBytes: number
+  diskTotalBytes: number
+  diskUsedBytes: number
+}
+
 export interface DockerSummary {
   total: number
   running: number
