@@ -1,4 +1,10 @@
-import type { ActivityPage, ContainerInventory, SystemSummary } from './types'
+import type {
+  ActivityPage,
+  ContainerInventory,
+  MetricHistory,
+  MetricHistoryPeriod,
+  SystemSummary,
+} from './types'
 
 export const API_REQUEST_TIMEOUT_MS = 8_000
 export const API_CONNECTION_ERROR_MESSAGE =
@@ -136,6 +142,11 @@ function messageForStatus(status: number) {
 
 export function getSystemSummary(signal?: AbortSignal) {
   return getJson<SystemSummary>('/api/v1/system/summary', signal)
+}
+
+export function getMetricHistory(period: MetricHistoryPeriod, signal?: AbortSignal) {
+  const parameters = new URLSearchParams({ period })
+  return getJson<MetricHistory>(`/api/v1/system/metrics/history?${parameters}`, signal)
 }
 
 export function getContainers(signal?: AbortSignal) {

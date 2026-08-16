@@ -6,6 +6,7 @@ import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { usePageVisible } from '../hooks/usePageVisible'
 import { Card } from '../ui/Card'
 import { StatusBadge } from '../ui/StatusBadge'
+import { MetricHistorySection } from '../ui/MetricHistorySection'
 import { formatBytes, formatPercent, formatTimestamp, formatUptime, percentage } from '../utils/format'
 
 export function OverviewPage() {
@@ -17,10 +18,7 @@ export function OverviewPage() {
     refetchInterval: visible ? 5_000 : false,
   })
 
-  if (query.isPending) {
-    return <OverviewSkeleton />
-  }
-  if (isAuthorizationError(query.error) || query.data === undefined) {
+  if (isAuthorizationError(query.error)) {
     return (
       <Card className="border-rose-400/30">
         <h2 className="font-semibold text-rose-200">Unable to load HomeOps</h2>
@@ -36,6 +34,31 @@ export function OverviewPage() {
           Retry
         </button>
       </Card>
+    )
+  }
+  if (query.isPending || query.data === undefined) {
+    return (
+      <div className="space-y-4">
+        {query.isPending ? (
+          <OverviewSkeleton />
+        ) : (
+          <Card className="border-rose-400/30">
+            <h2 className="font-semibold text-rose-200">Unable to load HomeOps</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              {query.error?.message ?? 'No cached system snapshot is available.'}
+            </p>
+            <button
+              type="button"
+              className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-xl bg-white/10 px-4 text-sm font-semibold"
+              onClick={() => void query.refetch()}
+            >
+              <RefreshCw aria-hidden="true" size={17} />
+              Retry
+            </button>
+          </Card>
+        )}
+        <MetricHistorySection />
+      </div>
     )
   }
 
@@ -100,7 +123,7 @@ export function OverviewPage() {
           <Card>
             <h3 className="text-sm font-semibold text-slate-300">Current utilization</h3>
             <div className="mt-3 h-48" aria-label="Current utilization chart">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                 <BarChart data={chartData} margin={{ top: 8, right: 0, left: -24, bottom: 0 }}>
                   <CartesianGrid stroke="#1e293b" vertical={false} />
                   <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} />
@@ -121,6 +144,8 @@ export function OverviewPage() {
           <p className="text-sm text-slate-400">Waiting for the native Agent's first snapshot.</p>
         </Card>
       )}
+
+      <MetricHistorySection />
 
       <Card>
         <div className="flex items-center gap-2">

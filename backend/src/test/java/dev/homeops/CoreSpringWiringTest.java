@@ -12,10 +12,13 @@ import dev.homeops.agent.persistence.AgentActivityStore;
 import dev.homeops.agent.persistence.HostMetricAggregateRepository;
 import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
 import dev.homeops.metrics.HomeOpsMetricProperties;
+import dev.homeops.metrics.HostMetricHistoryStore;
 import dev.homeops.metrics.HostMetricRetentionJob;
+import dev.homeops.metrics.MetricHistoryService;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 class CoreSpringWiringTest {
 
@@ -49,10 +52,15 @@ class CoreSpringWiringTest {
             context.registerBean(
                     AgentActivityStore.class,
                     () -> mock(AgentActivityStore.class));
+            context.registerBean(
+                    JdbcTemplate.class,
+                    () -> mock(JdbcTemplate.class));
             context.register(
                     AgentSnapshotService.class,
                     ProcessedAgentSnapshotRetentionJob.class,
-                    HostMetricRetentionJob.class);
+                    HostMetricRetentionJob.class,
+                    HostMetricHistoryStore.class,
+                    MetricHistoryService.class);
 
             context.refresh();
 
@@ -60,6 +68,7 @@ class CoreSpringWiringTest {
             assertThat(context.getBean(ProcessedAgentSnapshotRetentionJob.class))
                     .isNotNull();
             assertThat(context.getBean(HostMetricRetentionJob.class)).isNotNull();
+            assertThat(context.getBean(MetricHistoryService.class)).isNotNull();
         }
     }
 }

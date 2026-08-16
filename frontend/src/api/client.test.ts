@@ -3,6 +3,7 @@ import {
   API_REQUEST_TIMEOUT_MS,
   ApiConnectionError,
   ApiError,
+  getMetricHistory,
   getSystemSummary,
   isAuthorizationError,
   isConnectionError,
@@ -38,6 +39,29 @@ describe('HomeOps API client', () => {
         cache: 'no-store',
         credentials: 'same-origin',
         signal: expect.any(AbortSignal),
+      }),
+    )
+  })
+
+  it('encodes the bounded history period in a same-origin GET request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        period: '6h',
+        from: '2026-08-17T06:00:00Z',
+        to: '2026-08-17T12:00:00Z',
+        bucketSeconds: 300,
+        points: [],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getMetricHistory('6h')
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/system/metrics/history?period=6h',
+      expect.objectContaining({
+        cache: 'no-store',
+        credentials: 'same-origin',
       }),
     )
   })

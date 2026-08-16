@@ -6,11 +6,13 @@ import { OverviewPage } from './OverviewPage'
 
 const mocks = vi.hoisted(() => ({
   getSystemSummary: vi.fn(),
+  getMetricHistory: vi.fn(),
 }))
 
 vi.mock('../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/client')>()),
   getSystemSummary: mocks.getSystemSummary,
+  getMetricHistory: mocks.getMetricHistory,
 }))
 vi.mock('../hooks/useOnlineStatus', () => ({
   useOnlineStatus: () => true,
@@ -22,15 +24,17 @@ vi.mock('../hooks/usePageVisible', () => ({
 describe('OverviewPage', () => {
   beforeEach(() => {
     mocks.getSystemSummary.mockReset()
+    mocks.getMetricHistory.mockReset().mockResolvedValue(metricHistory())
   })
 
-  it('shows a blocking error when the initial summary request fails', async () => {
+  it('keeps metric history available when the initial summary request fails', async () => {
     mocks.getSystemSummary.mockRejectedValueOnce(new Error('summary unavailable'))
 
     renderPage()
 
     expect(await screen.findByText('Unable to load HomeOps')).toBeInTheDocument()
     expect(screen.getByText('summary unavailable')).toBeInTheDocument()
+    expect(await screen.findByText('No metric history yet')).toBeInTheDocument()
   })
 
   it('shows safe reachability guidance when no summary snapshot is cached', async () => {
@@ -110,6 +114,16 @@ function renderPage() {
     </QueryClientProvider>,
   )
   return { ...rendered, queryClient }
+}
+
+function metricHistory() {
+  return {
+    period: '6h' as const,
+    from: '2026-08-04T06:00:00Z',
+    to: '2026-08-04T12:00:00Z',
+    bucketSeconds: 300,
+    points: [],
+  }
 }
 
 function systemSummary() {
