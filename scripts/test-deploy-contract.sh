@@ -40,6 +40,25 @@ assert_absent() {
   fi
 }
 
+assert_job_contains() {
+  local file="$1"
+  local job="$2"
+  local next_job="$3"
+  local expected="$4"
+  local job_definition
+
+  if [[ -n "${next_job}" ]]; then
+    job_definition="$(/usr/bin/sed -n "/^  ${job}:$/,/^  ${next_job}:$/p" "${file}")"
+  else
+    job_definition="$(/usr/bin/sed -n "/^  ${job}:$/,\$p" "${file}")"
+  fi
+  if [[ -z "${job_definition}" ]] || ! /usr/bin/grep -Fq -- "${expected}" <<<"${job_definition}"; then
+    printf 'Missing %s job contract in %s: %s\n' \
+      "${job}" "${file#"${REPOSITORY_ROOT}/"}" "${expected}" >&2
+    exit 1
+  fi
+}
+
 assert_rendered_production_topology() {
   if ! "${DOCKER_BIN}" compose --profile operations --env-file "${ENV_EXAMPLE}" --file "${COMPOSE_EXAMPLE}" config --format json |
     "${PYTHON_BIN}" -c '
@@ -127,7 +146,18 @@ assert_contains "${DEPLOY_WORKFLOW}" 'deploy-homeops-v2 ${GITHUB_SHA} ${API_IMAG
 assert_contains "${DEPLOY_WORKFLOW}" './deploy/scripts/validate-https-origin.sh "${HOMEOPS_SMOKE_URL}"'
 assert_contains "${DEPLOY_WORKFLOW}" 'persist-credentials: false'
 assert_contains "${DEPLOY_WORKFLOW}" 'needs.validate.outputs.agent_release == '\''true'\'''
-assert_contains "${DEPLOY_WORKFLOW}" 'HOMEOPS_AGENT_ROLLOUT_ENABLED == '\''true'\'''
+assert_contains "${DEPLOY_WORKFLOW}" 'vars.MAC_MINI_DEPLOY_ENABLED == '\''true'\'''
+assert_contains "${DEPLOY_WORKFLOW}" 'vars.HOMEOPS_AGENT_ROLLOUT_ENABLED == '\''true'\'''
+assert_absent "${DEPLOY_WORKFLOW}" 'vars.HOMEOPS_DEPLOY_HOST'
+assert_absent "${DEPLOY_WORKFLOW}" 'vars.HOMEOPS_DEPLOY_USER'
+assert_job_contains "${DEPLOY_WORKFLOW}" deploy rollout-agent 'ping: ${{ secrets.HOMEOPS_DEPLOY_HOST }}'
+assert_job_contains "${DEPLOY_WORKFLOW}" deploy rollout-agent 'DEPLOY_HOST: ${{ secrets.HOMEOPS_DEPLOY_HOST }}'
+assert_job_contains "${DEPLOY_WORKFLOW}" deploy rollout-agent 'DEPLOY_USER: ${{ secrets.HOMEOPS_DEPLOY_USER }}'
+assert_job_contains "${DEPLOY_WORKFLOW}" deploy rollout-agent 'Deployment target configuration is missing or invalid'
+assert_job_contains "${DEPLOY_WORKFLOW}" rollout-agent '' 'ping: ${{ secrets.HOMEOPS_DEPLOY_HOST }}'
+assert_job_contains "${DEPLOY_WORKFLOW}" rollout-agent '' 'DEPLOY_HOST: ${{ secrets.HOMEOPS_DEPLOY_HOST }}'
+assert_job_contains "${DEPLOY_WORKFLOW}" rollout-agent '' 'DEPLOY_USER: ${{ secrets.HOMEOPS_DEPLOY_USER }}'
+assert_job_contains "${DEPLOY_WORKFLOW}" rollout-agent '' 'Deployment target configuration is missing or invalid'
 assert_contains "${DEPLOY_WORKFLOW}" 'rollout-homeops-agent-v1 ${GITHUB_SHA} ${AGENT_DIGEST} ${REGISTRY_OWNER} ${registry_user}'
 assert_contains "${DEPLOY_WORKFLOW}" 'HOMEOPS_AGENT_ROLLOUT_SSH_KEY'
 assert_absent "${DEPLOY_WORKFLOW}" 'needs.validate.outputs.agent_artifact == '\''true'\'''
