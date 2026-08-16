@@ -1,0 +1,97 @@
+name: Bug / Regression
+description: 재현 가능한 bug, regression 또는 운영 이상을 기록합니다.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        기존 Issue를 먼저 확인하세요. Secret, credential, private deployment metadata, private address 또는 Tailnet 상세는 첨부하지 마세요. 민감한 보안 문제는 `SECURITY.md`의 비공개 제보 경로를 사용하세요.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 문제 설명
+      description: 무엇이 잘못됐고 언제부터 관찰됐는지 설명해 주세요.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 재현 방법
+      description: 재현 가능하면 최소 단계와 조건을 적어주세요. 재현할 수 없으면 관찰 조건을 적어주세요.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: false
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대 결과
+      description: 정상이라면 어떤 결과여야 하는지 적어주세요.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 실제 결과
+      description: 실제로 관찰된 결과와 오류 상태를 적어주세요.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 영향 범위
+      description: 확인된 범위를 모두 선택하세요.
+      multiple: true
+      options:
+        - Backend
+        - Frontend
+        - Agent
+        - Infrastructure / CI/CD
+        - Database
+        - Production
+        - Unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: 환경
+      options:
+        - Production
+        - Local
+        - CI
+        - Other
+        - Unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: 현재 확인된 영향 기준으로 선택하세요. 조사 후 변경할 수 있습니다.
+      options:
+        - P0 — 전체 서비스 중단 또는 데이터 안전에 심각한 위험
+        - P1 — Production 핵심 기능 또는 배포 경계 문제
+        - P2 — 중요하지만 즉각적인 outage는 아닌 문제
+        - P3 — 낮은 우선순위의 제한된 문제
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: 관련 log의 redacted 발췌, screenshot, Actions run 또는 commit을 적어주세요. Secret, credential, private deployment metadata는 포함하지 마세요.
+    validations:
+      required: false
