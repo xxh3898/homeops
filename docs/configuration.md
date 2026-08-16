@@ -106,13 +106,10 @@ Repository variable:
 - `MAC_MINI_DEPLOY_ENABLED`
 - `HOMEOPS_AGENT_ROLLOUT_ENABLED`: 별도 Agent rollout job이 host를 변경하려면 정확히 `true`여야 합니다. staging과 rollback drill이 성공할 때까지 unset 또는 `false`로 두세요.
 
-Production environment variable:
+Production environment secret:
 
 - `HOMEOPS_DEPLOY_HOST`: MagicDNS host name
 - `HOMEOPS_DEPLOY_USER`: 제한된 SSH account
-
-Production environment secret:
-
 - `TS_OAUTH_CLIENT_ID`
 - `TS_AUDIENCE`
 - `HOME_MINI_SSH_KEY`: HomeOps 전용 CI key
@@ -120,6 +117,8 @@ Production environment secret:
 - `HOMEOPS_SMOKE_URL`: path 없는 tailnet HTTPS origin. `smoke.origin`과 같은 명시 port를 쓸 수 있음
 - `HOMEOPS_AGENT_ROLLOUT_SSH_KEY`: `rollout-homeops-agent-v1`로 제한된 별도 forced-command key
 - `HOMEOPS_AGENT_ROLLOUT_KNOWN_HOSTS`: Agent rollout key에만 쓰는 known-host entry
+
+`HOMEOPS_DEPLOY_HOST`와 `HOMEOPS_DEPLOY_USER`는 credential 자체는 아니지만 private deployment metadata입니다. public Actions log의 masking 경계를 적용하기 위해 Production environment Secret으로 관리하고 workflow에서 GitHub Variable로 참조하지 마세요. migration 중 같은 이름의 기존 Variable은 secret 기반 production deployment가 성공하고 literal metadata가 log에 남지 않았음을 확인할 때까지만 rollback/reference 용도로 보존할 수 있습니다.
 
 GitHub Actions는 workflow의 scoped package access에 `GITHUB_TOKEN`을 자동 공급합니다. 별도의 `GITHUB_TOKEN` repository 또는 environment secret을 만들거나 저장하지 마세요.
 
@@ -129,5 +128,6 @@ GitHub Actions는 workflow의 scoped package access에 `GITHUB_TOKEN`을 자동 
 
 - production `.env`와 TLS material은 mode를 제한하고 source checkout 밖에 둡니다.
 - Compose label, GitHub variable, command argument, log, issue body, deployment state에 secret 값을 넣지 마세요.
+- private deployment metadata를 repository/environment Variable, step summary, public log, issue body에 기록하지 마세요.
 - 이후 notification adapter를 구현할 때만 Discord webhook과 SMTP credential을 저장하세요. 현재 읽기 전용 runtime의 일부가 아닙니다.
 - credential 값이 Git history나 workflow log에 나타나면 rotate하세요. 보이는 줄을 지우는 것만으로는 충분하지 않습니다.
