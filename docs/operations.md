@@ -4,16 +4,16 @@
 
 ## 라이프사이클 gate
 
-| Gate | 근거 | 현재 repository 상태 |
+| Gate | 근거 | 현재 상태 |
 |---|---|---|
-| G0 읽기 전용 기준선 | Host/runtime/repository 인벤토리 및 결정 | 문서화됨. live 값은 달라질 수 있음 |
-| G1 개발 | production 격리를 적용한 focused Backend, Frontend, Agent test | 로컬 완료. 순차 Docker 검증 통과 |
-| G2 path-aware CI | Classifier case 및 안정적인 required context | 구현됨. 최신 push 및 pull request Validate run 통과 |
-| G3 배포 staging | Bootstrap identity, release shape, mode, idempotence, rollback | 실행 가능한 mock regression coverage가 로컬 통과. CI 및 live host staging 미실행 |
-| G4 초기 migration | 비어 있는 전용 DB migration 및 JPA validation | 격리된 PostgreSQL 18.4 초기 migration, V1-to-V2 upgrade, JPA validation 통과 |
-| G5 Agent | mTLS delivery, 실제 Mac metric, Docker socket, spool recovery | 미실행 |
-| G6 tailnet/PWA | Serve identity, iPhone install, background recovery, public access 없음 | 미실행 |
-| G7 production | immutable-digest deploy, SHA identity validation, health, tailnet smoke, previous rollback | 승인 또는 실행되지 않음 |
+| G0 읽기 전용 기준선 | Host/runtime/repository 인벤토리 및 결정 | COMPLETE — repository, GitHub와 live runtime identity/health baseline 검증 |
+| G1 개발 | production 격리를 적용한 focused Backend, Frontend, Agent test | COMPLETE — 격리된 순차 검증과 component regression 통과 |
+| G2 path-aware CI | Classifier case 및 안정적인 required context | COMPLETE — validation/release scope 분리와 push, pull request CI 검증 |
+| G3 배포 staging | Bootstrap identity, release shape, mode, idempotence, rollback | PARTIAL — mock regression과 production transaction evidence는 있으나 별도 live staging acceptance 기록 없음 |
+| G4 초기 migration | 비어 있는 전용 DB migration 및 JPA validation | COMPLETE — 격리된 PostgreSQL 초기/upgrade migration과 JPA validation 통과 |
+| G5 Agent | mTLS delivery, 실제 Mac metric, Docker socket, spool recovery | COMPLETE — production Agent, immutable release, fresh proof/snapshot, live rollback·roll-forward와 stability 검증 |
+| G6 tailnet/PWA | Serve identity, iPhone install, background recovery, public access 없음 | PARTIAL — Serve HTTPS, Funnel 부재, root/asset/readiness와 PWA asset 확인. iPhone standalone/background acceptance 미확인 |
+| G7 production | immutable-digest deploy, SHA identity validation, health, tailnet smoke, previous rollback | COMPLETE — immutable application deploy, runtime identity, health/tailnet smoke와 previous application rollback evidence 확인 |
 
 HomeOps는 자체 PostgreSQL에 대해 Master Playbook의 recurring/offsite backup, retention, restore gate를 의도적으로 제외합니다. 이는 명시적인 durability tradeoff이지 backup 성공 상태가 아닙니다. destructive migration에는 여전히 일회성 logical snapshot 또는 명시적 reset 결정이 필요합니다.
 
@@ -31,7 +31,9 @@ HomeOps는 자체 PostgreSQL에 대해 Master Playbook의 recurring/offsite back
 
 ## 배포 transaction
 
-Phase 3 ingestion activation은 source release가 merge된 뒤의 별도 host 작업입니다. HomeOps `.env`에 생성한 64글자 소문자 hexadecimal `HOMEOPS_INGESTION_SHARED_SECRET` 하나가 있는지, `smoke.origin`이 의도한 tailnet HTTPS origin인지, 두 file이 owner-only mode `0600`인지, deployment account의 `~/Server/data/homeops/ingestion-spool`이 owner-only mode `0700`인지 확인합니다. private copy를 lint한 뒤에만 별도 `dev.homeops.ingestion-reporter` LaunchAgent를 설치합니다. 이는 제한된 interval로 고정 `--drain` mode를 호출하며 보존된 transient event delivery의 retry owner입니다. Cubing Hub와 Guess Pokémon은 hook이 포함된 각자의 runtime-config release를 배포한 뒤에만 event를 내보내기 시작합니다. reporter warning을 application deploy 또는 backup 실패로 취급하지 말고 spool과 HomeOps ingestion health를 따로 검사하세요.
+Phase 3 source와 production ingestion/monitoring은 활성 상태입니다. Production의 `dev.homeops.ingestion-reporter` LaunchAgent는 범위 제한 `--drain` retry를 담당하고 신뢰하는 project의 deployment/backup event가 Activity에 수신됩니다. Exact-origin service checker와 incident history도 동작합니다. 이 production 활성 evidence와 별개로 Phase 3의 formal acceptance는 아직 PARTIAL입니다.
+
+새 host에서 Phase 3를 활성화하는 작업은 source release와 분리합니다. HomeOps `.env`에 생성한 64글자 소문자 hexadecimal `HOMEOPS_INGESTION_SHARED_SECRET` 하나가 있는지, `smoke.origin`이 의도한 tailnet HTTPS origin인지, 두 file이 owner-only mode `0600`인지, deployment account의 `~/Server/data/homeops/ingestion-spool`이 owner-only mode `0700`인지 확인합니다. private reporter copy와 LaunchAgent를 load 전에 lint하고, reporter warning을 application deploy 또는 backup 실패로 취급하지 말며 spool과 HomeOps ingestion health를 따로 검사하세요.
 
 GitHub workflow는 다음을 수행합니다.
 
@@ -49,6 +51,10 @@ GitHub workflow는 다음을 수행합니다.
 12. GitHub runner에서 두 번째 tailnet readiness smoke
 
 runtime-config image는 release마다 다시 build합니다. 첫 public release에서 숨은 Compose/script synchronization path를 피하는 대신 작은 추가 build 비용이 듭니다.
+
+Full validation은 native Agent release 허가가 아닙니다. Persistent Agent artifact는 `agent/**`, `agent-artifact.Dockerfile`, `.dockerignore`, `.gitattributes` 변경만 eligible이며 docs/backend/frontend/workflow-only 변경에서는 publication과 rollout을 건너뜁니다. Rollout은 artifact publication 성공과 repository `HOMEOPS_AGENT_ROLLOUT_ENABLED=true`를 모두 요구합니다. 현재 값은 `false`이며 Phase 2 acceptance와 별개인 operational kill switch입니다.
+
+`HOMEOPS_DEPLOY_HOST`와 `HOMEOPS_DEPLOY_USER`는 Production environment Secret으로만 Tailscale ping과 SSH target에 전달합니다. 같은 이름의 legacy Variable은 제거됐고 secret 기반 production deploy와 public log literal zero-match acceptance를 완료했습니다.
 
 ## Docker network 토폴로지
 
@@ -111,15 +117,15 @@ HomeOps database 자동 backup은 없습니다. PostgreSQL volume을 잃으면 h
 
 ## Agent upgrade
 
-### 현재: 운영자 관리 설치
+### 현재: production active, automatic rollout kill switch disabled
 
-Agent publication과 Agent installation은 API/Web deployment와 분리됩니다. artifact checksum을 검증하고 binary를 immutable release directory에 설치하며 고정 `current` symlink가 이를 가리키게 한 뒤 version과 fresh snapshot을 확인하세요. 일반 `main` deployment workflow는 native Agent를 갱신하지 않습니다.
+Agent publication과 installation은 API/Web deployment와 분리됩니다. Production Agent는 immutable release directory, atomic `current`/`previous` pointer, checksum, owner/mode, LaunchAgent와 fresh `version-proof`를 사용합니다. 일반 `main` application deployment만으로 native Agent를 갱신하지 않습니다.
 
-### opt-in 자동 rollout
+### opt-in 자동 rollout contract
 
-Agent가 macOS state와 Docker socket을 읽으므로 자동 Agent rollout은 구현되어 있으나 기본 비활성입니다. `deploy-homeops-v2`에 Agent path, LaunchAgent label, action, shell input을 확장하지 마세요. rollout은 자체 key를 사용하며 정확한 `rollout-homeops-agent-v1` grammar만 받습니다.
+Agent가 macOS state와 Docker socket을 읽으므로 automatic rollout은 별도 repository kill switch로 통제합니다. Phase 2 operational acceptance는 COMPLETE지만 현재 `HOMEOPS_AGENT_ROLLOUT_ENABLED=false`로 CI mutation을 닫아 두었습니다. `deploy-homeops-v2`에 Agent path, LaunchAgent label, action, shell input을 확장하지 마세요. rollout은 자체 key를 사용하며 정확한 `rollout-homeops-agent-v1` grammar만 받습니다.
 
-`HOMEOPS_AGENT_ROLLOUT_ENABLED=true`를 설정하기 전 staging에서 다음을 모두 증명하세요.
+향후 kill switch를 `true`로 바꾸거나 rollout contract와 artifact input을 변경하기 전 다음 불변식을 다시 확인하세요.
 
 1. rollback을 위해 current 및 previous digest를 보관하는 persistent GHCR exact-SHA Agent artifact와 checksum
 2. 기대하는 full SHA와 검증된 artifact identity만 받는 전용 restricted host command
@@ -127,6 +133,8 @@ Agent가 macOS state와 Docker socket을 읽으므로 자동 Agent rollout은 �
 4. previous known-good binary를 지우지 않는 명시적 first-install policy와 rollback path
 5. caller-supplied label 또는 전역 launchd 작업이 아닌 구성한 LaunchAgent label만 restart
 6. 보고한 version이 요청 release와 일치하는 fresh Agent snapshot의 success proof
-7. 별도 Agent rollout kill switch, 기본 비활성 opt-in, staging 및 rollback drill
+7. 별도 Agent rollout kill switch와 application deploy로부터 독립된 failure boundary
 
-host는 검증한 binary/checksum으로 `agent/releases/<SHA>`를 stage하고, `current`와 `previous`를 atomic하게 바꾸며 `gui/<uid>/dev.homeops.agent`만 kickstart합니다. restart 뒤 `agent/version-proof`에 요청 SHA와 성공 snapshot timestamp가 있어야 rollout을 수락합니다. 실패 시 `current`를 previous immutable release로 복구합니다. first-install 실패 시 `current`를 제거하고 해당 label만 boot out합니다. Agent rollout을 요청하지 않으면 API/Web deployment는 독립적으로 성공합니다. 구현 순서는 [구현 로드맵](roadmap.md)을 참고하세요.
+Production live drill에서 `current → previous → original current` 전환, 각 release의 fresh proof/snapshot, 실제 cadence의 연속 snapshot과 application/Tailnet health를 검증했고 시작 pointer 상태를 복원했습니다. 이 acceptance는 현재 kill switch가 `false`인 것과 모순되지 않습니다.
+
+host는 검증한 binary/checksum으로 `agent/releases/<SHA>`를 stage하고, `current`와 `previous`를 atomic하게 바꾸며 `gui/<uid>/dev.homeops.agent`만 kickstart합니다. restart 뒤 `agent/version-proof`에 요청 SHA와 성공 snapshot timestamp가 있어야 rollout을 수락합니다. 실패 시 `current`를 previous immutable release로 복구합니다. first-install 실패 시 `current`를 제거하고 해당 label만 boot out합니다. Agent rollout을 요청하지 않으면 API/Web deployment는 독립적으로 성공합니다. 구현과 상태는 [구현 로드맵](roadmap.md)을 참고하세요.
