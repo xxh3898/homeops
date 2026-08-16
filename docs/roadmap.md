@@ -14,7 +14,19 @@
 - CI에서 host로 Agent를 교체하는 권한을 API/Web image deployment와 별도로 취급합니다.
 - 향후 데이터를 위한 table이 이미 존재한다는 이유만으로 capability를 추가하지 않습니다.
 
+## 현재 phase 상태
+
+| Phase | Source | Production | Acceptance |
+|---|---|---|---|
+| Phase 1 읽기 전용 대시보드 | PARTIAL | ACTIVE (구현된 범위) | PARTIAL |
+| Phase 2 native Agent rollout | IMPLEMENTED | ACTIVE | COMPLETE |
+| Phase 3 운영 이력 | IMPLEMENTED | ACTIVE | PARTIAL |
+| Phase 4 알림 | NOT IMPLEMENTED | INACTIVE | NOT DONE |
+| Phase 5 제한된 컨테이너 제어 | NOT IMPLEMENTED | INACTIVE | NOT DONE |
+
 ## Phase 1: 읽기 전용 대시보드 정확성 및 사용성
+
+**상태:** Source PARTIAL / Production ACTIVE / Acceptance PARTIAL. Host/system summary, container inventory와 Compose project grouping, metric aggregate 저장·retention은 동작합니다. Bounded metric history API/UI, 별도 container detail, redacted tail log는 아직 구현되지 않았습니다.
 
 **목표:** 제어 기능을 추가하지 않고 현재 iPhone 대시보드를 신뢰할 수 있고 훑기 쉽게 만듭니다.
 
@@ -29,28 +41,30 @@
 
 ## Phase 2: opt-in native Agent rollout
 
-**상태:** source에는 구현되었으며 Mac staging과 rollback drill 전까지 기본 비활성입니다.
+**상태:** Source IMPLEMENTED / Production ACTIVE / Operational Acceptance COMPLETE. 현재 repository의 automatic rollout kill switch는 `false`지만 이는 capability 또는 acceptance 상태와 별개입니다.
 
 **목표:** generic remote shell을 허용하거나 마지막 known-good binary를 조용히 덮어쓰지 않고 `main` merge 뒤 Agent code 변경을 배포 가능하게 합니다.
 
-### 필수 구현 순서
+`main`에서는 full validation과 기존 application release 정책을 유지합니다. Persistent native Agent artifact는 `agent/**`, `agent-artifact.Dockerfile`, `.dockerignore`, `.gitattributes`가 바뀔 때만 release eligible입니다. docs, backend, frontend, rollout workflow만 바뀌면 Agent artifact publication과 rollout은 실행하지 않습니다.
 
-1. 정확한 macOS ARM64 binary 및 checksum의 persistent artifact 위치와 retention policy를 정합니다. 짧게 유지되는 CI artifact만으로는 rollback에 충분하지 않습니다.
-2. full commit SHA와 검증된 artifact identity만 input으로 받는 전용 Agent rollout request를 정의합니다.
-3. Agent별 lock, 고정 install root, 정확한 LaunchAgent label을 갖고 caller가 path 또는 command를 제어하지 못하는 host-side restricted wrapper를 구현합니다.
-4. binary를 immutable versioned directory에 stage하고 promotion 전에 checksum, regular-file type, owner, restrictive mode를 검증합니다.
+### 구현 및 운영 contract
+
+1. CI는 정확한 macOS ARM64 binary와 checksum을 persistent immutable artifact로 보관합니다.
+2. rollout request는 full commit SHA와 검증된 artifact identity만 받습니다.
+3. Agent별 lock, 고정 install root와 LaunchAgent label을 가진 host-side restricted wrapper가 caller의 path 또는 command 입력을 차단합니다.
+4. binary는 immutable versioned directory에 stage하며 checksum, regular-file type, owner와 restrictive mode를 promotion 전에 검증합니다.
 5. `current`와 `previous` pointer를 atomic하게 전환한 뒤 구성한 LaunchAgent만 재시작합니다.
-6. 요청한 Agent version의 fresh snapshot을 기다립니다. 그 evidence가 도착한 뒤에만 promotion합니다.
-7. 실패 시 previous pointer를 복구하고 previous Agent를 재시작하며 rollout evidence를 보존하고 failure를 반환합니다.
-8. API/Web deployment와 독립적인 기본 비활성 Agent rollout switch를 추가한 뒤 production 활성화 전에 staging과 rollback drill을 실행합니다.
+6. 요청한 Agent version의 fresh snapshot과 `version-proof`가 확인된 뒤에만 rollout을 수락합니다.
+7. 실패하면 previous pointer와 Agent를 자동 복구하고 evidence를 보존한 채 failure를 반환합니다.
+8. API/Web deployment와 독립적인 repository kill switch가 production mutation을 제어합니다.
 
-**완료 근거:** unit 및 deployment-wrapper regression test, checksum 거부, concurrent rollout 거부, first-install 동작, restart 또는 snapshot 실패 뒤 rollback, Mac staging drill, iPhone/API freshness check.
+**완료 근거:** unit 및 deployment-wrapper regression, checksum·concurrent rollout 거부, first-install과 실패 자동 복구, production artifact/release boundary, live previous rollback과 original current roll-forward, fresh proof/snapshot 및 실제 cadence stability 관찰.
 
 **포함하지 않음:** Agent self-update, 임의 artifact URL, 임의 `launchctl` command, sudo, Docker command input, 이전 release 자동 cleanup.
 
 ## Phase 3: 운영 이력
 
-**상태:** source에 구현되었으며 production ingestion과 check는 운영자 구성 전까지 fail-closed 상태입니다.
+**상태:** Source IMPLEMENTED / Production ACTIVE / Acceptance PARTIAL. Production에서 ingestion reporter, deployment/backup event, service-check scheduler, incident history와 Activity API/UI가 동작합니다. 다만 roadmap 전체 formal acceptance를 COMPLETE로 확정한 기록은 아직 없습니다.
 
 **목표:** 예약한 data model을 범위가 제한되고 감사 가능한 운영 이력으로 만듭니다.
 
@@ -65,6 +79,8 @@
 
 ## Phase 4: 알림
 
+**상태:** Source NOT IMPLEMENTED / Production INACTIVE / Acceptance NOT DONE.
+
 **목표:** 중복 alert storm 없이 유용한 운영 signal을 제공합니다.
 
 - Agent, Docker, deployment, backup-result, incident event용 Discord delivery
@@ -75,6 +91,8 @@
 **완료 근거:** mock webhook test, retry/dedup/recovery test, ownership-matrix scenario 하나에서 duplicate alert가 없음.
 
 ## Phase 5: 제한된 컨테이너 제어
+
+**상태:** Source NOT IMPLEMENTED / Production INACTIVE / Acceptance NOT DONE.
 
 **목표:** 명시적으로 관리하는 container만 의도적으로 start, stop, restart할 수 있게 합니다.
 

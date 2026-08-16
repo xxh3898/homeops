@@ -45,7 +45,7 @@
 
 ## 배포 및 백업 수집
 
-`HOMEOPS_INGESTION_SHARED_SECRET`이 비어 있는 동안 ingestion endpoint는 의도적으로 비활성화됩니다. 이후 통합 단계에서 활성화할 때 신뢰하는 caller는 `POST /api/v1/internal/ingestion/deployments` 또는 `POST /api/v1/internal/ingestion/backups`로 compact JSON request를 보내며 다음 header를 포함합니다.
+`HOMEOPS_INGESTION_SHARED_SECRET`이 비어 있는 동안 ingestion endpoint는 의도적으로 비활성화됩니다. 현재 production은 secret과 reporter를 구성해 deployment/backup ingestion이 활성 상태지만, 새 설치와 미구성 환경의 fail-closed contract는 그대로 유지됩니다. 신뢰하는 caller는 `POST /api/v1/internal/ingestion/deployments` 또는 `POST /api/v1/internal/ingestion/backups`로 compact JSON request를 보내며 다음 header를 포함합니다.
 
 - `X-HomeOps-Ingestion-Timestamp`: ISO-8601 UTC instant
 - `X-HomeOps-Ingestion-Signature`: 공유 secret을 사용한 `timestamp + "." + raw-request-body`의 소문자 hexadecimal HMAC-SHA-256
@@ -56,7 +56,7 @@ API는 구성한 time window 안의 request만 받습니다. secret을 command l
 
 ## 서비스 점검 경계
 
-`HOMEOPS_MONITORING_ALLOWED_ORIGINS`에 하나 이상의 정확한 HTTPS origin이 들어가기 전까지 service check는 fail-closed입니다. service가 non-default port를 쓰면 `https://homeops.example.ts.net:9443`처럼 명시적으로 포함하세요. path와 query parameter는 origin allowlist가 아니라 각 monitored service URL에 속합니다. user info와 URL fragment는 거부하고 redirect를 따르지 않으며 각 request는 설정한 timeout을 사용합니다. 이 exact-origin policy는 인증된 settings request가 HomeOps를 범용 network client로 바꾸는 일을 막습니다.
+`HOMEOPS_MONITORING_ALLOWED_ORIGINS`에 하나 이상의 정확한 HTTPS origin이 들어가기 전까지 service check는 fail-closed입니다. 현재 production은 allowlist와 monitored service를 구성해 scheduler, check와 incident history가 활성 상태입니다. service가 non-default port를 쓰면 `https://homeops.example.ts.net:9443`처럼 명시적으로 포함하세요. path와 query parameter는 origin allowlist가 아니라 각 monitored service URL에 속합니다. user info와 URL fragment는 거부하고 redirect를 따르지 않으며 각 request는 설정한 timeout을 사용합니다. 이 exact-origin policy는 인증된 settings request가 HomeOps를 범용 network client로 바꾸는 일을 막습니다.
 
 ## native Agent 환경
 
@@ -103,8 +103,10 @@ repository variable `MAC_MINI_DEPLOY_ENABLED`가 정확히 `true`가 아니면 �
 
 Repository variable:
 
-- `MAC_MINI_DEPLOY_ENABLED`
-- `HOMEOPS_AGENT_ROLLOUT_ENABLED`: 별도 Agent rollout job이 host를 변경하려면 정확히 `true`여야 합니다. staging과 rollback drill이 성공할 때까지 unset 또는 `false`로 두세요.
+- `MAC_MINI_DEPLOY_ENABLED`: 현재 `true`이며 reviewed `main`의 application deploy를 활성화합니다.
+- `HOMEOPS_AGENT_ROLLOUT_ENABLED`: 별도 Agent rollout job이 host를 변경하려면 정확히 `true`여야 합니다. Phase 2 operational acceptance는 COMPLETE지만 현재 값은 `false`이며 automatic CI mutation을 닫아 둔 kill switch입니다.
+
+Rollout job의 `if`는 repository Variable을 effective gate로 사용합니다. 같은 이름의 Production environment Variable을 만들지 마세요.
 
 Production environment secret:
 
@@ -118,7 +120,7 @@ Production environment secret:
 - `HOMEOPS_AGENT_ROLLOUT_SSH_KEY`: `rollout-homeops-agent-v1`로 제한된 별도 forced-command key
 - `HOMEOPS_AGENT_ROLLOUT_KNOWN_HOSTS`: Agent rollout key에만 쓰는 known-host entry
 
-`HOMEOPS_DEPLOY_HOST`와 `HOMEOPS_DEPLOY_USER`는 credential 자체는 아니지만 private deployment metadata입니다. public Actions log의 masking 경계를 적용하기 위해 Production environment Secret으로 관리하고 workflow에서 GitHub Variable로 참조하지 마세요. migration 중 같은 이름의 기존 Variable은 secret 기반 production deployment가 성공하고 literal metadata가 log에 남지 않았음을 확인할 때까지만 rollback/reference 용도로 보존할 수 있습니다.
+`HOMEOPS_DEPLOY_HOST`와 `HOMEOPS_DEPLOY_USER`는 credential 자체는 아니지만 private deployment metadata입니다. Production environment Secret으로만 관리하고 workflow에서 GitHub Variable로 참조하지 마세요. Secret 기반 production deployment와 public log literal zero-match를 확인한 뒤 같은 이름의 legacy repository/environment Variable을 제거했습니다. 이를 rollback/reference 용도로 다시 만들지 마세요.
 
 GitHub Actions는 workflow의 scoped package access에 `GITHUB_TOKEN`을 자동 공급합니다. 별도의 `GITHUB_TOKEN` repository 또는 environment secret을 만들거나 저장하지 마세요.
 

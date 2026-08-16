@@ -9,6 +9,7 @@
 - 명시적인 identity 및 Agent certificate 검증
 - 범위가 제한된 payload, response, spool, container 수
 - public repository 또는 일반 log에 secret 값 미기록
+- private deployment metadata를 GitHub Secret masking boundary 밖에 노출하지 않음
 
 ## 위협 모델
 
@@ -52,6 +53,10 @@ Agent는 명시적으로 구성한 Unix socket을 통해 version discovery, cont
 ## 배포 경계
 
 CI key는 stable bootstrap으로 강제되어야 합니다. v2 bootstrap은 full commit SHA, API digest, Web digest, runtime-config digest, registry owner, registry login identity만 받습니다. zero 또는 malformed digest를 거부하고 runtime image label과 추출한 release shape를 검증하며 application digest를 immutable deployment worker에 전달합니다. worker는 candidate와 rollback image를 digest로 pull하고 cutover 전에 revision label을 검증합니다. 어느 layer도 path, image name, project name, Compose subcommand, shell fragment를 받지 않습니다.
+
+`HOMEOPS_DEPLOY_HOST`와 `HOMEOPS_DEPLOY_USER`는 credential은 아니지만 private deployment metadata입니다. 현재 workflow는 두 값을 Production environment Secret에서만 받아 Tailscale ping과 restricted SSH target에 사용하며, same-name Variable은 두지 않습니다. Secret 기반 production deployment acceptance에서 Tailscale ping input이 masking되고 public log의 literal target metadata가 남지 않음을 확인했습니다.
+
+Secret migration 이전의 public workflow log에는 historical deployment-target metadata가 남아 있을 수 있습니다. 이 residual exposure에 credential이 포함됐다는 evidence나 현재 credential compromise evidence는 없지만, 기존 run 삭제 여부는 보존 영향과 별도 destructive 승인을 요구합니다. 실제 host/account 값을 issue, 문서 또는 cleanup 계획에 다시 기록하지 마세요.
 
 예시는 운영자 검토와 staging이 여전히 필요합니다. live SSH key, file owner/mode, Tailscale grant, production directory가 올바르게 구성되었다는 증거가 아닙니다.
 
