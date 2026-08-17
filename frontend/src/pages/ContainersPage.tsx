@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Box, ChevronDown, RefreshCw } from 'lucide-react'
+import { ArrowRight, Box, ChevronDown, RefreshCw } from 'lucide-react'
+import { Link } from 'react-router'
 import { getContainers, isAuthorizationError, isConnectionError } from '../api/client'
 import type { ContainerView } from '../api/types'
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
@@ -138,6 +139,13 @@ function ContainerCard({ container, stale }: { container: ContainerView; stale: 
         <Detail label="Control" value={container.managed ? 'Eligible later' : 'Read only'} />
       </dl>
       {container.status && <p className="mt-4 rounded-lg bg-black/20 px-3 py-2 text-xs text-slate-400">{container.status}</p>}
+      <Link
+        to={`/containers/${container.id}`}
+        aria-label={`View details for ${container.name}`}
+        className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-white/10 px-4 text-sm font-semibold text-slate-200 transition hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
+      >
+        View details <ArrowRight aria-hidden="true" size={17} />
+      </Link>
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { MemoryRouter } from 'react-router'
 import { ApiConnectionError, ApiError } from '../api/client'
 import type { ContainerView } from '../api/types'
 import { ContainersPage } from './ContainersPage'
@@ -135,6 +136,16 @@ describe('ContainersPage', () => {
     expect(screen.queryByText('cubing-hub-web-1')).not.toBeInTheDocument()
   })
 
+  it('provides an explicit accessible detail link for a reported container', async () => {
+    mocks.getContainers.mockResolvedValue(containerInventory())
+
+    renderPage()
+
+    await openProject('HomeOps')
+    expect(screen.getByRole('link', { name: 'View details for homeops-api' }))
+      .toHaveAttribute('href', '/containers/abc123def456')
+  })
+
   it.each(['STARTING', 'UNKNOWN'] as const)('shows %s health on a collapsed project', async (health) => {
     mocks.getContainers.mockResolvedValue(containerInventory({ containers: projectWithHealth(health) }))
 
@@ -155,7 +166,9 @@ function renderPage() {
   })
   const rendered = render(
     <QueryClientProvider client={queryClient}>
-      <ContainersPage />
+      <MemoryRouter>
+        <ContainersPage />
+      </MemoryRouter>
     </QueryClientProvider>,
   )
   return { ...rendered, queryClient }
@@ -200,7 +213,7 @@ function containerInventory(
 function groupedContainers(): ContainerView[] {
   return [
     {
-      id: 'cubing-api',
+      id: '111111111111',
       name: 'cubing-hub-api-1',
       composeProject: 'cubing-hub',
       image: 'example/cubing-api:sha',
@@ -216,7 +229,7 @@ function groupedContainers(): ContainerView[] {
       managed: false,
     },
     {
-      id: 'cubing-web',
+      id: '222222222222',
       name: 'cubing-hub-web-1',
       composeProject: 'cubing-hub',
       image: 'example/cubing-web:sha',
@@ -232,7 +245,7 @@ function groupedContainers(): ContainerView[] {
       managed: false,
     },
     {
-      id: 'pokemon-api',
+      id: '333333333333',
       name: 'guess-pokemon-api-1',
       composeProject: 'guess-pokemon',
       image: 'example/pokemon-api:sha',
@@ -253,7 +266,7 @@ function groupedContainers(): ContainerView[] {
 function projectWithHealth(health: 'STARTING' | 'UNKNOWN'): ContainerView[] {
   return [
     {
-      id: `cubing-${health.toLowerCase()}`,
+      id: health === 'STARTING' ? '444444444444' : '555555555555',
       name: 'cubing-hub-api-1',
       composeProject: 'cubing-hub',
       image: 'example/cubing-api:sha',

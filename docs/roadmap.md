@@ -26,7 +26,7 @@
 
 ## Phase 1: 읽기 전용 대시보드 정확성 및 사용성
 
-**상태:** Source PARTIAL / Production ACTIVE / Acceptance PARTIAL. Host/system summary, container inventory와 Compose project grouping, metric aggregate 저장·retention, bounded metric history API/UI는 구현됐습니다. 별도 container detail과 redacted tail log는 아직 구현되지 않았습니다.
+**상태:** Source PARTIAL / Production ACTIVE / Acceptance PARTIAL. Host/system summary, container inventory와 Compose project grouping, metric aggregate 저장·retention, bounded metric history API/UI, latest snapshot 기반 Container Detail API/UI는 구현됐습니다. Bounded/redacted tail log는 아직 구현되지 않았습니다.
 
 **목표:** 제어 기능을 추가하지 않고 현재 iPhone 대시보드를 신뢰할 수 있고 훑기 쉽게 만듭니다.
 
@@ -35,7 +35,8 @@
 | Host metric 정렬 | 선택한 macOS/Netdata 의미에 맞춰 memory usage를 일관되게 정의하고 CPU sampling 및 memory-pressure context를 유지 | Agent regression test 및 동일 시점 macOS/Netdata 비교 |
 | Project container group | mobile 친화적이고 접근 가능한 accordion과 명확한 aggregate health로 Docker Compose project별 inventory group화 | Frontend regression test, 여러 Compose project가 있는 iPhone visual check |
 | Metric history | `1h`/`6h`/`24h`/`7d`로 제한한 UTC aggregate API와 missing bucket을 보존하는 mobile history UI | PostgreSQL weighted/last-value integration test, API bound/auth test, frontend gap/stale/accessibility regression |
-| Container detail 및 log | 범위 제한 읽기 전용 detail 및 tail endpoint 추가. output을 redact/limit하고 host path를 절대 받지 않음 | Agent/API test, size limit test, security review |
+| Container detail | 최신 Agent snapshot 안에서 12자리 identifier를 fail-closed resolve하고 freshness를 보존하는 mobile 읽기 전용 detail 제공 | Full-ID collision 및 auth/no-store Backend test, terminal cache와 mobile/accessibility Frontend test. Production acceptance는 source merge와 별도 gate |
+| Container tail log | Bounded/redacted tail endpoint 추가. output을 redact/limit하고 host path를 절대 받지 않음 | NOT IMPLEMENTED — Agent/API size limit test와 security review 필요 |
 
 **포함하지 않음:** start, stop, restart, 임의 Docker command, 전체 log retention.
 

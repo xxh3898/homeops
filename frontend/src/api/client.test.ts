@@ -3,10 +3,13 @@ import {
   API_REQUEST_TIMEOUT_MS,
   ApiConnectionError,
   ApiError,
+  getContainerDetail,
   getMetricHistory,
   getSystemSummary,
   isAuthorizationError,
   isConnectionError,
+  isContainerDetailTerminalError,
+  shouldRetryContainerDetailQuery,
   shouldRetryQuery,
 } from './client'
 
@@ -59,6 +62,23 @@ describe('HomeOps API client', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/system/metrics/history?period=6h',
+      expect.objectContaining({
+        cache: 'no-store',
+        credentials: 'same-origin',
+      }),
+    )
+  })
+
+  it('encodes the container identifier as one URL path component', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getContainerDetail('abc/def')
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/containers/abc%2Fdef',
       expect.objectContaining({
         cache: 'no-store',
         credentials: 'same-origin',
@@ -168,6 +188,22 @@ describe('HomeOps API client', () => {
     expect(shouldRetryQuery(0, new ApiError(500, 'temporarily unavailable'))).toBe(true)
     expect(shouldRetryQuery(0, new ApiConnectionError())).toBe(true)
     expect(shouldRetryQuery(1, new Error('network unavailable'))).toBe(false)
+  })
+
+  it.each([400, 404, 409])('treats container detail status %s as terminal', (status) => {
+    const error = new ApiError(status, 'deterministic resource failure')
+
+    expect(isContainerDetailTerminalError(error)).toBe(true)
+    expect(shouldRetryContainerDetailQuery(0, error)).toBe(false)
+  })
+
+  it('keeps container detail authorization and transient retries aligned with the global policy', () => {
+    expect(shouldRetryContainerDetailQuery(0, new ApiError(401, 'access denied'))).toBe(false)
+    expect(shouldRetryContainerDetailQuery(0, new ApiError(403, 'access denied'))).toBe(false)
+    expect(shouldRetryContainerDetailQuery(0, new ApiError(503, 'inventory unavailable'))).toBe(true)
+    expect(shouldRetryContainerDetailQuery(0, new ApiConnectionError())).toBe(true)
+    expect(shouldRetryContainerDetailQuery(1, new ApiError(503, 'inventory unavailable'))).toBe(false)
+    expect(isContainerDetailTerminalError(new ApiError(503, 'inventory unavailable'))).toBe(false)
   })
 })
 

@@ -3,6 +3,10 @@ package dev.homeops.common;
 import dev.homeops.activity.InvalidActivityCursorException;
 import dev.homeops.metrics.InvalidMetricHistoryPeriodException;
 import dev.homeops.monitoring.SafeServiceUrlPolicy.UnsafeServiceUrlException;
+import dev.homeops.system.AmbiguousContainerIdentifierException;
+import dev.homeops.system.ContainerInventoryUnavailableException;
+import dev.homeops.system.ContainerNotFoundException;
+import dev.homeops.system.InvalidContainerIdentifierException;
 import java.net.URI;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -45,6 +49,41 @@ public class ApiExceptionHandler {
     @ExceptionHandler(InvalidMetricHistoryPeriodException.class)
     ProblemDetail handleInvalidMetricHistoryPeriod() {
         return validationProblem(1);
+    }
+
+    @ExceptionHandler(InvalidContainerIdentifierException.class)
+    ProblemDetail handleInvalidContainerIdentifier() {
+        return validationProblem(1);
+    }
+
+    @ExceptionHandler(ContainerNotFoundException.class)
+    ProblemDetail handleContainerNotFound() {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.NOT_FOUND,
+                "The container is not present in the latest reported snapshot");
+        detail.setType(URI.create("urn:homeops:problem:container-not-found"));
+        detail.setTitle("Container not found");
+        return detail;
+    }
+
+    @ExceptionHandler(AmbiguousContainerIdentifierException.class)
+    ProblemDetail handleAmbiguousContainerIdentifier() {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT,
+                "The identifier matches more than one reported container");
+        detail.setType(URI.create("urn:homeops:problem:container-identifier-ambiguous"));
+        detail.setTitle("Container identifier is ambiguous");
+        return detail;
+    }
+
+    @ExceptionHandler(ContainerInventoryUnavailableException.class)
+    ProblemDetail handleContainerInventoryUnavailable() {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "No Agent container snapshot is available");
+        detail.setType(URI.create("urn:homeops:problem:container-inventory-unavailable"));
+        detail.setTitle("Container inventory unavailable");
+        return detail;
     }
 
     private static ProblemDetail validationProblem(int errorCount) {
