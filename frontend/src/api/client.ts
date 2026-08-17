@@ -1,5 +1,6 @@
 import type {
   ActivityPage,
+  ContainerDetail,
   ContainerInventory,
   MetricHistory,
   MetricHistoryPeriod,
@@ -37,6 +38,17 @@ export function isConnectionError(error: unknown): error is ApiConnectionError {
 
 export function shouldRetryQuery(failureCount: number, error: unknown) {
   return !isAuthorizationError(error) && failureCount < 1
+}
+
+export function isContainerDetailTerminalError(error: unknown): error is ApiError {
+  return error instanceof ApiError && (error.status === 400 || error.status === 404 || error.status === 409)
+}
+
+export function shouldRetryContainerDetailQuery(failureCount: number, error: unknown) {
+  if (isContainerDetailTerminalError(error)) {
+    return false
+  }
+  return shouldRetryQuery(failureCount, error)
 }
 
 async function getJson<T>(path: string, callerSignal?: AbortSignal): Promise<T> {
@@ -151,6 +163,10 @@ export function getMetricHistory(period: MetricHistoryPeriod, signal?: AbortSign
 
 export function getContainers(signal?: AbortSignal) {
   return getJson<ContainerInventory>('/api/v1/containers', signal)
+}
+
+export function getContainerDetail(id: string, signal?: AbortSignal) {
+  return getJson<ContainerDetail>(`/api/v1/containers/${encodeURIComponent(id)}`, signal)
 }
 
 export function getActivity(cursor?: string, signal?: AbortSignal) {

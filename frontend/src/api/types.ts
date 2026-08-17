@@ -74,6 +74,13 @@ export interface ContainerInventory {
   containers: ContainerView[]
 }
 
+export interface ContainerDetail {
+  agentStatus: 'CONNECTED' | 'STALE'
+  lastUpdatedAt: string
+  stale: boolean
+  container: ContainerView
+}
+
 export interface ActivityEvent {
   id: string
   type: 'DEPLOYMENT' | 'BACKUP' | 'INCIDENT' | 'AGENT'

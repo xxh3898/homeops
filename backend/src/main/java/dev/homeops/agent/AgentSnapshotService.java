@@ -17,6 +17,11 @@ import dev.homeops.agent.persistence.HostMetricAggregateRepository;
 import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
 import dev.homeops.common.AgentSnapshotRejectedException;
 import dev.homeops.common.PostgresqlTimestamp;
+import dev.homeops.system.AmbiguousContainerIdentifierException;
+import dev.homeops.system.ContainerIdentifier;
+import dev.homeops.system.ContainerInventoryUnavailableException;
+import dev.homeops.system.ContainerNotFoundException;
+import dev.homeops.system.api.ContainerDetailResponse;
 import dev.homeops.system.api.ContainerInventoryResponse;
 import dev.homeops.system.api.ContainerView;
 import dev.homeops.system.api.SystemSummaryResponse;
@@ -198,6 +203,32 @@ public class AgentSnapshotService {
                         List.of()));
     }
 
+    public ContainerDetailResponse containerDetail(String rawIdentifier) {
+        ReceivedAgentSnapshot received = latest()
+                .orElseThrow(ContainerInventoryUnavailableException::new);
+        ContainerIdentifier identifier = ContainerIdentifier.parse(rawIdentifier);
+        List<AgentSnapshotRequest.ContainerSnapshot> matches = received.snapshot()
+                .containers()
+                .stream()
+                .filter(container -> identifier.matches(container.id()))
+                .limit(2)
+                .toList();
+        if (matches.isEmpty()) {
+            throw new ContainerNotFoundException();
+        }
+        if (matches.size() > 1) {
+            throw new AmbiguousContainerIdentifierException();
+        }
+        boolean stale = isSnapshotStale(received);
+        return new ContainerDetailResponse(
+                stale
+                        ? ConnectionStatus.STALE.name()
+                        : ConnectionStatus.CONNECTED.name(),
+                received.snapshot().capturedAt(),
+                stale,
+                ContainerView.from(matches.getFirst()));
+    }
+
     private void validate(AgentSnapshotRequest request, Instant receivedAt) {
         if (!properties.expectedId().equals(request.agentId())) {
             throw new AgentSnapshotRejectedException(
@@ -241,10 +272,7 @@ public class AgentSnapshotService {
     private AgentStatusResponse toConnectedStatus(
             ReceivedAgentSnapshot received,
             Instant now) {
-        boolean stale = isSnapshotStale(
-                received.snapshot().capturedAt(),
-                received.receivedAt(),
-                now);
+        boolean stale = isSnapshotStale(received, now);
         return new AgentStatusResponse(
                 received.snapshot().agentId(),
                 received.snapshot().agentVersion(),
@@ -278,10 +306,7 @@ public class AgentSnapshotService {
         long unhealthy = snapshot.containers().stream()
                 .filter(container -> container.health() == ContainerHealth.UNHEALTHY)
                 .count();
-        boolean stale = isSnapshotStale(
-                snapshot.capturedAt(),
-                received.receivedAt(),
-                clock.instant());
+        boolean stale = isSnapshotStale(received);
         return new SystemSummaryResponse(
                 stale ? ConnectionStatus.STALE.name() : ConnectionStatus.CONNECTED.name(),
                 snapshot.capturedAt(),
@@ -302,10 +327,7 @@ public class AgentSnapshotService {
 
     private ContainerInventoryResponse toContainerInventory(
             ReceivedAgentSnapshot received) {
-        boolean stale = isSnapshotStale(
-                received.snapshot().capturedAt(),
-                received.receivedAt(),
-                clock.instant());
+        boolean stale = isSnapshotStale(received);
         return new ContainerInventoryResponse(
                 stale
                         ? ConnectionStatus.STALE.name()
@@ -325,6 +347,19 @@ public class AgentSnapshotService {
                 || receivedAt == null
                 || isStale(capturedAt, now)
                 || isStale(receivedAt, now);
+    }
+
+    private boolean isSnapshotStale(ReceivedAgentSnapshot received) {
+        return isSnapshotStale(received, clock.instant());
+    }
+
+    private boolean isSnapshotStale(
+            ReceivedAgentSnapshot received,
+            Instant now) {
+        return isSnapshotStale(
+                received.snapshot().capturedAt(),
+                received.receivedAt(),
+                now);
     }
 
     private boolean isStale(Instant timestamp, Instant now) {

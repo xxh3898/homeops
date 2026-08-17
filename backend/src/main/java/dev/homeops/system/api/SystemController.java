@@ -3,6 +3,7 @@ package dev.homeops.system.api;
 import dev.homeops.agent.AgentSnapshotService;
 import dev.homeops.metrics.MetricHistoryService;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -35,5 +36,10 @@ public class SystemController {
     @GetMapping("/containers")
     public ContainerInventoryResponse containers() {
         return agentSnapshotService.containerInventory();
+    }
+
+    @GetMapping("/containers/{id}")
+    public ContainerDetailResponse containerDetail(@PathVariable String id) {
+        return agentSnapshotService.containerDetail(id);
     }
 }

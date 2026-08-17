@@ -1,6 +1,7 @@
 import { Activity, Boxes, House, Settings } from 'lucide-react'
 import { NavLink, Route, Routes } from 'react-router'
 import { ContainersPage } from './pages/ContainersPage'
+import { ContainerDetailPage } from './pages/ContainerDetailPage'
 import { OverviewPage } from './pages/OverviewPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
 import { ActivityPage } from './pages/ActivityPage'
@@ -31,6 +32,7 @@ export function App() {
           <Routes>
             <Route path="/" element={<OverviewPage />} />
             <Route path="/containers" element={<ContainersPage />} />
+            <Route path="/containers/:id" element={<ContainerDetailPage />} />
             <Route path="/activity" element={<ActivityPage />} />
             <Route
               path="/settings"

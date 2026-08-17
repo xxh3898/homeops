@@ -20,15 +20,22 @@ import dev.homeops.agent.persistence.AgentStatusStore;
 import dev.homeops.agent.persistence.HostMetricAggregateRepository;
 import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
 import dev.homeops.common.AgentSnapshotRejectedException;
+import dev.homeops.system.AmbiguousContainerIdentifierException;
+import dev.homeops.system.ContainerInventoryUnavailableException;
+import dev.homeops.system.ContainerNotFoundException;
+import dev.homeops.system.InvalidContainerIdentifierException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -36,6 +43,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class AgentSnapshotServiceTest {
 
     private static final Instant NOW = Instant.parse("2026-08-04T12:00:00Z");
+    private static final String FULL_CONTAINER_ID =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    private static final String SHORT_CONTAINER_ID = "0123456789ab";
 
     @Mock
     private AgentStatusRepository agentStatusRepository;
@@ -308,6 +318,125 @@ class AgentSnapshotServiceTest {
     }
 
     @Test
+    void should_rejectContainerDetailAsUnavailable_when_latestSnapshotIsMissing() {
+        assertThatThrownBy(() -> service.containerDetail(SHORT_CONTAINER_ID))
+                .isInstanceOf(ContainerInventoryUnavailableException.class)
+                .hasMessage("Container inventory is unavailable");
+    }
+
+    @Test
+    void should_returnFreshContainerDetail_when_fullIdentifierHasSinglePrefixMatch() {
+        Instant capturedAt = NOW.minusSeconds(1);
+        accept(snapshotWithContainers(
+                "10000000-0000-0000-0000-000000000040",
+                capturedAt,
+                List.of(container(FULL_CONTAINER_ID, "example-api", capturedAt))));
+
+        var detail = service.containerDetail(SHORT_CONTAINER_ID);
+
+        assertThat(detail.agentStatus()).isEqualTo("CONNECTED");
+        assertThat(detail.lastUpdatedAt()).isEqualTo(capturedAt);
+        assertThat(detail.stale()).isFalse();
+        assertThat(detail.container().id()).isEqualTo(SHORT_CONTAINER_ID);
+        assertThat(detail.container().id()).doesNotContain(FULL_CONTAINER_ID);
+        assertThat(detail.container().name()).isEqualTo("example-api");
+    }
+
+    @Test
+    void should_returnStaleContainerDetail_when_singleMatchComesFromStaleSnapshot() {
+        Instant capturedAt = NOW.minus(Duration.ofMinutes(4));
+        accept(snapshotWithContainers(
+                "10000000-0000-0000-0000-000000000041",
+                capturedAt,
+                List.of(container(FULL_CONTAINER_ID, "example-api", capturedAt))));
+
+        var detail = service.containerDetail(SHORT_CONTAINER_ID);
+
+        assertThat(detail.agentStatus()).isEqualTo("STALE");
+        assertThat(detail.lastUpdatedAt()).isEqualTo(capturedAt);
+        assertThat(detail.stale()).isTrue();
+        assertThat(detail.container().state()).isEqualTo("RUNNING");
+    }
+
+    @Test
+    void should_rejectContainerDetailAsNotFound_when_prefixHasNoMatch() {
+        Instant capturedAt = NOW.minusSeconds(1);
+        accept(snapshotWithContainers(
+                "10000000-0000-0000-0000-000000000042",
+                capturedAt,
+                List.of(container(FULL_CONTAINER_ID, "example-api", capturedAt))));
+
+        assertThatThrownBy(() -> service.containerDetail("ffffffffffff"))
+                .isInstanceOf(ContainerNotFoundException.class)
+                .hasMessage("Container is not present in the latest reported snapshot")
+                .hasMessageNotContaining(FULL_CONTAINER_ID);
+    }
+
+    @Test
+    void should_rejectContainerDetailAsAmbiguous_when_fullIdentifiersShareShortPrefix() {
+        String first = "aaaaaaaaaaaa11111111111111111111";
+        String second = "aaaaaaaaaaaa22222222222222222222";
+        Instant capturedAt = NOW.minusSeconds(1);
+        accept(snapshotWithContainers(
+                "10000000-0000-0000-0000-000000000043",
+                capturedAt,
+                List.of(
+                        container(first, "first-api", capturedAt),
+                        container(second, "second-api", capturedAt))));
+
+        assertThatThrownBy(() -> service.containerDetail("aaaaaaaaaaaa"))
+                .isInstanceOf(AmbiguousContainerIdentifierException.class)
+                .hasMessage("Container identifier matches multiple reported containers")
+                .hasMessageNotContaining(first)
+                .hasMessageNotContaining(second);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "0123456789a",
+        "0123456789abc",
+        "0123456789AB",
+        "0123456789ag",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    })
+    void should_rejectContainerDetail_when_identifierSyntaxIsOutsideBound(String identifier) {
+        Instant capturedAt = NOW.minusSeconds(1);
+        accept(snapshotWithContainers(
+                "10000000-0000-0000-0000-000000000044",
+                capturedAt,
+                List.of(container(FULL_CONTAINER_ID, "example-api", capturedAt))));
+
+        assertThatThrownBy(() -> service.containerDetail(identifier))
+                .isInstanceOf(InvalidContainerIdentifierException.class)
+                .hasMessage("Container identifier is invalid")
+                .hasMessageNotContaining(identifier);
+    }
+
+    @Test
+    void should_useChronologicallyNewestSnapshot_when_olderSnapshotArrivesLater() {
+        Instant olderCapturedAt = NOW.minusSeconds(3);
+        Instant newerCapturedAt = NOW.minusSeconds(1);
+        String oldIdentifier = "11111111111111111111111111111111";
+        String newIdentifier = "22222222222222222222222222222222";
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any()))
+                .thenReturn(Optional.empty());
+
+        service.accept(snapshotWithContainers(
+                "10000000-0000-0000-0000-000000000045",
+                newerCapturedAt,
+                List.of(container(newIdentifier, "new-api", newerCapturedAt))));
+        service.accept(snapshotWithContainers(
+                "10000000-0000-0000-0000-000000000046",
+                olderCapturedAt,
+                List.of(container(oldIdentifier, "old-api", olderCapturedAt))));
+
+        assertThat(service.containerDetail("222222222222").container().name())
+                .isEqualTo("new-api");
+        assertThatThrownBy(() -> service.containerDetail("111111111111"))
+                .isInstanceOf(ContainerNotFoundException.class);
+    }
+
+    @Test
     void should_markDelayedSnapshotStale_when_captureTimeExceedsFreshnessWindow() {
         AgentSnapshotRequest request = AgentSnapshotFixtures.snapshot(
                 UUID.fromString("10000000-0000-0000-0000-000000000008"),
@@ -391,5 +520,52 @@ class AgentSnapshotServiceTest {
         return new AgentSnapshotRequest(
                 fixture.snapshotId(), fixture.agentId(), version, fixture.capturedAt(),
                 fixture.host(), fixture.containers());
+    }
+
+    private void accept(AgentSnapshotRequest request) {
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any()))
+                .thenReturn(Optional.empty());
+        service.accept(request);
+    }
+
+    private static AgentSnapshotRequest snapshotWithContainers(
+            String snapshotId,
+            Instant capturedAt,
+            List<AgentSnapshotRequest.ContainerSnapshot> containers) {
+        AgentSnapshotRequest fixture = AgentSnapshotFixtures.snapshot(
+                UUID.fromString(snapshotId),
+                capturedAt);
+        return new AgentSnapshotRequest(
+                fixture.snapshotId(),
+                fixture.agentId(),
+                fixture.agentVersion(),
+                fixture.capturedAt(),
+                fixture.host(),
+                containers);
+    }
+
+    private static AgentSnapshotRequest.ContainerSnapshot container(
+            String identifier,
+            String name,
+            Instant capturedAt) {
+        AgentSnapshotRequest.ContainerSnapshot fixture = AgentSnapshotFixtures
+                .snapshot(UUID.fromString("10000000-0000-0000-0000-000000000099"), capturedAt)
+                .containers()
+                .getFirst();
+        return new AgentSnapshotRequest.ContainerSnapshot(
+                identifier,
+                name,
+                fixture.composeProject(),
+                fixture.image(),
+                fixture.state(),
+                fixture.health(),
+                fixture.status(),
+                fixture.startedAt(),
+                fixture.restartCount(),
+                fixture.cpuUsagePercent(),
+                fixture.memoryUsageBytes(),
+                fixture.memoryLimitBytes(),
+                fixture.ports(),
+                fixture.managed());
     }
 }

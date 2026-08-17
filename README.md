@@ -8,7 +8,7 @@ HomeOps는 Docker Desktop을 실행하는 Apple Silicon Mac용 모바일 우선 
 
 HomeOps는 정식 출시 전 소프트웨어입니다. 현재 production에서는 읽기 전용 호스트 메트릭과 컨테이너 인벤토리, HMAC 인증 배포·백업 결과 수집, 허용 목록 기반 HTTP 서비스 점검과 인시던트 이력, 페이지네이션을 적용한 모바일 활동 타임라인이 활성화되어 있습니다. 새 설치에서 secret 또는 정확한 origin 허용 목록이 비어 있으면 해당 입력은 계속 fail closed합니다.
 
-읽기 전용 Phase 1은 일부만 완료됐습니다. CPU, memory, disk의 bounded metric history API/UI는 구현됐지만 별도 container detail과 redacted tail log는 아직 없으며, 알림과 제한된 컨테이너 제어도 후속 마일스톤입니다. 라벨 허용 목록, 작업 잠금, 멱등성, 감사 제어가 완성되기 전까지 컨테이너 시작·중지·재시작은 의도적으로 제외합니다.
+읽기 전용 Phase 1은 일부만 완료됐습니다. CPU, memory, disk의 bounded metric history와 latest Agent snapshot 기반 Container Detail API/UI는 구현됐지만 bounded/redacted tail log는 아직 없으며, 알림과 제한된 컨테이너 제어도 후속 마일스톤입니다. 라벨 허용 목록, 작업 잠금, 멱등성, 감사 제어가 완성되기 전까지 컨테이너 시작·중지·재시작은 의도적으로 제외합니다.
 
 macOS Agent는 production에서 운영 중입니다. 변경 불가능한 GHCR artifact, 제한된 전용 SSH key, `current`/`previous` rollback과 fresh snapshot proof를 사용하며 live rollback·roll-forward acceptance도 완료했습니다. `main`의 full validation과 application release는 유지하지만 persistent Agent artifact는 Agent release-affecting path가 바뀔 때만 발행됩니다. 현재 `HOMEOPS_AGENT_ROLLOUT_ENABLED=false`는 검증된 capability를 미완료로 돌리는 값이 아니라 자동 CI rollout을 닫아 둔 operational kill switch입니다. 향후 마일스톤을 지원되는 동작으로 보기 전에 [구현 로드맵](docs/roadmap.md)을 확인하세요.
 
@@ -60,6 +60,7 @@ Linux agent, Kubernetes, 인터넷 공개, 다중 사용자 계정, 웹 터미�
 - `GET /api/v1/system/metrics/history`: `1h`, `6h`, `24h`, `7d`로 범위를 제한한 host metric aggregate 제공
 - `GET /api/v1/agent/status`
 - `GET /api/v1/containers`: Agent freshness metadata와 읽기 전용 인벤토리 제공
+- `GET /api/v1/containers/{id}`: 최신 Agent snapshot 안의 12자리 bounded identifier 하나에 대한 freshness-aware 읽기 전용 detail 제공
 - `GET /api/v1/activity`: 범위가 제한된 안정 cursor 제공
 - `GET /api/v1/services`, `/status`, `/incidents`
 - `POST /api/v1/services`: 관리자 인증과 CSRF로 보호
