@@ -6,6 +6,8 @@ import static org.mockito.Mockito.mock;
 import dev.homeops.agent.AgentSnapshotService;
 import dev.homeops.agent.ProcessedAgentSnapshotRetentionJob;
 import dev.homeops.agent.config.HomeOpsAgentProperties;
+import dev.homeops.agent.logs.ContainerLogBroker;
+import dev.homeops.agent.logs.ContainerLogRedactor;
 import dev.homeops.agent.persistence.AgentStatusRepository;
 import dev.homeops.agent.persistence.AgentStatusStore;
 import dev.homeops.agent.persistence.AgentActivityStore;
@@ -57,6 +59,8 @@ class CoreSpringWiringTest {
                     () -> mock(JdbcTemplate.class));
             context.register(
                     AgentSnapshotService.class,
+                    ContainerLogRedactor.class,
+                    ContainerLogBroker.class,
                     ProcessedAgentSnapshotRetentionJob.class,
                     HostMetricRetentionJob.class,
                     HostMetricHistoryStore.class,
@@ -65,6 +69,7 @@ class CoreSpringWiringTest {
             context.refresh();
 
             assertThat(context.getBean(AgentSnapshotService.class)).isNotNull();
+            assertThat(context.getBean(ContainerLogBroker.class)).isNotNull();
             assertThat(context.getBean(ProcessedAgentSnapshotRetentionJob.class))
                     .isNotNull();
             assertThat(context.getBean(HostMetricRetentionJob.class)).isNotNull();

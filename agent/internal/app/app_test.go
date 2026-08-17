@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -11,8 +12,10 @@ import (
 	"time"
 
 	"github.com/xxh3898/homeops/agent/internal/config"
+	"github.com/xxh3898/homeops/agent/internal/containerlog"
 	"github.com/xxh3898/homeops/agent/internal/snapshot"
 	spoolpkg "github.com/xxh3898/homeops/agent/internal/spool"
+	"github.com/xxh3898/homeops/agent/internal/transport"
 )
 
 func TestNewUUIDReturnsRFC4122Shape(t *testing.T) {
@@ -135,6 +138,106 @@ func TestCollectAndSendContinuesAfterPermanentRejectionsAreQuarantined(
 	}
 }
 
+func TestCollectAndSendAdvertisesContainerLogCapability(t *testing.T) {
+	t.Parallel()
+	snapshotTransport := &recordingTransport{}
+	application := &App{
+		config: config.Config{
+			AgentID:       "local-mac",
+			MaxContainers: 128,
+		},
+		version:   "1111111111111111111111111111111111111111",
+		host:      &recordingHostCollector{},
+		docker:    &recordingDockerCollector{},
+		transport: snapshotTransport,
+		spool:     &recordingSpool{},
+		logger:    discardLogger(),
+	}
+
+	if err := application.collectAndSend(context.Background()); err != nil {
+		t.Fatalf("collectAndSend returned an error: %v", err)
+	}
+	var captured snapshot.Snapshot
+	if err := json.Unmarshal(snapshotTransport.lastPayload, &captured); err != nil {
+		t.Fatalf("decode snapshot payload: %v", err)
+	}
+	if !captured.SupportsContainerLogs {
+		t.Fatal("supportsContainerLogs = false, want true")
+	}
+}
+
+func TestExecuteContainerLogWorkRedactsBeforeResultTransport(t *testing.T) {
+	t.Parallel()
+	application := &App{
+		config: config.Config{MaxContainers: 128},
+		logReader: &recordingLogReader{output: containerlog.Output{
+			Lines: []containerlog.Line{{
+				Stream:  containerlog.StreamStdout,
+				Message: "token=synthetic-token",
+			}},
+		}},
+	}
+	work := containerlog.Work{
+		RequestID:   "10000000-0000-4000-8000-000000000001",
+		ContainerID: "0123456789ab",
+		Tail:        50,
+	}
+
+	result := application.executeContainerLogWork(context.Background(), work)
+
+	if result.Status != containerlog.StatusSuccess || len(result.Lines) != 1 ||
+		result.Lines[0].Message != "token=[REDACTED]" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestRunKeepsSnapshotLoopAliveWhenOldAPIReturns404(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Millisecond)
+	defer cancel()
+	snapshotTransport := &recordingTransport{}
+	logTransport := &recordingLogTransport{
+		nextError: transport.StatusError{StatusCode: 404},
+	}
+	application := &App{
+		config: config.Config{
+			AgentID:       "local-mac",
+			Interval:      5 * time.Millisecond,
+			MaxContainers: 128,
+		},
+		version:      "1111111111111111111111111111111111111111",
+		host:         &recordingHostCollector{},
+		docker:       &recordingDockerCollector{},
+		transport:    snapshotTransport,
+		logReader:    &recordingLogReader{},
+		logTransport: logTransport,
+		spool:        &recordingSpool{},
+		logger:       discardLogger(),
+	}
+
+	if err := application.Run(ctx); err != nil {
+		t.Fatalf("Run returned an error: %v", err)
+	}
+	if snapshotTransport.sendCalls < 2 {
+		t.Fatalf("snapshot send calls = %d, want at least 2", snapshotTransport.sendCalls)
+	}
+	if logTransport.nextCalls != 1 {
+		t.Fatalf("log poll calls = %d, want 1 bounded old-API attempt", logTransport.nextCalls)
+	}
+}
+
+func TestContainerLogBackoffClassifiesOldAPIAsUnsupported(t *testing.T) {
+	t.Parallel()
+	if delay := containerLogBackoff(
+		transport.StatusError{StatusCode: 405}); delay != unsupportedLogAPIDelay {
+		t.Fatalf("405 backoff = %s, want %s", delay, unsupportedLogAPIDelay)
+	}
+	if delay := containerLogBackoff(
+		errors.New("network")); delay != transientLogErrorDelay {
+		t.Fatalf("network backoff = %s, want %s", delay, transientLogErrorDelay)
+	}
+}
+
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -163,16 +266,51 @@ func (collector *recordingDockerCollector) Containers(
 }
 
 type recordingTransport struct {
-	sendCalls int
-	sendError error
+	sendCalls   int
+	sendError   error
+	lastPayload []byte
 }
 
 func (transport *recordingTransport) Send(
-	context.Context,
-	[]byte,
+	_ context.Context,
+	payload []byte,
 ) error {
 	transport.sendCalls++
+	transport.lastPayload = append([]byte(nil), payload...)
 	return transport.sendError
+}
+
+type recordingLogReader struct {
+	output containerlog.Output
+	err    error
+}
+
+func (reader *recordingLogReader) ContainerLogs(
+	context.Context,
+	string,
+	int,
+	int,
+) (containerlog.Output, error) {
+	return reader.output, reader.err
+}
+
+type recordingLogTransport struct {
+	nextCalls int
+	nextError error
+}
+
+func (logTransport *recordingLogTransport) NextContainerLogWork(
+	context.Context,
+) (*containerlog.Work, error) {
+	logTransport.nextCalls++
+	return nil, logTransport.nextError
+}
+
+func (logTransport *recordingLogTransport) SendContainerLogResult(
+	context.Context,
+	containerlog.Result,
+) error {
+	return nil
 }
 
 type recordingSpool struct {

@@ -5,15 +5,18 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/xxh3898/homeops/agent/internal/collector"
 	"github.com/xxh3898/homeops/agent/internal/config"
+	"github.com/xxh3898/homeops/agent/internal/containerlog"
 	"github.com/xxh3898/homeops/agent/internal/docker"
 	"github.com/xxh3898/homeops/agent/internal/snapshot"
 	"github.com/xxh3898/homeops/agent/internal/spool"
@@ -21,13 +24,15 @@ import (
 )
 
 type App struct {
-	config    config.Config
-	version   string
-	host      hostCollector
-	docker    dockerCollector
-	transport snapshotTransport
-	spool     snapshotSpool
-	logger    *slog.Logger
+	config       config.Config
+	version      string
+	host         hostCollector
+	docker       dockerCollector
+	transport    snapshotTransport
+	logReader    containerLogReader
+	logTransport containerLogTransport
+	spool        snapshotSpool
+	logger       *slog.Logger
 }
 
 type hostCollector interface {
@@ -42,12 +47,27 @@ type snapshotTransport interface {
 	Send(context.Context, []byte) error
 }
 
+type containerLogReader interface {
+	ContainerLogs(context.Context, string, int, int) (containerlog.Output, error)
+}
+
+type containerLogTransport interface {
+	NextContainerLogWork(context.Context) (*containerlog.Work, error)
+	SendContainerLogResult(context.Context, containerlog.Result) error
+}
+
 type snapshotSpool interface {
 	Drain(func([]byte) error) (spool.DrainResult, error)
 	Store(string, []byte) error
 }
 
 const collectionTimeout = 20 * time.Second
+
+const (
+	unsupportedLogAPIDelay = 30 * time.Second
+	transientLogErrorDelay = time.Second
+	emptyLogPollDelay      = 250 * time.Millisecond
+)
 
 var fullSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
@@ -73,17 +93,33 @@ func New(
 		return nil, err
 	}
 	return &App{
-		config:    config,
-		version:   version,
-		host:      collector.NewHostCollector(collector.ExecRunner{}),
-		docker:    dockerClient,
-		transport: transportClient,
-		spool:     spoolStore,
-		logger:    logger,
+		config:       config,
+		version:      version,
+		host:         collector.NewHostCollector(collector.ExecRunner{}),
+		docker:       dockerClient,
+		transport:    transportClient,
+		logReader:    dockerClient,
+		logTransport: transportClient,
+		spool:        spoolStore,
+		logger:       logger,
 	}, nil
 }
 
 func (app *App) Run(ctx context.Context) error {
+	var workers sync.WaitGroup
+	if app.logReader != nil && app.logTransport != nil {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			app.runContainerLogWorker(ctx)
+		}()
+	}
+	err := app.runSnapshotLoop(ctx)
+	workers.Wait()
+	return err
+}
+
+func (app *App) runSnapshotLoop(ctx context.Context) error {
 	if err := app.collectAndSend(ctx); err != nil {
 		app.logger.Warn("initial snapshot failed", "error", err)
 	}
@@ -139,12 +175,13 @@ func (app *App) collectAndSend(ctx context.Context) error {
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	payload, err := json.Marshal(snapshot.Snapshot{
-		SnapshotID:   snapshotID,
-		AgentID:      app.config.AgentID,
-		AgentVersion: app.version,
-		CapturedAt:   now,
-		Host:         host,
-		Containers:   containers,
+		SnapshotID:            snapshotID,
+		AgentID:               app.config.AgentID,
+		AgentVersion:          app.version,
+		CapturedAt:            now,
+		SupportsContainerLogs: true,
+		Host:                  host,
+		Containers:            containers,
 	})
 	if err != nil {
 		return fmt.Errorf("encode Agent snapshot: %w", err)
@@ -164,6 +201,106 @@ func (app *App) collectAndSend(ctx context.Context) error {
 		return fmt.Errorf("queue undelivered snapshot: %w", err)
 	}
 	return errorsSentinel{}
+}
+
+func (app *App) runContainerLogWorker(ctx context.Context) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		work, err := app.logTransport.NextContainerLogWork(ctx)
+		if err != nil {
+			app.logger.Info("container log work poll unavailable")
+			if !waitFor(ctx, containerLogBackoff(err)) {
+				return
+			}
+			continue
+		}
+		if work == nil {
+			if !waitFor(ctx, emptyLogPollDelay) {
+				return
+			}
+			continue
+		}
+		result := app.executeContainerLogWork(ctx, *work)
+		if err := app.logTransport.SendContainerLogResult(ctx, result); err != nil {
+			app.logger.Info("container log result delivery unavailable")
+			if !waitFor(ctx, containerLogBackoff(err)) {
+				return
+			}
+		}
+	}
+}
+
+func (app *App) executeContainerLogWork(
+	ctx context.Context,
+	work containerlog.Work,
+) containerlog.Result {
+	result := containerlog.Result{
+		RequestID: work.RequestID,
+		Status:    containerlog.StatusInvalidRequest,
+		Lines:     []containerlog.Line{},
+	}
+	if err := work.Validate(); err != nil {
+		return result
+	}
+	output, err := app.logReader.ContainerLogs(
+		ctx,
+		work.ContainerID,
+		work.Tail,
+		app.config.MaxContainers)
+	if err != nil {
+		var readError containerlog.ReadError
+		if errors.As(err, &readError) {
+			switch readError.Kind {
+			case containerlog.ReadNotFound:
+				result.Status = containerlog.StatusNotFound
+			case containerlog.ReadAmbiguous:
+				result.Status = containerlog.StatusAmbiguous
+			case containerlog.ReadNotAllowed:
+				result.Status = containerlog.StatusNotAllowed
+			default:
+				result.Status = containerlog.StatusUnavailable
+			}
+		} else {
+			result.Status = containerlog.StatusUnavailable
+		}
+		return result
+	}
+	result.Status = containerlog.StatusSuccess
+	result.Truncated = output.Truncated
+	messageBytes := 0
+	for _, line := range output.Lines {
+		message := containerlog.NormalizeAndRedact([]byte(line.Message))
+		if messageBytes+len(message) > containerlog.MaximumMessageBytes {
+			result.Truncated = true
+			continue
+		}
+		messageBytes += len(message)
+		line.Message = message
+		result.Lines = append(result.Lines, line)
+	}
+	return result
+}
+
+func containerLogBackoff(err error) time.Duration {
+	var statusError transport.StatusError
+	if errors.As(err, &statusError) &&
+		(statusError.StatusCode == 404 || statusError.StatusCode == 405) {
+		return unsupportedLogAPIDelay
+	}
+	return transientLogErrorDelay
+}
+
+func waitFor(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func writeVersionProof(path string, version string, sentAt time.Time) error {

@@ -8,6 +8,9 @@ import dev.homeops.agent.api.AgentStatusResponse;
 import dev.homeops.agent.api.AgentStatusResponse.ConnectionStatus;
 import dev.homeops.agent.config.HomeOpsAgentProperties;
 import dev.homeops.agent.domain.ReceivedAgentSnapshot;
+import dev.homeops.agent.logs.ContainerLogCapabilityUnavailableException;
+import dev.homeops.agent.logs.ContainerLogEligibility;
+import dev.homeops.agent.logs.ContainerLogsNotAllowedException;
 import dev.homeops.agent.persistence.AgentActivityStore;
 import dev.homeops.agent.persistence.AgentStatusEntity;
 import dev.homeops.agent.persistence.AgentStatusRepository;
@@ -226,7 +229,34 @@ public class AgentSnapshotService {
                         : ConnectionStatus.CONNECTED.name(),
                 received.snapshot().capturedAt(),
                 stale,
+                received.snapshot().supportsContainerLogs(),
                 ContainerView.from(matches.getFirst()));
+    }
+
+    public ContainerLogEligibility authorizeContainerLogs(String rawIdentifier) {
+        ReceivedAgentSnapshot received = latest()
+                .orElseThrow(ContainerInventoryUnavailableException::new);
+        ContainerIdentifier identifier = ContainerIdentifier.parse(rawIdentifier);
+        if (isSnapshotStale(received)
+                || !received.snapshot().supportsContainerLogs()) {
+            throw new ContainerLogCapabilityUnavailableException();
+        }
+        List<AgentSnapshotRequest.ContainerSnapshot> matches = received.snapshot()
+                .containers()
+                .stream()
+                .filter(container -> identifier.matches(container.id()))
+                .limit(2)
+                .toList();
+        if (matches.isEmpty()) {
+            throw new ContainerNotFoundException();
+        }
+        if (matches.size() > 1) {
+            throw new AmbiguousContainerIdentifierException();
+        }
+        if (!matches.getFirst().logsAllowed()) {
+            throw new ContainerLogsNotAllowedException();
+        }
+        return new ContainerLogEligibility(identifier.value());
     }
 
     private void validate(AgentSnapshotRequest request, Instant receivedAt) {
@@ -368,7 +398,8 @@ public class AgentSnapshotService {
 
     private static AgentSnapshotRequest canonicalize(AgentSnapshotRequest request) {
         return new AgentSnapshotRequest(request.snapshotId(), request.agentId(), request.agentVersion(),
-                PostgresqlTimestamp.canonicalize(request.capturedAt()), request.host(), request.containers());
+                PostgresqlTimestamp.canonicalize(request.capturedAt()), request.supportsContainerLogs(),
+                request.host(), request.containers());
     }
 
     private boolean sameDatabaseTimestamp(Instant left, Instant right) {

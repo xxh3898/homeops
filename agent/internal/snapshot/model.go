@@ -3,12 +3,13 @@ package snapshot
 import "time"
 
 type Snapshot struct {
-	SnapshotID   string      `json:"snapshotId"`
-	AgentID      string      `json:"agentId"`
-	AgentVersion string      `json:"agentVersion"`
-	CapturedAt   time.Time   `json:"capturedAt"`
-	Host         Host        `json:"host"`
-	Containers   []Container `json:"containers"`
+	SnapshotID            string      `json:"snapshotId"`
+	AgentID               string      `json:"agentId"`
+	AgentVersion          string      `json:"agentVersion"`
+	CapturedAt            time.Time   `json:"capturedAt"`
+	SupportsContainerLogs bool        `json:"supportsContainerLogs"`
+	Host                  Host        `json:"host"`
+	Containers            []Container `json:"containers"`
 }
 
 type Host struct {
@@ -35,6 +36,7 @@ type Container struct {
 	MemoryLimit     *uint64         `json:"memoryLimitBytes,omitempty"`
 	Ports           []ContainerPort `json:"ports"`
 	Managed         bool            `json:"managed"`
+	LogsAllowed     bool            `json:"logsAllowed"`
 }
 
 type ContainerPort struct {

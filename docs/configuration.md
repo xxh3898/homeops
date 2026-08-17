@@ -63,7 +63,7 @@ API는 구성한 time window 안의 request만 받습니다. secret을 command l
 | 키 | 필수 여부 | secret | 제약 |
 |---|---:|---:|---|
 | `HOMEOPS_AGENT_ID` | 예 | 아니요 | API configuration과 정확히 일치해야 함 |
-| `HOMEOPS_AGENT_API_URL` | 예 | 민감 endpoint | 고정 snapshot path를 포함하는 HTTPS loopback URL. user info, query, fragment 불가 |
+| `HOMEOPS_AGENT_API_URL` | 예 | 민감 endpoint | 고정 snapshot path를 포함하는 HTTPS loopback URL. user info, query, fragment 불가. Agent는 검증된 scheme/host/port에서 compile-time fixed log work/result path를 파생하며 별도 endpoint 환경변수를 받지 않음 |
 | `HOMEOPS_AGENT_CLIENT_CERT` | 예 | 민감 path | absolute client certificate path |
 | `HOMEOPS_AGENT_CLIENT_KEY` | 예 | 예/path | absolute private key path |
 | `HOMEOPS_AGENT_CA_CERT` | 예 | 민감 path | absolute server CA path |
@@ -94,8 +94,11 @@ production directory에는 `smoke.origin`도 있습니다. path, query, fragment
 
 - `com.docker.compose.project`
 - `homeops.managed`
+- `homeops.logs`
 
 `homeops.managed=true`는 이 마일스톤에서 표시용입니다. control endpoint는 없습니다. 이후 control 마일스톤에서는 live label을 다시 읽고 추가 project allowlist, operation lock, idempotency key, confirmation policy, audit record를 강제해야 합니다.
+
+`homeops.logs=true`는 future Container Logs disclosure를 위한 container별 exact opt-in입니다. Agent root capability와 fresh snapshot이 함께 있어야 하며 stale snapshot은 authority가 아닙니다. 현재 foundation PR에는 관리자용 public log API/UI가 없으므로 이 label만으로 기능이 활성화되지는 않습니다. Agent는 raw log를 snapshot spool, file 또는 DB에 저장하지 않습니다.
 
 ## GitHub repository 구성
 

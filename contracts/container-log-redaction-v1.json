@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "vectors": [
+    {
+      "name": "plain message",
+      "input": "service started normally",
+      "expected": "service started normally"
+    },
+    {
+      "name": "password assignment",
+      "input": "password=synthetic-password",
+      "expected": "password=[REDACTED]"
+    },
+    {
+      "name": "case insensitive passwd",
+      "input": "PASSWD: synthetic-passwd",
+      "expected": "PASSWD: [REDACTED]"
+    },
+    {
+      "name": "api key query value",
+      "input": "request api_key=synthetic-key&next=/status",
+      "expected": "request api_key=[REDACTED]&next=/status"
+    },
+    {
+      "name": "quoted json secret field",
+      "input": "{\"secret\":\"synthetic-json-secret\",\"event\":\"ignored-after-secret\"}",
+      "expected": "{\"secret\":[REDACTED]"
+    },
+    {
+      "name": "authorization header",
+      "input": "authorization: Bearer synthetic-authorization",
+      "expected": "authorization: [REDACTED]"
+    },
+    {
+      "name": "set cookie header",
+      "input": "Set-Cookie: session=synthetic-cookie; Path=/; Secure",
+      "expected": "Set-Cookie: [REDACTED]"
+    },
+    {
+      "name": "standalone bearer",
+      "input": "upstream returned Bearer synthetic-bearer-value",
+      "expected": "upstream returned Bearer [REDACTED]"
+    },
+    {
+      "name": "standalone basic",
+      "input": "proxy Basic c3ludGhldGljOnZhbHVl",
+      "expected": "proxy Basic [REDACTED]"
+    },
+    {
+      "name": "jwt shaped value",
+      "input": "jwt eyJzeW50aGV0aWM.eyJub3QtcmVhbC1kYXRh.c2lnbmF0dXJlLWZpeHR1cmU",
+      "expected": "jwt [REDACTED]"
+    },
+    {
+      "name": "multiple key values",
+      "input": "token=synthetic-token credential='synthetic-credential'",
+      "expected": "token=[REDACTED] credential=[REDACTED]"
+    },
+    {
+      "name": "private key field",
+      "input": "private_key: synthetic-private-key",
+      "expected": "private_key: [REDACTED]"
+    },
+    {
+      "name": "ansi and controls",
+      "input": "\u001b[31msecret=synthetic-secret\u001b[0m\u0000\u202e",
+      "expected": "secret=[REDACTED]"
+    }
+  ]
+}

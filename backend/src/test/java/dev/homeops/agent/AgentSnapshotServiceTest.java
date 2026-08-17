@@ -13,6 +13,8 @@ import static org.mockito.Mockito.when;
 import dev.homeops.agent.api.AgentSnapshotRequest;
 import dev.homeops.agent.api.AgentStatusResponse.ConnectionStatus;
 import dev.homeops.agent.config.HomeOpsAgentProperties;
+import dev.homeops.agent.logs.ContainerLogCapabilityUnavailableException;
+import dev.homeops.agent.logs.ContainerLogsNotAllowedException;
 import dev.homeops.agent.persistence.AgentStatusEntity;
 import dev.homeops.agent.persistence.AgentActivityStore;
 import dev.homeops.agent.persistence.AgentStatusRepository;
@@ -340,6 +342,94 @@ class AgentSnapshotServiceTest {
         assertThat(detail.container().id()).isEqualTo(SHORT_CONTAINER_ID);
         assertThat(detail.container().id()).doesNotContain(FULL_CONTAINER_ID);
         assertThat(detail.container().name()).isEqualTo("example-api");
+        assertThat(detail.supportsContainerLogs()).isFalse();
+        assertThat(detail.container().logsAllowed()).isFalse();
+    }
+
+    @Test
+    void should_authorizeContainerLogs_when_capabilityOptInAndFreshnessArePresent() {
+        Instant capturedAt = NOW.minusSeconds(1);
+        accept(snapshotWithCapability(
+                "10000000-0000-0000-0000-000000000047",
+                capturedAt,
+                true,
+                List.of(container(FULL_CONTAINER_ID, "example-api", capturedAt, true))));
+
+        var eligibility = service.authorizeContainerLogs(SHORT_CONTAINER_ID);
+        var detail = service.containerDetail(SHORT_CONTAINER_ID);
+
+        assertThat(eligibility.containerId()).isEqualTo(SHORT_CONTAINER_ID);
+        assertThat(detail.supportsContainerLogs()).isTrue();
+        assertThat(detail.container().logsAllowed()).isTrue();
+    }
+
+    @Test
+    void should_failClosedForContainerLogs_when_snapshotIsStale() {
+        Instant capturedAt = NOW.minus(Duration.ofMinutes(4));
+        accept(snapshotWithCapability(
+                "10000000-0000-0000-0000-000000000048",
+                capturedAt,
+                true,
+                List.of(container(FULL_CONTAINER_ID, "example-api", capturedAt, true))));
+
+        assertThatThrownBy(() -> service.authorizeContainerLogs(SHORT_CONTAINER_ID))
+                .isInstanceOf(ContainerLogCapabilityUnavailableException.class)
+                .hasMessageNotContaining(FULL_CONTAINER_ID);
+    }
+
+    @Test
+    void should_failClosedForContainerLogs_when_oldAgentOmitsCapability() {
+        Instant capturedAt = NOW.minusSeconds(1);
+        accept(snapshotWithCapability(
+                "10000000-0000-0000-0000-000000000049",
+                capturedAt,
+                false,
+                List.of(container(FULL_CONTAINER_ID, "example-api", capturedAt, true))));
+
+        assertThat(service.containerInventory().containers()).hasSize(1);
+        assertThat(service.containerDetail(SHORT_CONTAINER_ID).container().name())
+                .isEqualTo("example-api");
+        assertThatThrownBy(() -> service.authorizeContainerLogs(SHORT_CONTAINER_ID))
+                .isInstanceOf(ContainerLogCapabilityUnavailableException.class);
+    }
+
+    @Test
+    void should_revokeContainerLogCapability_when_oldAgentSnapshotReturnsAfterRollback() {
+        Instant firstCapturedAt = NOW.minusSeconds(2);
+        Instant rollbackCapturedAt = NOW.minusSeconds(1);
+        accept(snapshotWithCapability(
+                "10000000-0000-0000-0000-000000000050",
+                firstCapturedAt,
+                true,
+                List.of(container(FULL_CONTAINER_ID, "example-api", firstCapturedAt, true))));
+        assertThat(service.authorizeContainerLogs(SHORT_CONTAINER_ID).containerId())
+                .isEqualTo(SHORT_CONTAINER_ID);
+
+        accept(snapshotWithCapability(
+                "10000000-0000-0000-0000-000000000051",
+                rollbackCapturedAt,
+                false,
+                List.of(container(FULL_CONTAINER_ID, "example-api", rollbackCapturedAt, false))));
+
+        assertThat(service.summary().agentStatus()).isEqualTo("CONNECTED");
+        assertThat(service.containerInventory().containers()).hasSize(1);
+        assertThat(service.containerDetail(SHORT_CONTAINER_ID).supportsContainerLogs()).isFalse();
+        assertThatThrownBy(() -> service.authorizeContainerLogs(SHORT_CONTAINER_ID))
+                .isInstanceOf(ContainerLogCapabilityUnavailableException.class);
+    }
+
+    @Test
+    void should_rejectContainerLogs_when_containerHasNotOptedIn() {
+        Instant capturedAt = NOW.minusSeconds(1);
+        accept(snapshotWithCapability(
+                "10000000-0000-0000-0000-000000000052",
+                capturedAt,
+                true,
+                List.of(container(FULL_CONTAINER_ID, "example-api", capturedAt, false))));
+
+        assertThatThrownBy(() -> service.authorizeContainerLogs(SHORT_CONTAINER_ID))
+                .isInstanceOf(ContainerLogsNotAllowedException.class)
+                .hasMessageNotContaining(FULL_CONTAINER_ID);
     }
 
     @Test
@@ -544,10 +634,36 @@ class AgentSnapshotServiceTest {
                 containers);
     }
 
+    private static AgentSnapshotRequest snapshotWithCapability(
+            String snapshotId,
+            Instant capturedAt,
+            boolean supportsContainerLogs,
+            List<AgentSnapshotRequest.ContainerSnapshot> containers) {
+        AgentSnapshotRequest fixture = AgentSnapshotFixtures.snapshot(
+                UUID.fromString(snapshotId),
+                capturedAt);
+        return new AgentSnapshotRequest(
+                fixture.snapshotId(),
+                fixture.agentId(),
+                fixture.agentVersion(),
+                fixture.capturedAt(),
+                supportsContainerLogs,
+                fixture.host(),
+                containers);
+    }
+
     private static AgentSnapshotRequest.ContainerSnapshot container(
             String identifier,
             String name,
             Instant capturedAt) {
+        return container(identifier, name, capturedAt, false);
+    }
+
+    private static AgentSnapshotRequest.ContainerSnapshot container(
+            String identifier,
+            String name,
+            Instant capturedAt,
+            boolean logsAllowed) {
         AgentSnapshotRequest.ContainerSnapshot fixture = AgentSnapshotFixtures
                 .snapshot(UUID.fromString("10000000-0000-0000-0000-000000000099"), capturedAt)
                 .containers()
@@ -566,6 +682,7 @@ class AgentSnapshotServiceTest {
                 fixture.memoryUsageBytes(),
                 fixture.memoryLimitBytes(),
                 fixture.ports(),
-                fixture.managed());
+                fixture.managed(),
+                logsAllowed);
     }
 }

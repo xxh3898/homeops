@@ -23,11 +23,23 @@ public record AgentSnapshotRequest(
         String agentId,
         @NotBlank @Size(max = 64) @NoPostgresqlNul String agentVersion,
         @NotNull Instant capturedAt,
+        Boolean supportsContainerLogs,
         @NotNull @Valid HostSnapshot host,
         @NotNull @Size(max = 256) List<@NotNull @Valid ContainerSnapshot> containers) {
 
     public AgentSnapshotRequest {
+        supportsContainerLogs = Boolean.TRUE.equals(supportsContainerLogs);
         containers = containers == null ? null : List.copyOf(containers);
+    }
+
+    public AgentSnapshotRequest(
+            UUID snapshotId,
+            String agentId,
+            String agentVersion,
+            Instant capturedAt,
+            HostSnapshot host,
+            List<ContainerSnapshot> containers) {
+        this(snapshotId, agentId, agentVersion, capturedAt, false, host, containers);
     }
 
     public record HostSnapshot(
@@ -53,10 +65,45 @@ public record AgentSnapshotRequest(
             @PositiveOrZero Long memoryUsageBytes,
             @Positive Long memoryLimitBytes,
             @NotNull @Size(max = 64) List<@NotNull @Valid ContainerPort> ports,
-            boolean managed) {
+            boolean managed,
+            Boolean logsAllowed) {
 
         public ContainerSnapshot {
+            logsAllowed = Boolean.TRUE.equals(logsAllowed);
             ports = ports == null ? null : List.copyOf(ports);
+        }
+
+        public ContainerSnapshot(
+                String id,
+                String name,
+                String composeProject,
+                String image,
+                ContainerState state,
+                ContainerHealth health,
+                String status,
+                Instant startedAt,
+                long restartCount,
+                Double cpuUsagePercent,
+                Long memoryUsageBytes,
+                Long memoryLimitBytes,
+                List<ContainerPort> ports,
+                boolean managed) {
+            this(
+                    id,
+                    name,
+                    composeProject,
+                    image,
+                    state,
+                    health,
+                    status,
+                    startedAt,
+                    restartCount,
+                    cpuUsagePercent,
+                    memoryUsageBytes,
+                    memoryLimitBytes,
+                    ports,
+                    managed,
+                    false);
         }
     }
 
