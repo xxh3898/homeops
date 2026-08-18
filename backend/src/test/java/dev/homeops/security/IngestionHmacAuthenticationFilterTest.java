@@ -8,10 +8,13 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -19,6 +22,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 class IngestionHmacAuthenticationFilterTest {
     private static final String SECRET = "a".repeat(64);
     private static final Instant NOW = Instant.parse("2026-08-07T12:00:00Z");
+    private static final int MAXIMUM_BODY_BYTES = 32 * 1024;
 
     @AfterEach
     void clearSecurityContext() { SecurityContextHolder.clearContext(); }
@@ -82,6 +86,70 @@ class IngestionHmacAuthenticationFilterTest {
         assertThat(response.getStatus()).isEqualTo(401);
     }
 
+    @Test
+    void should_rejectWithoutCallingChain_when_signatureIsWrong() throws Exception {
+        byte[] body = "{\"eventKey\":\"synthetic-deployment\"}".getBytes(StandardCharsets.UTF_8);
+        String timestamp = NOW.toString();
+        String validSignature = signature(timestamp, body);
+        String wrongSignature = validSignature.substring(0, validSignature.length() - 1)
+                + (validSignature.endsWith("0") ? "1" : "0");
+
+        MockHttpServletResponse response = rejectWithoutCallingChain(body, timestamp, wrongSignature);
+
+        assertThat(response.getErrorMessage()).isEqualTo("Invalid ingestion authentication");
+        assertThat(response.getContentAsString()).doesNotContain("synthetic-deployment", wrongSignature);
+    }
+
+    @Test
+    void should_rejectWithoutCallingChain_when_signatureIsMissing() throws Exception {
+        byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+
+        MockHttpServletResponse response = rejectWithoutCallingChain(body, NOW.toString(), null);
+
+        assertThat(response.getErrorMessage()).isEqualTo("Invalid ingestion authentication");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "000000000000000000000000000000000000000000000000000000000000000",
+            "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    })
+    void should_rejectWithoutCallingChain_when_signatureIsMalformed(String malformedSignature) throws Exception {
+        byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+
+        MockHttpServletResponse response = rejectWithoutCallingChain(body, NOW.toString(), malformedSignature);
+
+        assertThat(response.getErrorMessage()).isEqualTo("Invalid ingestion authentication");
+    }
+
+    @Test
+    void should_authenticateAndPreserveBody_when_bodyIsAtMaximumSize() throws Exception {
+        byte[] body = "x".repeat(MAXIMUM_BODY_BYTES).getBytes(StandardCharsets.UTF_8);
+        String timestamp = NOW.toString();
+        MockHttpServletRequest request = request(body, timestamp, signature(timestamp, body));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicInteger chainCalls = new AtomicInteger();
+
+        filter(SECRET).doFilter(request, response, (wrapped, ignored) -> {
+            chainCalls.incrementAndGet();
+            assertThat(wrapped.getInputStream().readAllBytes()).isEqualTo(body);
+        });
+
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThat(chainCalls).hasValue(1);
+    }
+
+    @Test
+    void should_rejectWithoutCallingChain_when_bodyExceedsMaximumSize() throws Exception {
+        byte[] body = "x".repeat(MAXIMUM_BODY_BYTES + 1).getBytes(StandardCharsets.UTF_8);
+        String timestamp = NOW.toString();
+
+        MockHttpServletResponse response = rejectWithoutCallingChain(body, timestamp, signature(timestamp, body));
+
+        assertThat(response.getErrorMessage()).isEqualTo("Invalid ingestion authentication");
+    }
+
     private static IngestionHmacAuthenticationFilter filter(String secret) {
         return new IngestionHmacAuthenticationFilter(new HomeOpsIngestionProperties(secret,
                 Duration.ofMinutes(5), Duration.ofMinutes(1)), Clock.fixed(NOW, ZoneOffset.UTC));
@@ -91,8 +159,23 @@ class IngestionHmacAuthenticationFilterTest {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/internal/ingestion/deployments");
         request.setContent(body);
         request.addHeader(IngestionHmacAuthenticationFilter.TIMESTAMP_HEADER, timestamp);
-        request.addHeader(IngestionHmacAuthenticationFilter.SIGNATURE_HEADER, signature);
+        if (signature != null) {
+            request.addHeader(IngestionHmacAuthenticationFilter.SIGNATURE_HEADER, signature);
+        }
         return request;
+    }
+
+    private static MockHttpServletResponse rejectWithoutCallingChain(byte[] body, String timestamp,
+            String providedSignature) throws Exception {
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicInteger chainCalls = new AtomicInteger();
+
+        filter(SECRET).doFilter(request(body, timestamp, providedSignature), response,
+                (request, result) -> chainCalls.incrementAndGet());
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(chainCalls).hasValue(0);
+        return response;
     }
 
     private static String signature(String timestamp, byte[] body) throws Exception {
