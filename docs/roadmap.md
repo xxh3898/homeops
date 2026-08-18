@@ -18,7 +18,7 @@
 
 | Phase | Source | Production | Acceptance |
 |---|---|---|---|
-| Phase 1 읽기 전용 대시보드 | PARTIAL | ACTIVE (구현된 범위) | PARTIAL |
+| Phase 1 읽기 전용 대시보드 | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 2 native Agent rollout | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 3 운영 이력 | IMPLEMENTED | ACTIVE | PARTIAL |
 | Phase 4 알림 | NOT IMPLEMENTED | INACTIVE | NOT DONE |
@@ -26,7 +26,7 @@
 
 ## Phase 1: 읽기 전용 대시보드 정확성 및 사용성
 
-**상태:** Source PARTIAL / Production ACTIVE (acceptance가 끝난 범위) / Acceptance PARTIAL. Host/system summary, container inventory와 Compose project grouping, metric aggregate 저장·retention, bounded metric history API/UI, latest snapshot 기반 Container Detail API/UI는 구현됐습니다. Container Logs는 bounded/redacted Agent foundation과 ADMIN 전용 one-shot public API/ephemeral Detail UI까지 source에 구현됐지만 production container opt-in, 실제 log retrieval, revoke/mobile acceptance는 별도 gate로 남아 있습니다.
+**상태:** Source IMPLEMENTED / Production ACTIVE / Acceptance COMPLETE. Host/system summary, container inventory와 Compose project grouping, metric aggregate 저장·retention, bounded metric history API/UI, latest snapshot 기반 Container Detail API/UI와 bounded/redacted Container Logs가 production에서 검증됐습니다. Container Logs는 controlled opt-in, 실제 one-shot retrieval, mobile 표시와 revoke 뒤 fail-closed/payload 제거 acceptance까지 완료했습니다.
 
 **목표:** 제어 기능을 추가하지 않고 현재 iPhone 대시보드를 신뢰할 수 있고 훑기 쉽게 만듭니다.
 
@@ -35,8 +35,8 @@
 | Host metric 정렬 | 선택한 macOS/Netdata 의미에 맞춰 memory usage를 일관되게 정의하고 CPU sampling 및 memory-pressure context를 유지 | Agent regression test 및 동일 시점 macOS/Netdata 비교 |
 | Project container group | mobile 친화적이고 접근 가능한 accordion과 명확한 aggregate health로 Docker Compose project별 inventory group화 | Frontend regression test, 여러 Compose project가 있는 iPhone visual check |
 | Metric history | `1h`/`6h`/`24h`/`7d`로 제한한 UTC aggregate API와 missing bucket을 보존하는 mobile history UI | PostgreSQL weighted/last-value integration test, API bound/auth test, frontend gap/stale/accessibility regression |
-| Container detail | 최신 Agent snapshot 안에서 12자리 identifier를 fail-closed resolve하고 freshness를 보존하는 mobile 읽기 전용 detail 제공 | Full-ID collision 및 auth/no-store Backend test, terminal cache와 mobile/accessibility Frontend test. Production acceptance는 source merge와 별도 gate |
-| Container tail log | Fresh capability와 container별 exact opt-in에서만 `50`/`100`/`200` one-shot tail을 허용하고, output을 이중 redact/limit하며 host path를 받지 않음 | SOURCE IMPLEMENTED / ACCEPTANCE PARTIAL — Agent live resolver, bounded in-memory broker, exact mTLS ingress, synchronous ADMIN API와 ephemeral mobile UI 구현. Production opt-in·실제 retrieval·revoke/mobile acceptance는 별도 gate |
+| Container detail | 최신 Agent snapshot 안에서 12자리 identifier를 fail-closed resolve하고 freshness를 보존하는 mobile 읽기 전용 detail 제공 | Full-ID collision 및 auth/no-store Backend test, terminal cache와 mobile/accessibility Frontend test, Tailnet production detail acceptance |
+| Container tail log | Fresh capability와 container별 exact opt-in에서만 `50`/`100`/`200` one-shot tail을 허용하고, output을 이중 redact/limit하며 host path를 받지 않음 | Agent live resolver, bounded in-memory broker, exact mTLS ingress, synchronous ADMIN API와 ephemeral mobile UI 구현. Controlled production opt-in·retrieval·revoke와 mobile acceptance 완료 |
 
 **포함하지 않음:** start, stop, restart, 임의 Docker command, 전체 log retention.
 

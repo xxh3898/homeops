@@ -4,7 +4,7 @@
 
 HomeOps는 Docker Desktop을 실행하는 Apple Silicon Mac용 단일 관리자 대시보드입니다. 소스를 fork하여 self-host할 수 있지만, 지원하는 ingress는 비공개 tailnet입니다. 인터넷 공개, Funnel, multi-tenant 격리, 임의 Docker 또는 shell 입력은 지원하지 않습니다.
 
-현재 마일스톤에서 호스트와 컨테이너 작업은 읽기 전용입니다. 호스트·컨테이너 인벤토리, HMAC 인증 배포/백업 수집, 정확한 origin HTTP 서비스 점검, 인시던트 상태 전환, 범위 제한 점검 결과 보존, 페이지네이션 Activity 타임라인을 구현합니다. 이 운영 이력 입력은 운영자가 관리하는 secret 또는 origin allowlist를 설정하기 전까지 fail-closed 상태입니다. 알림, 로그, 컨테이너 제어는 이후 마일스톤으로 남아 있습니다.
+현재 마일스톤에서 호스트와 컨테이너 작업은 읽기 전용입니다. 호스트·컨테이너 인벤토리, bounded metric history, freshness-aware Container Detail, explicit opt-in bounded/redacted Container Logs, HMAC 인증 배포/백업 수집, 정확한 origin HTTP 서비스 점검, 인시던트 상태 전환, 범위 제한 점검 결과 보존, 페이지네이션 Activity 타임라인을 구현합니다. 운영 이력 입력은 운영자가 관리하는 secret 또는 origin allowlist를 설정하기 전까지 fail closed하고, Container Logs는 fresh capability와 container별 exact opt-in이 없으면 fail closed합니다. 알림과 컨테이너 제어는 이후 마일스톤으로 남아 있습니다.
 
 ## 런타임 토폴로지
 
@@ -24,7 +24,7 @@ flowchart LR
     kuma["Uptime Kuma"] -.->|"독립 가용성 점검"| serve
 ```
 
-API와 데이터베이스에는 Docker socket을 절대 제공하지 않습니다. 이를 접근할 수 있는 것은 native Agent뿐입니다. Agent는 inbound listener가 없고 API로부터 명령 이름, path, container identifier, shell fragment를 받지 않습니다.
+API와 데이터베이스에는 Docker socket을 절대 제공하지 않습니다. 이를 접근할 수 있는 것은 native Agent뿐입니다. Agent는 inbound listener가 없고 명령 이름, Docker path/query, shell fragment를 받지 않습니다. Container Logs work는 fixed DTO의 12자리 short ID, allowlisted tail과 absolute expiry만 전달하며, Agent가 live full ID와 exact opt-in을 다시 검증한 뒤 고정 Docker API를 호출합니다.
 
 ## native Agent가 필요한 이유
 
@@ -53,7 +53,7 @@ CPU temperature, interface별 network traffic, 환경 변수, mount, raw inspect
 
 Tailscale identity와 정확한 login allowlist가 주 인증 방식입니다. Spring Security는 그에 따른 관리자 인증을 서버 측 JDBC session에 저장하지만, 모든 API 요청에서 현재 Serve identity를 다시 검증하고 header가 없거나 더 이상 허용되지 않으면 context를 비웁니다. 브라우저 요청은 same-origin이며 production의 session cookie는 `Secure`, `HttpOnly`, `SameSite=Strict`이고, 상태를 바꾸는 browser API에는 CSRF token이 필요합니다.
 
-페이지가 보이는 동안 상태는 5초 HTTP polling을 사용합니다. TanStack Query는 focus와 network recovery 뒤 다시 fetch합니다. PWA가 숨겨지면 polling을 멈춥니다. 이는 iOS background에서 SSE connection을 유지하는 것보다 예측 가능성이 높습니다. 향후 범위가 제한된 log tail은 상태 polling을 바꾸지 않고 SSE를 사용할 수 있습니다. 현재 설계에는 WebSocket이 없습니다.
+페이지가 보이는 동안 상태는 5초 HTTP polling을 사용합니다. TanStack Query는 focus와 network recovery 뒤 다시 fetch합니다. PWA가 숨겨지면 polling을 멈춥니다. 이는 iOS background에서 SSE connection을 유지하는 것보다 예측 가능성이 높습니다. Container Logs는 상태 polling과 분리된 명시적 one-shot Load/Refresh만 사용하며 자동 polling, SSE 또는 WebSocket을 사용하지 않습니다.
 
 ## 데이터 소유권
 
