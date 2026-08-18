@@ -98,7 +98,27 @@ public class ContainerLogBroker {
             requests.put(requestId, entry);
             pending.addLast(requestId);
             workAvailable.signalAll();
-            return new ContainerLogRequestTicket(requestId, result);
+            return new ContainerLogRequestTicket(requestId, entry.expiresAt, result);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void cancel(ContainerLogRequestTicket ticket) {
+        lock.lock();
+        try {
+            Instant now = clock.instant();
+            cleanupLocked(now);
+            RequestEntry entry = requests.get(ticket.requestId());
+            if (entry == null || entry.result != ticket.result()) {
+                return;
+            }
+            requests.remove(entry.requestId);
+            pending.remove(entry.requestId);
+            entry.result.completeExceptionally(
+                    new ContainerLogRequestCancelledException());
+            addTombstoneLocked(entry.requestId, now, TombstoneOutcome.CANCELLED);
+            workAvailable.signalAll();
         } finally {
             lock.unlock();
         }
@@ -373,7 +393,8 @@ public class ContainerLogBroker {
     private enum TombstoneOutcome {
         COMPLETED,
         EXPIRED,
-        DENIED
+        DENIED,
+        CANCELLED
     }
 
     private record Tombstone(Instant completedAt, TombstoneOutcome outcome) {

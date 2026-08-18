@@ -5,7 +5,9 @@ import dev.homeops.agent.logs.ContainerLogBrokerCapacityException;
 import dev.homeops.agent.logs.ContainerLogCapabilityUnavailableException;
 import dev.homeops.agent.logs.ContainerLogRequestConflictException;
 import dev.homeops.agent.logs.ContainerLogRequestGoneException;
+import dev.homeops.agent.logs.ContainerLogRequestTimeoutException;
 import dev.homeops.agent.logs.ContainerLogResultRejectedException;
+import dev.homeops.agent.logs.ContainerLogRetrievalUnavailableException;
 import dev.homeops.agent.logs.ContainerLogsNotAllowedException;
 import dev.homeops.agent.logs.InvalidContainerLogTailException;
 import dev.homeops.metrics.InvalidMetricHistoryPeriodException;
@@ -70,7 +72,7 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler({
             ContainerLogCapabilityUnavailableException.class,
-            ContainerLogBrokerCapacityException.class
+            ContainerLogRetrievalUnavailableException.class
     })
     ProblemDetail handleContainerLogUnavailable() {
         ProblemDetail detail = ProblemDetail.forStatusAndDetail(
@@ -78,6 +80,26 @@ public class ApiExceptionHandler {
                 "Container log service is unavailable");
         detail.setType(URI.create("urn:homeops:problem:container-logs-unavailable"));
         detail.setTitle("Container logs unavailable");
+        return detail;
+    }
+
+    @ExceptionHandler(ContainerLogBrokerCapacityException.class)
+    ProblemDetail handleContainerLogCapacity() {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Container log request capacity is busy");
+        detail.setType(URI.create("urn:homeops:problem:container-log-capacity"));
+        detail.setTitle("Container log request capacity reached");
+        return detail;
+    }
+
+    @ExceptionHandler(ContainerLogRequestTimeoutException.class)
+    ProblemDetail handleContainerLogTimeout() {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.GATEWAY_TIMEOUT,
+                "Container log request timed out");
+        detail.setType(URI.create("urn:homeops:problem:container-log-timeout"));
+        detail.setTitle("Container log request timed out");
         return detail;
     }
 

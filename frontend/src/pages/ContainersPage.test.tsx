@@ -205,6 +205,7 @@ function containerInventory(
         memoryLimitBytes: 2048,
         ports: [],
         managed: false,
+        logsAllowed: false,
       },
     ],
   }
@@ -227,6 +228,7 @@ function groupedContainers(): ContainerView[] {
       memoryLimitBytes: 2048,
       ports: [],
       managed: false,
+      logsAllowed: false,
     },
     {
       id: '222222222222',
@@ -243,6 +245,7 @@ function groupedContainers(): ContainerView[] {
       memoryLimitBytes: 2048,
       ports: [],
       managed: false,
+      logsAllowed: false,
     },
     {
       id: '333333333333',
@@ -259,6 +262,7 @@ function groupedContainers(): ContainerView[] {
       memoryLimitBytes: 2048,
       ports: [],
       managed: false,
+      logsAllowed: false,
     },
   ]
 }
@@ -280,6 +284,7 @@ function projectWithHealth(health: 'STARTING' | 'UNKNOWN'): ContainerView[] {
       memoryLimitBytes: 2048,
       ports: [],
       managed: false,
+      logsAllowed: false,
     },
   ]
 }

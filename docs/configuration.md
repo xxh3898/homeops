@@ -98,7 +98,7 @@ production directory에는 `smoke.origin`도 있습니다. path, query, fragment
 
 `homeops.managed=true`는 이 마일스톤에서 표시용입니다. control endpoint는 없습니다. 이후 control 마일스톤에서는 live label을 다시 읽고 추가 project allowlist, operation lock, idempotency key, confirmation policy, audit record를 강제해야 합니다.
 
-`homeops.logs=true`는 future Container Logs disclosure를 위한 container별 exact opt-in입니다. Agent root capability와 fresh snapshot이 함께 있어야 하며 stale snapshot은 authority가 아닙니다. 현재 foundation PR에는 관리자용 public log API/UI가 없으므로 이 label만으로 기능이 활성화되지는 않습니다. Agent는 raw log를 snapshot spool, file 또는 DB에 저장하지 않습니다.
+`homeops.logs=true`는 Container Logs disclosure를 위한 container별 exact opt-in입니다. Agent root capability와 fresh snapshot이 함께 있어야 하며 stale snapshot은 authority가 아닙니다. Public API/UI source가 존재해도 label이 없는 container는 `422`로 fail closed하고 실행 가능한 UI control을 표시하지 않습니다. Production opt-in은 code deployment와 분리된 security-sensitive configuration gate이며 별도 acceptance 전에는 추가하지 않습니다. Agent와 API는 raw log를 snapshot spool, file, DB 또는 Activity에 저장하지 않습니다.
 
 ## GitHub repository 구성
 
