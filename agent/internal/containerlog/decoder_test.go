@@ -115,3 +115,15 @@ func TestDecodeDockerStreamHandlesSeveralLinesInOneFrame(t *testing.T) {
 		t.Fatalf("lines = %#v", output.Lines)
 	}
 }
+
+func TestDecodeDockerStreamReportsRedactionApplied(t *testing.T) {
+	t.Parallel()
+	output, err := DecodeDockerStream(
+		[]byte("token=synthetic-token\nplain\n"), true, 50, false)
+	if err != nil {
+		t.Fatalf("DecodeDockerStream returned an error: %v", err)
+	}
+	if !output.RedactionApplied || output.Lines[0].Message != "token=[REDACTED]" {
+		t.Fatalf("output = %#v", output)
+	}
+}

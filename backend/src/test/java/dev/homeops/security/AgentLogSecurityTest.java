@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import dev.homeops.agent.logs.ContainerLogBroker;
 import dev.homeops.agent.logs.ContainerLogWork;
 import dev.homeops.agent.logs.api.AgentLogController;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -36,7 +37,8 @@ class AgentLogSecurityTest {
         when(broker.claimNext()).thenReturn(Optional.of(new ContainerLogWork(
                 UUID.fromString("10000000-0000-4000-8000-000000000001"),
                 "0123456789ab",
-                50)));
+                50,
+                Instant.parse("2026-08-18T00:00:06Z"))));
 
         mockMvc.perform(get("/api/v1/internal/agent/log-requests/next")
                         .header(AgentProxyAuthenticationFilter.VERIFIED_HEADER, "SUCCESS"))
@@ -78,8 +80,10 @@ class AgentLogSecurityTest {
                 {
                   "requestId":"10000000-0000-4000-8000-000000000001",
                   "status":"SUCCESS",
+                  "collectedAt":"2026-08-18T00:00:00Z",
                   "lines":[],
-                  "truncated":false
+                  "truncated":false,
+                  "redactionApplied":false
                 }
                 """;
     }

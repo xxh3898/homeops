@@ -19,7 +19,7 @@ var (
 		`\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`)
 )
 
-func NormalizeAndRedact(input []byte) string {
+func NormalizeAndRedact(input []byte) (string, bool) {
 	withoutANSI := stripANSI(input)
 	valid := strings.ToValidUTF8(string(withoutANSI), string(utf8.RuneError))
 	var normalized strings.Builder
@@ -29,10 +29,15 @@ func NormalizeAndRedact(input []byte) string {
 			normalized.WriteRune(character)
 		}
 	}
-	value := headerPattern.ReplaceAllString(normalized.String(), `${1}`+Replacement)
+	value := normalized.String()
+	applied := headerPattern.MatchString(value)
+	value = headerPattern.ReplaceAllString(value, `${1}`+Replacement)
+	applied = keyValuePattern.MatchString(value) || applied
 	value = keyValuePattern.ReplaceAllString(value, `${1}`+Replacement)
+	applied = authorizationPattern.MatchString(value) || applied
 	value = authorizationPattern.ReplaceAllString(value, `${1} `+Replacement)
-	return jwtPattern.ReplaceAllString(value, Replacement)
+	applied = jwtPattern.MatchString(value) || applied
+	return jwtPattern.ReplaceAllString(value, Replacement), applied
 }
 
 func allowedCharacter(character rune) bool {

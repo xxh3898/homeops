@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/xxh3898/homeops/agent/internal/containerlog"
 )
@@ -17,17 +18,27 @@ func (client *Client) ContainerLogs(
 	shortIdentifier string,
 	tail int,
 	maximumContainers int,
+	expiresAt time.Time,
 ) (containerlog.Output, error) {
 	if !containerlog.ValidContainerID(shortIdentifier) ||
 		!containerlog.AllowedTail(tail) {
 		return containerlog.Output{}, unavailableLogError()
 	}
-	workContext, cancel := context.WithTimeout(ctx, containerlog.DockerTimeout)
+	now := client.currentTime()
+	if err := containerlog.ValidateExpiry(expiresAt, now); err != nil {
+		return containerlog.Output{}, unavailableLogError()
+	}
+	remaining := expiresAt.Sub(now)
+	timeout := min(remaining, containerlog.DockerTimeout)
+	workContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	version, err := client.apiVersion(workContext)
 	if err != nil {
 		return containerlog.Output{}, unavailableLogError()
+	}
+	if err := client.ensureLogWorkCurrent(expiresAt); err != nil {
+		return containerlog.Output{}, err
 	}
 	var listed []listedContainer
 	if err := client.getJSON(
@@ -66,6 +77,9 @@ func (client *Client) ContainerLogs(
 			Kind: containerlog.ReadNotAllowed,
 		}
 	}
+	if err := client.ensureLogWorkCurrent(expiresAt); err != nil {
+		return containerlog.Output{}, err
+	}
 
 	var inspected struct {
 		Config struct {
@@ -85,6 +99,9 @@ func (client *Client) ContainerLogs(
 			}
 		}
 		return containerlog.Output{}, unavailableLogError()
+	}
+	if err := client.ensureLogWorkCurrent(expiresAt); err != nil {
+		return containerlog.Output{}, err
 	}
 
 	query := url.Values{}
@@ -116,6 +133,13 @@ func (client *Client) ContainerLogs(
 		return containerlog.Output{}, unavailableLogError()
 	}
 	return output, nil
+}
+
+func (client *Client) ensureLogWorkCurrent(expiresAt time.Time) error {
+	if err := containerlog.ValidateExpiry(expiresAt, client.currentTime()); err != nil {
+		return unavailableLogError()
+	}
+	return nil
 }
 
 func (client *Client) getBoundedRaw(

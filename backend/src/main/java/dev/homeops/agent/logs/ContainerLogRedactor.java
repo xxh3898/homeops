@@ -17,15 +17,24 @@ public class ContainerLogRedactor {
     private static final Pattern JWT_PATTERN = Pattern.compile(
             "\\b[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\b");
 
-    public String sanitize(String input) {
+    public SanitizedText sanitize(String input) {
         String normalized = removeControls(stripAnsi(input));
+        boolean applied = HEADER_PATTERN.matcher(normalized).find();
         String redacted = HEADER_PATTERN.matcher(normalized)
                 .replaceAll("$1" + REPLACEMENT);
+        applied = KEY_VALUE_PATTERN.matcher(redacted).find() || applied;
         redacted = KEY_VALUE_PATTERN.matcher(redacted)
                 .replaceAll("$1" + REPLACEMENT);
+        applied = AUTHORIZATION_PATTERN.matcher(redacted).find() || applied;
         redacted = AUTHORIZATION_PATTERN.matcher(redacted)
                 .replaceAll("$1 " + REPLACEMENT);
-        return JWT_PATTERN.matcher(redacted).replaceAll(REPLACEMENT);
+        applied = JWT_PATTERN.matcher(redacted).find() || applied;
+        return new SanitizedText(
+                JWT_PATTERN.matcher(redacted).replaceAll(REPLACEMENT),
+                applied);
+    }
+
+    public record SanitizedText(String text, boolean redactionApplied) {
     }
 
     private static String removeControls(String input) {

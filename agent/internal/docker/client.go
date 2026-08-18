@@ -33,6 +33,7 @@ type Client struct {
 	httpClient         *http.Client
 	cpuSampleMutex     sync.Mutex
 	previousCPUSamples map[string]cpuSample
+	now                func() time.Time
 }
 
 func NewClient(socketPath string) (*Client, error) {
@@ -63,6 +64,13 @@ func NewClient(socketPath string) (*Client, error) {
 		},
 		previousCPUSamples: make(map[string]cpuSample),
 	}, nil
+}
+
+func (client *Client) currentTime() time.Time {
+	if client.now != nil {
+		return client.now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func (client *Client) Containers(

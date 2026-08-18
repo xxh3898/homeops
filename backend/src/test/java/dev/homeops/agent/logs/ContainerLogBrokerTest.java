@@ -69,6 +69,7 @@ class ContainerLogBrokerTest {
 
         ContainerLogWork first = broker.claimNext().orElseThrow();
 
+        assertThat(first.expiresAt()).isEqualTo(NOW.plusSeconds(6));
         assertThat(broker.claimNext()).isEmpty();
         broker.complete(success(first.requestId(), List.of("safe")));
         assertThat(broker.claimNext()).get()
@@ -176,7 +177,9 @@ class ContainerLogBrokerTest {
         AgentLogResultRequest failureWithLine = new AgentLogResultRequest(
                 first.requestId(),
                 ContainerLogResultStatus.UNAVAILABLE,
+                NOW,
                 List.of(line("raw")),
+                false,
                 false);
 
         assertThatThrownBy(() -> broker.complete(failureWithLine))
@@ -202,6 +205,55 @@ class ContainerLogBrokerTest {
     }
 
     @Test
+    void should_preserveAgentOrBackendRedactionMetadata() {
+        ContainerLogRequestTicket backendTicket = broker.request("000000000001", 50);
+        ContainerLogWork backendWork = broker.claimNext().orElseThrow();
+        broker.complete(success(
+                backendWork.requestId(),
+                List.of("token=synthetic-token"),
+                false,
+                NOW));
+        ContainerLogResult backendResult = backendTicket.result().toCompletableFuture().join();
+        assertThat(backendResult.redactionApplied()).isTrue();
+        assertThat(backendResult.collectedAt()).isEqualTo(NOW);
+
+        ContainerLogRequestTicket agentTicket = broker.request("000000000002", 50);
+        ContainerLogWork agentWork = broker.claimNext().orElseThrow();
+        broker.complete(success(
+                agentWork.requestId(),
+                List.of("already safe"),
+                true,
+                NOW));
+        assertThat(agentTicket.result().toCompletableFuture().join().redactionApplied())
+                .isTrue();
+
+        ContainerLogRequestTicket plainTicket = broker.request("000000000003", 50);
+        ContainerLogWork plainWork = broker.claimNext().orElseThrow();
+        broker.complete(success(plainWork.requestId(), List.of("plain")));
+        assertThat(plainTicket.result().toCompletableFuture().join().redactionApplied())
+                .isFalse();
+    }
+
+    @Test
+    void should_rejectCollectedTimestampOutsideBoundedRequestLifecycle() {
+        broker.request("000000000001", 50);
+        ContainerLogWork work = broker.claimNext().orElseThrow();
+
+        assertThatThrownBy(() -> broker.complete(success(
+                work.requestId(),
+                List.of("safe"),
+                false,
+                NOW.plus(ContainerLogBroker.RESULT_TIMESTAMP_SKEW).plusMillis(1))))
+                .isInstanceOf(ContainerLogResultRejectedException.class);
+        assertThatThrownBy(() -> broker.complete(success(
+                work.requestId(),
+                List.of("safe"),
+                false,
+                NOW.minus(ContainerLogBroker.RESULT_TIMESTAMP_SKEW).minusMillis(1))))
+                .isInstanceOf(ContainerLogResultRejectedException.class);
+    }
+
+    @Test
     void should_boundMetadataOnlyTombstones() {
         for (int index = 0; index < 20; index++) {
             String containerId = "%012x".formatted(index + 1);
@@ -222,6 +274,14 @@ class ContainerLogBrokerTest {
     private static AgentLogResultRequest success(
             UUID requestId,
             List<String> messages) {
+        return success(requestId, messages, false, NOW);
+    }
+
+    private static AgentLogResultRequest success(
+            UUID requestId,
+            List<String> messages,
+            boolean redactionApplied,
+            Instant collectedAt) {
         List<AgentLogResultRequest.Line> lines = new ArrayList<>();
         for (String message : messages) {
             lines.add(line(message));
@@ -229,8 +289,10 @@ class ContainerLogBrokerTest {
         return new AgentLogResultRequest(
                 requestId,
                 ContainerLogResultStatus.SUCCESS,
+                collectedAt,
                 lines,
-                false);
+                false,
+                redactionApplied);
     }
 
     private static AgentLogResultRequest.Line line(String message) {

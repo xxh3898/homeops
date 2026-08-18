@@ -34,6 +34,7 @@ public class ContainerLogBroker {
     static final int MAXIMUM_LINES = 200;
     static final int MAXIMUM_MESSAGE_BYTES = 128 * 1024;
     static final Duration REQUEST_TTL = Duration.ofSeconds(6);
+    static final Duration RESULT_TIMESTAMP_SKEW = Duration.ofSeconds(1);
     static final Duration TOMBSTONE_TTL = Duration.ofSeconds(30);
     static final Duration LONG_POLL = Duration.ofSeconds(2);
 
@@ -163,7 +164,7 @@ public class ContainerLogBroker {
                 workAvailable.signalAll();
                 throw new ContainerLogRequestGoneException();
             }
-            ContainerLogResult result = validateAndSanitize(request, entry.tail);
+            ContainerLogResult result = validateAndSanitize(request, entry, now);
             requests.remove(entry.requestId);
             entry.result.complete(result);
             addTombstoneLocked(entry.requestId, now, TombstoneOutcome.COMPLETED);
@@ -205,33 +206,62 @@ public class ContainerLogBroker {
 
     private ContainerLogResult validateAndSanitize(
             AgentLogResultRequest request,
-            int requestedTail) {
+            RequestEntry entry,
+            Instant now) {
         if (request.status() == null || request.lines() == null
+                || request.redactionApplied() == null
                 || request.lines().size() > MAXIMUM_LINES
-                || request.lines().size() > requestedTail
+                || request.lines().size() > entry.tail
                 || (request.status() != ContainerLogResultStatus.SUCCESS
                 && (!request.lines().isEmpty() || request.truncated()))) {
             throw new ContainerLogResultRejectedException();
         }
+        validateCollectedAt(request.collectedAt(), entry, now);
         int rawBytes = 0;
         int sanitizedBytes = 0;
+        boolean backendRedactionApplied = false;
         var lines = new java.util.ArrayList<ContainerLogLine>(request.lines().size());
         for (AgentLogResultRequest.Line line : request.lines()) {
             if (line == null || line.stream() == null || line.message() == null) {
                 throw new ContainerLogResultRejectedException();
             }
             rawBytes = boundedAdd(rawBytes, line.message());
-            String sanitized = redactor.sanitize(line.message());
-            sanitizedBytes = boundedAdd(sanitizedBytes, sanitized);
+            ContainerLogRedactor.SanitizedText sanitized = redactor.sanitize(
+                    line.message());
+            sanitizedBytes = boundedAdd(sanitizedBytes, sanitized.text());
+            backendRedactionApplied = backendRedactionApplied
+                    || sanitized.redactionApplied();
             lines.add(new ContainerLogLine(
                     line.timestamp(),
                     line.stream(),
-                    sanitized));
+                    sanitized.text()));
         }
         return new ContainerLogResult(
                 request.status(),
                 List.copyOf(lines),
-                request.truncated());
+                request.truncated(),
+                request.collectedAt(),
+                Boolean.TRUE.equals(request.redactionApplied())
+                        || backendRedactionApplied);
+    }
+
+    private static void validateCollectedAt(
+            Instant collectedAt,
+            RequestEntry entry,
+            Instant now) {
+        if (collectedAt == null) {
+            throw new ContainerLogResultRejectedException();
+        }
+        Instant earliest = entry.expiresAt
+                .minus(REQUEST_TTL)
+                .minus(RESULT_TIMESTAMP_SKEW);
+        Instant latestByRequest = entry.expiresAt.plus(RESULT_TIMESTAMP_SKEW);
+        Instant latestByServer = now.plus(RESULT_TIMESTAMP_SKEW);
+        if (collectedAt.isBefore(earliest)
+                || !collectedAt.isBefore(latestByRequest)
+                || collectedAt.isAfter(latestByServer)) {
+            throw new ContainerLogResultRejectedException();
+        }
     }
 
     private static int boundedAdd(int current, String message) {
@@ -270,7 +300,8 @@ public class ContainerLogBroker {
             return new ContainerLogWork(
                     entry.requestId,
                     entry.containerId,
-                    entry.tail);
+                    entry.tail,
+                    entry.expiresAt);
         }
         return null;
     }

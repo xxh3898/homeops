@@ -24,9 +24,10 @@ func TestNormalizeAndRedactMatchesSharedContract(t *testing.T) {
 	var fixture struct {
 		Version int `json:"version"`
 		Vectors []struct {
-			Name     string `json:"name"`
-			Input    string `json:"input"`
-			Expected string `json:"expected"`
+			Name             string `json:"name"`
+			Input            string `json:"input"`
+			Expected         string `json:"expected"`
+			RedactionApplied bool   `json:"redactionApplied"`
 		} `json:"vectors"`
 	}
 	if err := json.Unmarshal(contents, &fixture); err != nil {
@@ -39,8 +40,14 @@ func TestNormalizeAndRedactMatchesSharedContract(t *testing.T) {
 		vector := vector
 		t.Run(vector.Name, func(t *testing.T) {
 			t.Parallel()
-			if actual := NormalizeAndRedact([]byte(vector.Input)); actual != vector.Expected {
-				t.Fatalf("NormalizeAndRedact() = %q, want %q", actual, vector.Expected)
+			actual, applied := NormalizeAndRedact([]byte(vector.Input))
+			if actual != vector.Expected || applied != vector.RedactionApplied {
+				t.Fatalf(
+					"NormalizeAndRedact() = %q/%v, want %q/%v",
+					actual,
+					applied,
+					vector.Expected,
+					vector.RedactionApplied)
 			}
 		})
 	}
@@ -49,7 +56,8 @@ func TestNormalizeAndRedactMatchesSharedContract(t *testing.T) {
 func TestNormalizeAndRedactReplacesInvalidUTF8AndRemovesControls(t *testing.T) {
 	t.Parallel()
 	input := []byte{'o', 'k', 0xff, 0x00, '\t', 'x'}
-	if actual := NormalizeAndRedact(input); actual != "ok�\tx" {
-		t.Fatalf("NormalizeAndRedact() = %q", actual)
+	actual, applied := NormalizeAndRedact(input)
+	if actual != "ok�\tx" || applied {
+		t.Fatalf("NormalizeAndRedact() = %q/%v", actual, applied)
 	}
 }

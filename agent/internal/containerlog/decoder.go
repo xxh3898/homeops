@@ -166,10 +166,11 @@ func (accumulator *lineAccumulator) reset() {
 }
 
 type lineCollector struct {
-	maximumLines int
-	messageBytes int
-	lines        []Line
-	truncated    bool
+	maximumLines     int
+	messageBytes     int
+	lines            []Line
+	truncated        bool
+	redactionApplied bool
 }
 
 func (collector *lineCollector) Add(stream Stream, raw []byte) {
@@ -178,7 +179,8 @@ func (collector *lineCollector) Add(stream Stream, raw []byte) {
 		return
 	}
 	timestamp, message := splitTimestamp(raw)
-	normalized := NormalizeAndRedact(message)
+	normalized, redactionApplied := NormalizeAndRedact(message)
+	collector.redactionApplied = collector.redactionApplied || redactionApplied
 	if collector.messageBytes+len(normalized) > MaximumMessageBytes {
 		collector.truncated = true
 		return
@@ -196,7 +198,11 @@ func (collector *lineCollector) Output() Output {
 	if lines == nil {
 		lines = []Line{}
 	}
-	return Output{Lines: lines, Truncated: collector.truncated}
+	return Output{
+		Lines:            lines,
+		Truncated:        collector.truncated,
+		RedactionApplied: collector.redactionApplied,
+	}
 }
 
 func splitTimestamp(raw []byte) (*time.Time, []byte) {

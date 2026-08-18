@@ -22,15 +22,22 @@ class ContainerLogRedactorTest {
         assertThat(fixture.version()).isEqualTo(1);
         assertThat(fixture.vectors()).isNotEmpty();
         for (Vector vector : fixture.vectors()) {
-            assertThat(redactor.sanitize(vector.input()))
-                    .as(vector.name())
-                    .isEqualTo(vector.expected());
+            ContainerLogRedactor.SanitizedText sanitized = redactor.sanitize(
+                    vector.input());
+            assertThat(sanitized.text()).as(vector.name()).isEqualTo(vector.expected());
+            assertThat(sanitized.redactionApplied())
+                    .as(vector.name() + " redactionApplied")
+                    .isEqualTo(vector.redactionApplied());
         }
     }
 
     private record Fixture(int version, List<Vector> vectors) {
     }
 
-    private record Vector(String name, String input, String expected) {
+    private record Vector(
+            String name,
+            String input,
+            String expected,
+            boolean redactionApplied) {
     }
 }

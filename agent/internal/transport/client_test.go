@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xxh3898/homeops/agent/internal/containerlog"
 )
@@ -49,6 +50,7 @@ func TestDeriveEndpointsRejectsAlternateConfiguredPath(t *testing.T) {
 
 func TestNextContainerLogWorkAcceptsBoundedWork(t *testing.T) {
 	t.Parallel()
+	now := time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(
 		response http.ResponseWriter,
 		request *http.Request,
@@ -58,10 +60,14 @@ func TestNextContainerLogWorkAcceptsBoundedWork(t *testing.T) {
 		}
 		response.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(response,
-			`{"requestId":"10000000-0000-4000-8000-000000000001","containerId":"0123456789ab","tail":50}`)
+			`{"requestId":"10000000-0000-4000-8000-000000000001","containerId":"0123456789ab","tail":50,"expiresAt":"2026-08-18T01:02:09Z"}`)
 	}))
 	defer server.Close()
-	client := &Client{logWorkEndpoint: server.URL + logWorkPath, httpClient: server.Client()}
+	client := &Client{
+		logWorkEndpoint: server.URL + logWorkPath,
+		httpClient:      server.Client(),
+		now:             func() time.Time { return now },
+	}
 
 	work, err := client.NextContainerLogWork(context.Background())
 
@@ -92,7 +98,7 @@ func TestNextContainerLogWorkRejectsUnknownCommandField(t *testing.T) {
 	) {
 		response.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(response,
-			`{"requestId":"10000000-0000-4000-8000-000000000001","containerId":"0123456789ab","tail":50,"command":"forbidden"}`)
+			`{"requestId":"10000000-0000-4000-8000-000000000001","containerId":"0123456789ab","tail":50,"expiresAt":"2099-08-18T01:02:09Z","command":"forbidden"}`)
 	}))
 	defer server.Close()
 	client := &Client{logWorkEndpoint: server.URL + logWorkPath, httpClient: server.Client()}
@@ -112,7 +118,7 @@ func TestNextContainerLogWorkRejectsTailOutsideAllowlist(t *testing.T) {
 	) {
 		response.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(response,
-			`{"requestId":"10000000-0000-4000-8000-000000000001","containerId":"0123456789ab","tail":201}`)
+			`{"requestId":"10000000-0000-4000-8000-000000000001","containerId":"0123456789ab","tail":201,"expiresAt":"2099-08-18T01:02:09Z"}`)
 	}))
 	defer server.Close()
 	client := &Client{logWorkEndpoint: server.URL + logWorkPath, httpClient: server.Client()}
@@ -121,6 +127,44 @@ func TestNextContainerLogWorkRejectsTailOutsideAllowlist(t *testing.T) {
 
 	if err == nil || work != nil {
 		t.Fatalf("work/error = %#v/%v, want bounded rejection", work, err)
+	}
+}
+
+func TestNextContainerLogWorkRejectsMissingMalformedExpiredAndFarExpiry(
+	t *testing.T,
+) {
+	t.Parallel()
+	now := time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)
+	cases := map[string]string{
+		"missing":    `{"requestId":"10000000-0000-4000-8000-000000000001","containerId":"0123456789ab","tail":50}`,
+		"malformed":  `{"requestId":"10000000-0000-4000-8000-000000000001","containerId":"0123456789ab","tail":50,"expiresAt":"not-a-time"}`,
+		"expired":    `{"requestId":"10000000-0000-4000-8000-000000000001","containerId":"0123456789ab","tail":50,"expiresAt":"2026-08-18T01:02:03Z"}`,
+		"far future": `{"requestId":"10000000-0000-4000-8000-000000000001","containerId":"0123456789ab","tail":50,"expiresAt":"2026-08-18T01:02:14Z"}`,
+	}
+	for name, payload := range cases {
+		name, payload := name, payload
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(
+				response http.ResponseWriter,
+				_ *http.Request,
+			) {
+				response.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(response, payload)
+			}))
+			defer server.Close()
+			client := &Client{
+				logWorkEndpoint: server.URL + logWorkPath,
+				httpClient:      server.Client(),
+				now:             func() time.Time { return now },
+			}
+
+			work, err := client.NextContainerLogWork(context.Background())
+
+			if err == nil || work != nil {
+				t.Fatalf("work/error = %#v/%v, want strict expiry rejection", work, err)
+			}
+		})
 	}
 }
 
@@ -138,7 +182,9 @@ func TestSendContainerLogResultPostsOnlyBoundedDTO(t *testing.T) {
 			t.Fatalf("read body: %v", err)
 		}
 		if strings.Contains(string(body), "fullContainerId") ||
-			!strings.Contains(string(body), `"message":"safe"`) {
+			!strings.Contains(string(body), `"message":"safe"`) ||
+			!strings.Contains(string(body), `"collectedAt":"2026-08-18T01:02:04Z"`) ||
+			!strings.Contains(string(body), `"redactionApplied":true`) {
 			t.Fatalf("result body = %s", body)
 		}
 		response.WriteHeader(http.StatusNoContent)
@@ -147,12 +193,14 @@ func TestSendContainerLogResultPostsOnlyBoundedDTO(t *testing.T) {
 	client := &Client{logResultEndpoint: server.URL + logResultPath, httpClient: server.Client()}
 
 	err := client.SendContainerLogResult(context.Background(), containerlog.Result{
-		RequestID: "10000000-0000-4000-8000-000000000001",
-		Status:    containerlog.StatusSuccess,
+		RequestID:   "10000000-0000-4000-8000-000000000001",
+		Status:      containerlog.StatusSuccess,
+		CollectedAt: time.Date(2026, 8, 18, 1, 2, 4, 0, time.UTC),
 		Lines: []containerlog.Line{{
 			Stream:  containerlog.StreamStdout,
 			Message: "safe",
 		}},
+		RedactionApplied: true,
 	})
 	if err != nil {
 		t.Fatalf("SendContainerLogResult returned an error: %v", err)

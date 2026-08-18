@@ -7,10 +7,11 @@ import (
 )
 
 const (
-	MaximumRawBytes     = 256 * 1024
-	MaximumLineBytes    = 8 * 1024
-	MaximumMessageBytes = 128 * 1024
-	DockerTimeout       = 3 * time.Second
+	MaximumRawBytes      = 256 * 1024
+	MaximumLineBytes     = 8 * 1024
+	MaximumMessageBytes  = 128 * 1024
+	DockerTimeout        = 3 * time.Second
+	MaximumExpiryHorizon = 10 * time.Second
 )
 
 var (
@@ -21,12 +22,13 @@ var (
 )
 
 type Work struct {
-	RequestID   string `json:"requestId"`
-	ContainerID string `json:"containerId"`
-	Tail        int    `json:"tail"`
+	RequestID   string    `json:"requestId"`
+	ContainerID string    `json:"containerId"`
+	Tail        int       `json:"tail"`
+	ExpiresAt   time.Time `json:"expiresAt"`
 }
 
-func (work Work) Validate() error {
+func (work Work) Validate(now time.Time) error {
 	if !requestIDPattern.MatchString(work.RequestID) {
 		return errors.New("log request identifier is invalid")
 	}
@@ -35,6 +37,24 @@ func (work Work) Validate() error {
 	}
 	if !AllowedTail(work.Tail) {
 		return errors.New("log tail is invalid")
+	}
+	if err := ValidateExpiry(work.ExpiresAt, now); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ValidateExpiry(expiresAt time.Time, now time.Time) error {
+	now = now.UTC()
+	if expiresAt.IsZero() {
+		return errors.New("log request expiration is invalid")
+	}
+	expiresAt = expiresAt.UTC()
+	if !now.Before(expiresAt) {
+		return errors.New("log request has expired")
+	}
+	if expiresAt.After(now.Add(MaximumExpiryHorizon)) {
+		return errors.New("log request expiration is invalid")
 	}
 	return nil
 }
@@ -77,15 +97,18 @@ const (
 )
 
 type Result struct {
-	RequestID string `json:"requestId"`
-	Status    Status `json:"status"`
-	Lines     []Line `json:"lines"`
-	Truncated bool   `json:"truncated"`
+	RequestID        string    `json:"requestId"`
+	Status           Status    `json:"status"`
+	CollectedAt      time.Time `json:"collectedAt"`
+	Lines            []Line    `json:"lines"`
+	Truncated        bool      `json:"truncated"`
+	RedactionApplied bool      `json:"redactionApplied"`
 }
 
 type Output struct {
-	Lines     []Line
-	Truncated bool
+	Lines            []Line
+	Truncated        bool
+	RedactionApplied bool
 }
 
 type ReadErrorKind string

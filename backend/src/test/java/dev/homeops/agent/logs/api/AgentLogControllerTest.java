@@ -13,6 +13,7 @@ import dev.homeops.agent.logs.ContainerLogBroker;
 import dev.homeops.agent.logs.ContainerLogRequestGoneException;
 import dev.homeops.agent.logs.ContainerLogWork;
 import dev.homeops.common.ApiExceptionHandler;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,13 +45,18 @@ class AgentLogControllerTest {
     @Test
     void should_returnBoundedWork_when_requestIsPending() throws Exception {
         when(broker.claimNext()).thenReturn(Optional.of(
-                new ContainerLogWork(REQUEST_ID, "0123456789ab", 50)));
+                new ContainerLogWork(
+                        REQUEST_ID,
+                        "0123456789ab",
+                        50,
+                        Instant.parse("2026-08-18T00:00:06Z"))));
 
         mockMvc.perform(get("/api/v1/internal/agent/log-requests/next"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.requestId").value(REQUEST_ID.toString()))
                 .andExpect(jsonPath("$.containerId").value("0123456789ab"))
-                .andExpect(jsonPath("$.tail").value(50));
+                .andExpect(jsonPath("$.tail").value(50))
+                .andExpect(jsonPath("$.expiresAt").value("2026-08-18T00:00:06Z"));
     }
 
     @Test
@@ -82,6 +88,26 @@ class AgentLogControllerTest {
     }
 
     @Test
+    void should_rejectResultWithoutCollectedTimestamp() throws Exception {
+        mockMvc.perform(post("/api/v1/internal/agent/log-results")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validResult().replace(
+                                "\"collectedAt\":\"2026-08-18T00:00:00Z\",",
+                                "")))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void should_rejectResultWithoutRedactionMetadata() throws Exception {
+        mockMvc.perform(post("/api/v1/internal/agent/log-results")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validResult().replace(
+                                ",\n  \"redactionApplied\":false",
+                                "")))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void should_returnGoneWithoutMetadata_when_requestIsUnknown() throws Exception {
         doThrow(new ContainerLogRequestGoneException())
                 .when(broker).complete(any());
@@ -99,12 +125,14 @@ class AgentLogControllerTest {
                 {
                   "requestId":"%s",
                   "status":"SUCCESS",
+                  "collectedAt":"2026-08-18T00:00:00Z",
                   "lines":[{
                     "timestamp":"2026-08-18T00:00:00Z",
                     "stream":"STDOUT",
                     "message":"safe synthetic fixture"
                   }],
-                  "truncated":false
+                  "truncated":false,
+                  "redactionApplied":false
                 }
                 """.formatted(REQUEST_ID);
     }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xxh3898/homeops/agent/internal/containerlog"
 )
@@ -44,14 +45,21 @@ func TestContainerLogsUsesLightweightAllowlistedDockerPath(t *testing.T) {
 			}
 		})},
 		previousCPUSamples: make(map[string]cpuSample),
+		now:                func() time.Time { return dockerLogTestNow },
 	}
 
-	output, err := client.ContainerLogs(context.Background(), "0123456789ab", 50, 128)
+	output, err := client.ContainerLogs(
+		context.Background(),
+		"0123456789ab",
+		50,
+		128,
+		dockerLogTestNow.Add(6*time.Second))
 
 	if err != nil {
 		t.Fatalf("ContainerLogs returned an error: %v", err)
 	}
-	if len(output.Lines) != 1 || output.Lines[0].Message != "password=[REDACTED]" {
+	if len(output.Lines) != 1 || output.Lines[0].Message != "password=[REDACTED]" ||
+		!output.RedactionApplied {
 		t.Fatalf("output = %#v", output)
 	}
 	if calls["/v1.47/containers/json"] != 1 ||
@@ -84,7 +92,12 @@ func TestContainerLogsFailsClosedBeforeInspectWhenPrefixIsAmbiguous(t *testing.T
 		}
 	})
 
-	_, err := client.ContainerLogs(context.Background(), "aaaaaaaaaaaa", 50, 128)
+	_, err := client.ContainerLogs(
+		context.Background(),
+		"aaaaaaaaaaaa",
+		50,
+		128,
+		dockerLogTestNow.Add(6*time.Second))
 
 	assertReadErrorKind(t, err, containerlog.ReadAmbiguous)
 	if inspectOrLogs != 0 {
@@ -107,7 +120,12 @@ func TestContainerLogsRechecksExactOptInBeforeInspect(t *testing.T) {
 		}
 	})
 
-	_, err := client.ContainerLogs(context.Background(), "0123456789ab", 50, 128)
+	_, err := client.ContainerLogs(
+		context.Background(),
+		"0123456789ab",
+		50,
+		128,
+		dockerLogTestNow.Add(6*time.Second))
 
 	assertReadErrorKind(t, err, containerlog.ReadNotAllowed)
 	if inspectOrLogs != 0 {
@@ -130,7 +148,12 @@ func TestContainerLogsRejectsMalformedFullIdentifierBeforeDockerPathUse(t *testi
 		}
 	})
 
-	_, err := client.ContainerLogs(context.Background(), "0123456789ab", 50, 128)
+	_, err := client.ContainerLogs(
+		context.Background(),
+		"0123456789ab",
+		50,
+		128,
+		dockerLogTestNow.Add(6*time.Second))
 
 	assertReadErrorKind(t, err, containerlog.ReadNotFound)
 	if inspectOrLogs != 0 {
@@ -158,13 +181,94 @@ func TestContainerLogsDropsRawCapCutPartialLine(t *testing.T) {
 		}
 	})
 
-	output, err := client.ContainerLogs(context.Background(), "0123456789ab", 50, 128)
+	output, err := client.ContainerLogs(
+		context.Background(),
+		"0123456789ab",
+		50,
+		128,
+		dockerLogTestNow.Add(6*time.Second))
 
 	if err != nil {
 		t.Fatalf("ContainerLogs returned an error: %v", err)
 	}
 	if !output.Truncated || len(output.Lines) != 1 || output.Lines[0].Message != "complete" {
 		t.Fatalf("output = %#v", output)
+	}
+}
+
+func TestContainerLogsRejectsExpiredWorkBeforeAnyDockerCall(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	client := &Client{
+		httpClient: &http.Client{Transport: roundTripFunc(func(
+			*http.Request,
+		) (*http.Response, error) {
+			calls++
+			return dockerResponse(http.StatusInternalServerError, ""), nil
+		})},
+		previousCPUSamples: make(map[string]cpuSample),
+		now:                func() time.Time { return dockerLogTestNow },
+	}
+
+	_, err := client.ContainerLogs(
+		context.Background(),
+		"0123456789ab",
+		50,
+		128,
+		dockerLogTestNow)
+
+	assertReadErrorKind(t, err, containerlog.ReadUnavailable)
+	if calls != 0 {
+		t.Fatalf("Docker call count = %d, want 0", calls)
+	}
+}
+
+func TestContainerLogsRechecksExpiryImmediatelyBeforeLogsRead(t *testing.T) {
+	t.Parallel()
+	fullID := "0123456789abcdef"
+	clockReads := 0
+	calls := make(map[string]int)
+	client := &Client{
+		httpClient: &http.Client{Transport: roundTripFunc(func(
+			request *http.Request,
+		) (*http.Response, error) {
+			calls[request.URL.Path]++
+			switch request.URL.Path {
+			case "/version":
+				return dockerResponse(http.StatusOK, `{"ApiVersion":"1.47"}`), nil
+			case "/v1.47/containers/json":
+				return dockerResponse(http.StatusOK,
+					`[{"Id":"`+fullID+`","Labels":{"homeops.logs":"true"}}]`), nil
+			case "/v1.47/containers/" + fullID + "/json":
+				return dockerResponse(http.StatusOK, `{"Config":{"Tty":false}}`), nil
+			default:
+				return dockerResponse(http.StatusInternalServerError, ""), nil
+			}
+		})},
+		previousCPUSamples: make(map[string]cpuSample),
+		now: func() time.Time {
+			clockReads++
+			if clockReads >= 4 {
+				return dockerLogTestNow.Add(6 * time.Second)
+			}
+			return dockerLogTestNow
+		},
+	}
+
+	_, err := client.ContainerLogs(
+		context.Background(),
+		"0123456789ab",
+		50,
+		128,
+		dockerLogTestNow.Add(6*time.Second))
+
+	assertReadErrorKind(t, err, containerlog.ReadUnavailable)
+	if calls["/v1.47/containers/"+fullID+"/logs"] != 0 {
+		t.Fatalf("logs call count = %d, want 0", calls["/v1.47/containers/"+fullID+"/logs"])
+	}
+	if calls["/v1.47/containers/json"] != 1 ||
+		calls["/v1.47/containers/"+fullID+"/json"] != 1 {
+		t.Fatalf("Docker calls = %#v", calls)
 	}
 }
 
@@ -200,8 +304,11 @@ func dockerLogClient(
 			return dockerResponse(status, text), nil
 		})},
 		previousCPUSamples: make(map[string]cpuSample),
+		now:                func() time.Time { return dockerLogTestNow },
 	}
 }
+
+var dockerLogTestNow = time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)
 
 func assertReadErrorKind(
 	t *testing.T,

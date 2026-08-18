@@ -22,6 +22,7 @@ type Client struct {
 	logWorkEndpoint   string
 	logResultEndpoint string
 	httpClient        *http.Client
+	now               func() time.Time
 }
 
 const (
@@ -75,6 +76,7 @@ func NewClient(
 			Transport: transport,
 			Timeout:   10 * time.Second,
 		},
+		now: func() time.Time { return time.Now().UTC() },
 	}, nil
 }
 
@@ -143,10 +145,17 @@ func (client *Client) NextContainerLogWork(
 	if decoder.Decode(&struct{}{}) != io.EOF {
 		return nil, errors.New("container log work response has trailing data")
 	}
-	if err := work.Validate(); err != nil {
+	if err := work.Validate(client.currentTime()); err != nil {
 		return nil, err
 	}
 	return &work, nil
+}
+
+func (client *Client) currentTime() time.Time {
+	if client.now != nil {
+		return client.now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func (client *Client) SendContainerLogResult(

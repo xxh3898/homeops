@@ -14,8 +14,10 @@ import java.util.UUID;
 public record AgentLogResultRequest(
         @NotNull UUID requestId,
         @NotNull ContainerLogResultStatus status,
+        @NotNull Instant collectedAt,
         @NotNull @Size(max = 200) List<@NotNull @Valid Line> lines,
-        boolean truncated) {
+        boolean truncated,
+        @NotNull Boolean redactionApplied) {
 
     public AgentLogResultRequest {
         lines = lines == null ? null : List.copyOf(lines);

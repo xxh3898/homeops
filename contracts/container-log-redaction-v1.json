@@ -4,67 +4,80 @@
     {
       "name": "plain message",
       "input": "service started normally",
-      "expected": "service started normally"
+      "expected": "service started normally",
+      "redactionApplied": false
     },
     {
       "name": "password assignment",
       "input": "password=synthetic-password",
-      "expected": "password=[REDACTED]"
+      "expected": "password=[REDACTED]",
+      "redactionApplied": true
     },
     {
       "name": "case insensitive passwd",
       "input": "PASSWD: synthetic-passwd",
-      "expected": "PASSWD: [REDACTED]"
+      "expected": "PASSWD: [REDACTED]",
+      "redactionApplied": true
     },
     {
       "name": "api key query value",
       "input": "request api_key=synthetic-key&next=/status",
-      "expected": "request api_key=[REDACTED]&next=/status"
+      "expected": "request api_key=[REDACTED]&next=/status",
+      "redactionApplied": true
     },
     {
       "name": "quoted json secret field",
       "input": "{\"secret\":\"synthetic-json-secret\",\"event\":\"ignored-after-secret\"}",
-      "expected": "{\"secret\":[REDACTED]"
+      "expected": "{\"secret\":[REDACTED]",
+      "redactionApplied": true
     },
     {
       "name": "authorization header",
       "input": "authorization: Bearer synthetic-authorization",
-      "expected": "authorization: [REDACTED]"
+      "expected": "authorization: [REDACTED]",
+      "redactionApplied": true
     },
     {
       "name": "set cookie header",
       "input": "Set-Cookie: session=synthetic-cookie; Path=/; Secure",
-      "expected": "Set-Cookie: [REDACTED]"
+      "expected": "Set-Cookie: [REDACTED]",
+      "redactionApplied": true
     },
     {
       "name": "standalone bearer",
       "input": "upstream returned Bearer synthetic-bearer-value",
-      "expected": "upstream returned Bearer [REDACTED]"
+      "expected": "upstream returned Bearer [REDACTED]",
+      "redactionApplied": true
     },
     {
       "name": "standalone basic",
       "input": "proxy Basic c3ludGhldGljOnZhbHVl",
-      "expected": "proxy Basic [REDACTED]"
+      "expected": "proxy Basic [REDACTED]",
+      "redactionApplied": true
     },
     {
       "name": "jwt shaped value",
       "input": "jwt eyJzeW50aGV0aWM.eyJub3QtcmVhbC1kYXRh.c2lnbmF0dXJlLWZpeHR1cmU",
-      "expected": "jwt [REDACTED]"
+      "expected": "jwt [REDACTED]",
+      "redactionApplied": true
     },
     {
       "name": "multiple key values",
       "input": "token=synthetic-token credential='synthetic-credential'",
-      "expected": "token=[REDACTED] credential=[REDACTED]"
+      "expected": "token=[REDACTED] credential=[REDACTED]",
+      "redactionApplied": true
     },
     {
       "name": "private key field",
       "input": "private_key: synthetic-private-key",
-      "expected": "private_key: [REDACTED]"
+      "expected": "private_key: [REDACTED]",
+      "redactionApplied": true
     },
     {
       "name": "ansi and controls",
       "input": "\u001b[31msecret=synthetic-secret\u001b[0m\u0000\u202e",
-      "expected": "secret=[REDACTED]"
+      "expected": "secret=[REDACTED]",
+      "redactionApplied": true
     }
   ]
 }
