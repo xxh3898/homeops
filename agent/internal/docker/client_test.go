@@ -17,6 +17,7 @@ func TestMapListedKeepsAllowlistedContainerFields(t *testing.T) {
   "Labels": {
     "com.docker.compose.project": "example",
     "homeops.managed": "true",
+    "homeops.logs": "true",
     "secret-looking-label": "must-not-be-forwarded"
   }
 }`
@@ -35,6 +36,9 @@ func TestMapListedKeepsAllowlistedContainerFields(t *testing.T) {
 	}
 	if !container.Managed {
 		t.Fatal("Managed = false, want true")
+	}
+	if !container.LogsAllowed {
+		t.Fatal("LogsAllowed = false, want true")
 	}
 	if len(container.Ports) != 1 ||
 		container.Ports[0].PrivatePort != 8080 ||

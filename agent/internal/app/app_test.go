@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -11,8 +13,10 @@ import (
 	"time"
 
 	"github.com/xxh3898/homeops/agent/internal/config"
+	"github.com/xxh3898/homeops/agent/internal/containerlog"
 	"github.com/xxh3898/homeops/agent/internal/snapshot"
 	spoolpkg "github.com/xxh3898/homeops/agent/internal/spool"
+	"github.com/xxh3898/homeops/agent/internal/transport"
 )
 
 func TestNewUUIDReturnsRFC4122Shape(t *testing.T) {
@@ -135,6 +139,340 @@ func TestCollectAndSendContinuesAfterPermanentRejectionsAreQuarantined(
 	}
 }
 
+func TestCollectAndSendAdvertisesContainerLogCapability(t *testing.T) {
+	t.Parallel()
+	snapshotTransport := &recordingTransport{}
+	application := &App{
+		config: config.Config{
+			AgentID:       "local-mac",
+			MaxContainers: 128,
+		},
+		version:   "1111111111111111111111111111111111111111",
+		host:      &recordingHostCollector{},
+		docker:    &recordingDockerCollector{},
+		transport: snapshotTransport,
+		spool:     &recordingSpool{},
+		logger:    discardLogger(),
+	}
+
+	if err := application.collectAndSend(context.Background()); err != nil {
+		t.Fatalf("collectAndSend returned an error: %v", err)
+	}
+	var captured snapshot.Snapshot
+	if err := json.Unmarshal(snapshotTransport.lastPayload, &captured); err != nil {
+		t.Fatalf("decode snapshot payload: %v", err)
+	}
+	if !captured.SupportsContainerLogs {
+		t.Fatal("supportsContainerLogs = false, want true")
+	}
+}
+
+func TestExecuteContainerLogWorkRedactsBeforeResultTransport(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)
+	application := &App{
+		config: config.Config{MaxContainers: 128},
+		logReader: &recordingLogReader{output: containerlog.Output{
+			Lines: []containerlog.Line{{
+				Stream:  containerlog.StreamStdout,
+				Message: "token=synthetic-token",
+			}},
+		}},
+		now: func() time.Time { return now },
+	}
+	work := containerlog.Work{
+		RequestID:   "10000000-0000-4000-8000-000000000001",
+		ContainerID: "0123456789ab",
+		Tail:        50,
+		ExpiresAt:   now.Add(6 * time.Second),
+	}
+
+	result := application.executeContainerLogWork(context.Background(), work)
+
+	if result.Status != containerlog.StatusSuccess || len(result.Lines) != 1 ||
+		result.Lines[0].Message != "token=[REDACTED]" ||
+		!result.RedactionApplied || !result.CollectedAt.Equal(now) {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestExecuteContainerLogWorkRejectsExpiredWorkBeforeReader(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)
+	reader := &recordingLogReader{}
+	application := &App{
+		config:    config.Config{MaxContainers: 128},
+		logReader: reader,
+		now:       func() time.Time { return now },
+	}
+
+	result := application.executeContainerLogWork(
+		context.Background(),
+		containerlog.Work{
+			RequestID:   "10000000-0000-4000-8000-000000000001",
+			ContainerID: "0123456789ab",
+			Tail:        50,
+			ExpiresAt:   now,
+		})
+
+	if result.Status != containerlog.StatusInvalidRequest {
+		t.Fatalf("status = %s, want %s", result.Status, containerlog.StatusInvalidRequest)
+	}
+	if reader.calls != 0 {
+		t.Fatalf("reader calls = %d, want 0", reader.calls)
+	}
+}
+
+func TestDeliverContainerLogResultRetriesTransientFailureThenSucceeds(
+	t *testing.T,
+) {
+	t.Parallel()
+	clock := &mutableTime{value: time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)}
+	logTransport := &recordingLogTransport{
+		sendErrors: []error{errors.New("network unavailable"), nil},
+	}
+	spoolStore := &recordingSpool{}
+	application := retryTestApp(clock, logTransport, spoolStore)
+	result := successfulLogResult(clock.value)
+
+	delivery := application.deliverContainerLogResult(
+		context.Background(),
+		&result,
+		clock.value.Add(6*time.Second))
+
+	if delivery != resultDeliveryCompleted || logTransport.sendCalls != 2 {
+		t.Fatalf("delivery/calls = %d/%d", delivery, logTransport.sendCalls)
+	}
+	assertResultReleased(t, result)
+	if spoolStore.storeCalls != 0 {
+		t.Fatalf("spool store calls = %d, want 0", spoolStore.storeCalls)
+	}
+}
+
+func TestDeliverContainerLogResultRetriesServerFailureThenSucceeds(t *testing.T) {
+	t.Parallel()
+	clock := &mutableTime{value: time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)}
+	logTransport := &recordingLogTransport{
+		sendErrors: []error{
+			transport.StatusError{StatusCode: 503},
+			nil,
+		},
+	}
+	application := retryTestApp(clock, logTransport, &recordingSpool{})
+	result := successfulLogResult(clock.value)
+
+	delivery := application.deliverContainerLogResult(
+		context.Background(),
+		&result,
+		clock.value.Add(6*time.Second))
+
+	if delivery != resultDeliveryCompleted || logTransport.sendCalls != 2 {
+		t.Fatalf("delivery/calls = %d/%d", delivery, logTransport.sendCalls)
+	}
+	assertResultReleased(t, result)
+}
+
+func TestDeliverContainerLogResultTreatsOldAPIAsUnsupported(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{404, 405} {
+		status := status
+		t.Run(fmt.Sprintf("status-%d", status), func(t *testing.T) {
+			t.Parallel()
+			clock := &mutableTime{value: time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)}
+			logTransport := &recordingLogTransport{
+				sendError: transport.StatusError{StatusCode: status},
+			}
+			application := retryTestApp(clock, logTransport, &recordingSpool{})
+			result := successfulLogResult(clock.value)
+
+			delivery := application.deliverContainerLogResult(
+				context.Background(),
+				&result,
+				clock.value.Add(6*time.Second))
+
+			if delivery != resultDeliveryUnsupported || logTransport.sendCalls != 1 {
+				t.Fatalf("delivery/calls = %d/%d", delivery, logTransport.sendCalls)
+			}
+			assertResultReleased(t, result)
+		})
+	}
+}
+
+func TestDeliverContainerLogResultStopsAtExpiryAndReleasesPayload(t *testing.T) {
+	t.Parallel()
+	clock := &mutableTime{value: time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)}
+	logTransport := &recordingLogTransport{sendError: errors.New("network unavailable")}
+	spoolStore := &recordingSpool{}
+	application := retryTestApp(clock, logTransport, spoolStore)
+	result := successfulLogResult(clock.value)
+
+	delivery := application.deliverContainerLogResult(
+		context.Background(),
+		&result,
+		clock.value.Add(250*time.Millisecond))
+
+	if delivery != resultDeliveryCompleted || logTransport.sendCalls != 2 {
+		t.Fatalf("delivery/calls = %d/%d", delivery, logTransport.sendCalls)
+	}
+	assertResultReleased(t, result)
+	if spoolStore.storeCalls != 0 {
+		t.Fatalf("spool store calls = %d, want 0", spoolStore.storeCalls)
+	}
+}
+
+func TestDeliverContainerLogResultDoesNotRetryGone(t *testing.T) {
+	t.Parallel()
+	clock := &mutableTime{value: time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)}
+	logTransport := &recordingLogTransport{
+		sendError: transport.StatusError{StatusCode: 410},
+	}
+	application := retryTestApp(clock, logTransport, &recordingSpool{})
+	result := successfulLogResult(clock.value)
+
+	delivery := application.deliverContainerLogResult(
+		context.Background(),
+		&result,
+		clock.value.Add(6*time.Second))
+
+	if delivery != resultDeliveryCompleted || logTransport.sendCalls != 1 {
+		t.Fatalf("delivery/calls = %d/%d", delivery, logTransport.sendCalls)
+	}
+	assertResultReleased(t, result)
+}
+
+func TestDeliverContainerLogResultRejectsUnboundedExpiryWithoutSending(t *testing.T) {
+	t.Parallel()
+	clock := &mutableTime{value: time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)}
+	logTransport := &recordingLogTransport{}
+	application := retryTestApp(clock, logTransport, &recordingSpool{})
+	result := successfulLogResult(clock.value)
+
+	delivery := application.deliverContainerLogResult(
+		context.Background(),
+		&result,
+		clock.value.Add(containerlog.MaximumExpiryHorizon+time.Nanosecond))
+
+	if delivery != resultDeliveryCompleted || logTransport.sendCalls != 0 {
+		t.Fatalf("delivery/calls = %d/%d", delivery, logTransport.sendCalls)
+	}
+	assertResultReleased(t, result)
+}
+
+func TestDeliverContainerLogResultStopsImmediatelyOnCancellation(t *testing.T) {
+	t.Parallel()
+	clock := &mutableTime{value: time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)}
+	logTransport := &recordingLogTransport{sendError: errors.New("network unavailable")}
+	ctx, cancel := context.WithCancel(context.Background())
+	application := &App{
+		logTransport: logTransport,
+		now:          func() time.Time { return clock.value },
+		wait: func(context.Context, time.Duration) bool {
+			cancel()
+			return false
+		},
+	}
+	result := successfulLogResult(clock.value)
+
+	delivery := application.deliverContainerLogResult(
+		ctx,
+		&result,
+		clock.value.Add(6*time.Second))
+
+	if delivery != resultDeliveryCancelled || logTransport.sendCalls != 1 {
+		t.Fatalf("delivery/calls = %d/%d", delivery, logTransport.sendCalls)
+	}
+	assertResultReleased(t, result)
+}
+
+func TestRunKeepsSnapshotLoopAliveWhenOldAPIReturns404(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Millisecond)
+	defer cancel()
+	snapshotTransport := &recordingTransport{}
+	logTransport := &recordingLogTransport{
+		nextError: transport.StatusError{StatusCode: 404},
+	}
+	application := &App{
+		config: config.Config{
+			AgentID:       "local-mac",
+			Interval:      5 * time.Millisecond,
+			MaxContainers: 128,
+		},
+		version:      "1111111111111111111111111111111111111111",
+		host:         &recordingHostCollector{},
+		docker:       &recordingDockerCollector{},
+		transport:    snapshotTransport,
+		logReader:    &recordingLogReader{},
+		logTransport: logTransport,
+		spool:        &recordingSpool{},
+		logger:       discardLogger(),
+	}
+
+	if err := application.Run(ctx); err != nil {
+		t.Fatalf("Run returned an error: %v", err)
+	}
+	if snapshotTransport.sendCalls < 2 {
+		t.Fatalf("snapshot send calls = %d, want at least 2", snapshotTransport.sendCalls)
+	}
+	if logTransport.nextCalls != 1 {
+		t.Fatalf("log poll calls = %d, want 1 bounded old-API attempt", logTransport.nextCalls)
+	}
+}
+
+func TestRunKeepsSnapshotLoopAliveWhenOldResultAPIReturns404(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Millisecond)
+	defer cancel()
+	now := time.Now().UTC()
+	snapshotTransport := &recordingTransport{}
+	logTransport := &recordingLogTransport{
+		nextWork: &containerlog.Work{
+			RequestID:   "10000000-0000-4000-8000-000000000001",
+			ContainerID: "0123456789ab",
+			Tail:        50,
+			ExpiresAt:   now.Add(6 * time.Second),
+		},
+		sendError: transport.StatusError{StatusCode: 404},
+	}
+	application := &App{
+		config: config.Config{
+			AgentID:       "local-mac",
+			Interval:      5 * time.Millisecond,
+			MaxContainers: 128,
+		},
+		version:      "1111111111111111111111111111111111111111",
+		host:         &recordingHostCollector{},
+		docker:       &recordingDockerCollector{},
+		transport:    snapshotTransport,
+		logReader:    &recordingLogReader{},
+		logTransport: logTransport,
+		spool:        &recordingSpool{},
+		logger:       discardLogger(),
+	}
+
+	if err := application.Run(ctx); err != nil {
+		t.Fatalf("Run returned an error: %v", err)
+	}
+	if snapshotTransport.sendCalls < 2 {
+		t.Fatalf("snapshot send calls = %d, want at least 2", snapshotTransport.sendCalls)
+	}
+	if logTransport.sendCalls != 1 {
+		t.Fatalf("result send calls = %d, want 1", logTransport.sendCalls)
+	}
+}
+
+func TestContainerLogBackoffClassifiesOldAPIAsUnsupported(t *testing.T) {
+	t.Parallel()
+	if delay := containerLogBackoff(
+		transport.StatusError{StatusCode: 405}); delay != unsupportedLogAPIDelay {
+		t.Fatalf("405 backoff = %s, want %s", delay, unsupportedLogAPIDelay)
+	}
+	if delay := containerLogBackoff(
+		errors.New("network")); delay != transientLogErrorDelay {
+		t.Fatalf("network backoff = %s, want %s", delay, transientLogErrorDelay)
+	}
+}
+
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -163,16 +501,66 @@ func (collector *recordingDockerCollector) Containers(
 }
 
 type recordingTransport struct {
-	sendCalls int
-	sendError error
+	sendCalls   int
+	sendError   error
+	lastPayload []byte
 }
 
 func (transport *recordingTransport) Send(
-	context.Context,
-	[]byte,
+	_ context.Context,
+	payload []byte,
 ) error {
 	transport.sendCalls++
+	transport.lastPayload = append([]byte(nil), payload...)
 	return transport.sendError
+}
+
+type recordingLogReader struct {
+	output containerlog.Output
+	err    error
+	calls  int
+}
+
+func (reader *recordingLogReader) ContainerLogs(
+	context.Context,
+	string,
+	int,
+	int,
+	time.Time,
+) (containerlog.Output, error) {
+	reader.calls++
+	return reader.output, reader.err
+}
+
+type recordingLogTransport struct {
+	nextCalls  int
+	nextError  error
+	nextWork   *containerlog.Work
+	sendCalls  int
+	sendError  error
+	sendErrors []error
+}
+
+func (logTransport *recordingLogTransport) NextContainerLogWork(
+	context.Context,
+) (*containerlog.Work, error) {
+	logTransport.nextCalls++
+	work := logTransport.nextWork
+	logTransport.nextWork = nil
+	return work, logTransport.nextError
+}
+
+func (logTransport *recordingLogTransport) SendContainerLogResult(
+	context.Context,
+	containerlog.Result,
+) error {
+	logTransport.sendCalls++
+	if len(logTransport.sendErrors) > 0 {
+		err := logTransport.sendErrors[0]
+		logTransport.sendErrors = logTransport.sendErrors[1:]
+		return err
+	}
+	return logTransport.sendError
 }
 
 type recordingSpool struct {
@@ -195,4 +583,44 @@ func (spool *recordingSpool) Drain(
 func (spool *recordingSpool) Store(string, []byte) error {
 	spool.storeCalls++
 	return nil
+}
+
+type mutableTime struct {
+	value time.Time
+}
+
+func retryTestApp(
+	clock *mutableTime,
+	logTransport *recordingLogTransport,
+	spoolStore *recordingSpool,
+) *App {
+	return &App{
+		logTransport: logTransport,
+		spool:        spoolStore,
+		now:          func() time.Time { return clock.value },
+		wait: func(ctx context.Context, delay time.Duration) bool {
+			if ctx.Err() != nil {
+				return false
+			}
+			clock.value = clock.value.Add(delay)
+			return true
+		},
+	}
+}
+
+func successfulLogResult(collectedAt time.Time) containerlog.Result {
+	return containerlog.Result{
+		RequestID:        "10000000-0000-4000-8000-000000000001",
+		Status:           containerlog.StatusSuccess,
+		CollectedAt:      collectedAt,
+		Lines:            []containerlog.Line{{Stream: containerlog.StreamStdout, Message: "safe"}},
+		RedactionApplied: true,
+	}
+}
+
+func assertResultReleased(t *testing.T, result containerlog.Result) {
+	t.Helper()
+	if result.RequestID != "" || result.Lines != nil || !result.CollectedAt.IsZero() {
+		t.Fatalf("result payload reference was retained: %#v", result)
+	}
 }

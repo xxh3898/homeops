@@ -53,9 +53,11 @@ class ContainerDetailControllerTest {
                 .andExpect(jsonPath("$.agentStatus").value("CONNECTED"))
                 .andExpect(jsonPath("$.lastUpdatedAt").value("2026-08-04T12:00:00Z"))
                 .andExpect(jsonPath("$.stale").value(false))
+                .andExpect(jsonPath("$.supportsContainerLogs").value(true))
                 .andExpect(jsonPath("$.container.id").value(SHORT_ID))
                 .andExpect(jsonPath("$.container.name").value("example-api"))
                 .andExpect(jsonPath("$.container.health").value("HEALTHY"))
+                .andExpect(jsonPath("$.container.logsAllowed").value(true))
                 .andExpect(content().string(not(containsString(FULL_ID))));
     }
 
@@ -116,6 +118,7 @@ class ContainerDetailControllerTest {
                 "CONNECTED",
                 Instant.parse("2026-08-04T12:00:00Z"),
                 false,
+                true,
                 new ContainerView(
                         SHORT_ID,
                         "example-api",
@@ -130,6 +133,7 @@ class ContainerDetailControllerTest {
                         256L,
                         512L,
                         List.of(new ContainerView.PortView(8080, 13080, "TCP")),
-                        false));
+                        false,
+                        true));
     }
 }

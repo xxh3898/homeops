@@ -17,6 +17,7 @@ readonly ENV_EXAMPLE="${REPOSITORY_ROOT}/deploy/env.example"
 readonly AGENT_DOCKERFILE="${REPOSITORY_ROOT}/agent-artifact.Dockerfile"
 readonly AGENT_BOOTSTRAP="${REPOSITORY_ROOT}/deploy/bootstrap/deploy-homeops-agent-rollout-ci.sh.example"
 readonly AGENT_WORKER="${REPOSITORY_ROOT}/deploy/scripts/rollout-homeops-agent.sh"
+readonly NGINX_CONFIG="${REPOSITORY_ROOT}/deploy/nginx/default.conf"
 readonly DOCKER_BIN="${DOCKER_BIN:-docker}"
 readonly PYTHON_BIN="${PYTHON_BIN:-python3}"
 
@@ -55,6 +56,26 @@ assert_job_contains() {
   if [[ -z "${job_definition}" ]] || ! /usr/bin/grep -Fq -- "${expected}" <<<"${job_definition}"; then
     printf 'Missing %s job contract in %s: %s\n' \
       "${job}" "${file#"${REPOSITORY_ROOT}/"}" "${expected}" >&2
+    exit 1
+  fi
+}
+
+assert_nginx_location_contains() {
+  local file="$1"
+  local location_path="$2"
+  local expected="$3"
+  local location_definition
+
+  location_definition="$(/usr/bin/awk -v start="    location = ${location_path} {" '
+    $0 == start { capture = 1 }
+    capture { print }
+    capture && $0 == "    }" { exit }
+  ' "${file}")"
+  if [[ -z "${location_definition}" ]] \
+    || ! /usr/bin/grep -Fq -- "${expected}" <<<"${location_definition}"
+  then
+    printf 'Missing Nginx location contract in %s for %s: %s\n' \
+      "${file#"${REPOSITORY_ROOT}/"}" "${location_path}" "${expected}" >&2
     exit 1
   fi
 }
@@ -227,5 +248,21 @@ assert_contains "${AGENT_BOOTSTRAP}" 'create "${agent_image}" /homeops-agent'
 assert_contains "${AGENT_WORKER}" 'readonly AGENT_LABEL=dev.homeops.agent'
 assert_contains "${AGENT_WORKER}" 'candidate Agent restart or fresh snapshot confirmation failed; previous release restored'
 assert_absent "${AGENT_WORKER}" 'SSH_ORIGINAL_COMMAND'
+
+assert_contains "${NGINX_CONFIG}" 'location = /api/v1/internal/agent/log-requests/next {'
+assert_contains "${NGINX_CONFIG}" 'location = /api/v1/internal/agent/log-results {'
+assert_nginx_location_contains \
+  "${NGINX_CONFIG}" "/api/v1/internal/agent/log-requests/next" \
+  'limit_except GET { deny all; }'
+assert_nginx_location_contains \
+  "${NGINX_CONFIG}" "/api/v1/internal/agent/log-requests/next" \
+  'proxy_set_header X-HomeOps-Agent-Verified $ssl_client_verify;'
+assert_nginx_location_contains \
+  "${NGINX_CONFIG}" "/api/v1/internal/agent/log-results" \
+  'limit_except POST { deny all; }'
+assert_nginx_location_contains \
+  "${NGINX_CONFIG}" "/api/v1/internal/agent/log-results" \
+  'proxy_set_header X-HomeOps-Agent-Verified $ssl_client_verify;'
+assert_absent "${NGINX_CONFIG}" 'location /api/v1/internal/agent/'
 
 printf 'Deployment contract checks passed\n'

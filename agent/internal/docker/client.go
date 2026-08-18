@@ -33,6 +33,7 @@ type Client struct {
 	httpClient         *http.Client
 	cpuSampleMutex     sync.Mutex
 	previousCPUSamples map[string]cpuSample
+	now                func() time.Time
 }
 
 func NewClient(socketPath string) (*Client, error) {
@@ -63,6 +64,13 @@ func NewClient(socketPath string) (*Client, error) {
 		},
 		previousCPUSamples: make(map[string]cpuSample),
 	}, nil
+}
+
+func (client *Client) currentTime() time.Time {
+	if client.now != nil {
+		return client.now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func (client *Client) Containers(
@@ -166,7 +174,7 @@ func (client *Client) getJSON(
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("Docker API returned status %d", response.StatusCode)
+		return dockerStatusError{statusCode: response.StatusCode}
 	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, maximumBytes))
 	if err := decoder.Decode(target); err != nil {
@@ -186,6 +194,7 @@ func mapListed(item listedContainer) snapshot.Container {
 		Status:         truncate(item.Status, 512),
 		Ports:          mapPorts(item.Ports),
 		Managed:        strings.EqualFold(item.Labels["homeops.managed"], "true"),
+		LogsAllowed:    item.Labels["homeops.logs"] == "true",
 	}
 }
 
@@ -354,7 +363,10 @@ type cpuSample struct {
 
 type inspectedContainer struct {
 	RestartCount int `json:"RestartCount"`
-	State        struct {
+	Config       struct {
+		TTY bool `json:"Tty"`
+	} `json:"Config"`
+	State struct {
 		StartedAt string `json:"StartedAt"`
 		Health    struct {
 			Status string `json:"Status"`

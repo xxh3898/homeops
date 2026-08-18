@@ -8,7 +8,7 @@ HomeOps는 Docker Desktop을 실행하는 Apple Silicon Mac용 모바일 우선 
 
 HomeOps는 정식 출시 전 소프트웨어입니다. 현재 production에서는 읽기 전용 호스트 메트릭과 컨테이너 인벤토리, HMAC 인증 배포·백업 결과 수집, 허용 목록 기반 HTTP 서비스 점검과 인시던트 이력, 페이지네이션을 적용한 모바일 활동 타임라인이 활성화되어 있습니다. 새 설치에서 secret 또는 정확한 origin 허용 목록이 비어 있으면 해당 입력은 계속 fail closed합니다.
 
-읽기 전용 Phase 1은 일부만 완료됐습니다. CPU, memory, disk의 bounded metric history와 latest Agent snapshot 기반 Container Detail API/UI는 구현됐지만 bounded/redacted tail log는 아직 없으며, 알림과 제한된 컨테이너 제어도 후속 마일스톤입니다. 라벨 허용 목록, 작업 잠금, 멱등성, 감사 제어가 완성되기 전까지 컨테이너 시작·중지·재시작은 의도적으로 제외합니다.
+읽기 전용 Phase 1은 일부만 완료됐습니다. CPU, memory, disk의 bounded metric history와 latest Agent snapshot 기반 Container Detail API/UI는 구현됐습니다. Container Logs는 Agent-side bounded read/redaction과 mTLS work protocol foundation까지만 구현됐으며 관리자용 public API/UI는 아직 없습니다. 알림과 제한된 컨테이너 제어도 후속 마일스톤입니다. 라벨 허용 목록, 작업 잠금, 멱등성, 감사 제어가 완성되기 전까지 컨테이너 시작·중지·재시작은 의도적으로 제외합니다.
 
 macOS Agent는 production에서 운영 중입니다. 변경 불가능한 GHCR artifact, 제한된 전용 SSH key, `current`/`previous` rollback과 fresh snapshot proof를 사용하며 live rollback·roll-forward acceptance도 완료했습니다. `main`의 full validation과 application release는 유지하지만 persistent Agent artifact는 Agent release-affecting path가 바뀔 때만 발행됩니다. 현재 `HOMEOPS_AGENT_ROLLOUT_ENABLED=false`는 검증된 capability를 미완료로 돌리는 값이 아니라 자동 CI rollout을 닫아 둔 operational kill switch입니다. 향후 마일스톤을 지원되는 동작으로 보기 전에 [구현 로드맵](docs/roadmap.md)을 확인하세요.
 
@@ -65,10 +65,11 @@ Linux agent, Kubernetes, 인터넷 공개, 다중 사용자 계정, 웹 터미�
 - `GET /api/v1/services`, `/status`, `/incidents`
 - `POST /api/v1/services`: 관리자 인증과 CSRF로 보호
 - `POST /api/v1/internal/agent/snapshots`: loopback mTLS ingress를 통해서만 사용 가능
+- `GET /api/v1/internal/agent/log-requests/next`, `POST /api/v1/internal/agent/log-results`: public log API가 아닌 bounded Agent work protocol foundation. 동일 loopback mTLS ingress의 exact path만 허용
 - `POST /api/v1/internal/ingestion/deployments`, `/backups`: production의 신뢰하는 reporter에서 활성화. ingestion secret이 비어 있는 새 설치에서는 fail closed
 - `GET /actuator/health/readiness`
 
-이 마일스톤에는 컨테이너 변경, 임의 명령, 로그, 알림 전송, 일반 네트워크 요청 endpoint가 없습니다.
+이 마일스톤에는 컨테이너 변경, 임의 명령, 관리자용 public 컨테이너 로그 API/UI, 알림 전송, 일반 네트워크 요청 endpoint가 없습니다.
 
 ## 데이터 손실 정책
 

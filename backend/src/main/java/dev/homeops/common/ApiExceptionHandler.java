@@ -1,6 +1,13 @@
 package dev.homeops.common;
 
 import dev.homeops.activity.InvalidActivityCursorException;
+import dev.homeops.agent.logs.ContainerLogBrokerCapacityException;
+import dev.homeops.agent.logs.ContainerLogCapabilityUnavailableException;
+import dev.homeops.agent.logs.ContainerLogRequestConflictException;
+import dev.homeops.agent.logs.ContainerLogRequestGoneException;
+import dev.homeops.agent.logs.ContainerLogResultRejectedException;
+import dev.homeops.agent.logs.ContainerLogsNotAllowedException;
+import dev.homeops.agent.logs.InvalidContainerLogTailException;
 import dev.homeops.metrics.InvalidMetricHistoryPeriodException;
 import dev.homeops.monitoring.SafeServiceUrlPolicy.UnsafeServiceUrlException;
 import dev.homeops.system.AmbiguousContainerIdentifierException;
@@ -54,6 +61,57 @@ public class ApiExceptionHandler {
     @ExceptionHandler(InvalidContainerIdentifierException.class)
     ProblemDetail handleInvalidContainerIdentifier() {
         return validationProblem(1);
+    }
+
+    @ExceptionHandler(InvalidContainerLogTailException.class)
+    ProblemDetail handleInvalidContainerLogTail() {
+        return validationProblem(1);
+    }
+
+    @ExceptionHandler({
+            ContainerLogCapabilityUnavailableException.class,
+            ContainerLogBrokerCapacityException.class
+    })
+    ProblemDetail handleContainerLogUnavailable() {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "Container log service is unavailable");
+        detail.setType(URI.create("urn:homeops:problem:container-logs-unavailable"));
+        detail.setTitle("Container logs unavailable");
+        return detail;
+    }
+
+    @ExceptionHandler({
+            ContainerLogsNotAllowedException.class,
+            ContainerLogResultRejectedException.class
+    })
+    ProblemDetail handleContainerLogRejected() {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.UNPROCESSABLE_CONTENT,
+                "Container log request cannot be processed");
+        detail.setType(URI.create("urn:homeops:problem:container-logs-rejected"));
+        detail.setTitle("Container logs rejected");
+        return detail;
+    }
+
+    @ExceptionHandler(ContainerLogRequestConflictException.class)
+    ProblemDetail handleContainerLogConflict() {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT,
+                "A container log request is already active");
+        detail.setType(URI.create("urn:homeops:problem:container-log-conflict"));
+        detail.setTitle("Container log request conflicts with active work");
+        return detail;
+    }
+
+    @ExceptionHandler(ContainerLogRequestGoneException.class)
+    ProblemDetail handleContainerLogRequestGone() {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.GONE,
+                "Container log request is no longer available");
+        detail.setType(URI.create("urn:homeops:problem:container-log-request-gone"));
+        detail.setTitle("Container log request expired");
+        return detail;
     }
 
     @ExceptionHandler(ContainerNotFoundException.class)

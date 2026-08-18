@@ -19,7 +19,41 @@ public record ContainerView(
         Long memoryUsageBytes,
         Long memoryLimitBytes,
         List<PortView> ports,
-        boolean managed) {
+        boolean managed,
+        boolean logsAllowed) {
+
+    public ContainerView(
+            String id,
+            String name,
+            String composeProject,
+            String image,
+            String state,
+            String health,
+            String status,
+            Instant startedAt,
+            long restartCount,
+            Double cpuUsagePercent,
+            Long memoryUsageBytes,
+            Long memoryLimitBytes,
+            List<PortView> ports,
+            boolean managed) {
+        this(
+                id,
+                name,
+                composeProject,
+                image,
+                state,
+                health,
+                status,
+                startedAt,
+                restartCount,
+                cpuUsagePercent,
+                memoryUsageBytes,
+                memoryLimitBytes,
+                ports,
+                managed,
+                false);
+    }
 
     public static ContainerView from(ContainerSnapshot snapshot) {
         return new ContainerView(
@@ -36,7 +70,8 @@ public record ContainerView(
                 snapshot.memoryUsageBytes(),
                 snapshot.memoryLimitBytes(),
                 snapshot.ports().stream().map(PortView::from).toList(),
-                snapshot.managed());
+                snapshot.managed(),
+                snapshot.logsAllowed());
     }
 
     public record PortView(

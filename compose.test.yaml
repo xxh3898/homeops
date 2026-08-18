@@ -30,6 +30,7 @@ services:
     working_dir: /workspace
     command: >
       sh -lc "cp -R /source/backend /workspace/backend
+      && cp -R /source/contracts /workspace/contracts
       && cd /workspace/backend
       && ./gradlew test --no-daemon"
     environment:
@@ -41,6 +42,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/source/backend:ro
+      - ./contracts:/source/contracts:ro
       - homeops-test-gradle:/home/gradle/.gradle
 
   frontend-test:
@@ -66,6 +68,7 @@ services:
     working_dir: /workspace
     command: >
       sh -c "cp -R /source/agent /workspace/agent
+      && cp -R /source/contracts /workspace/contracts
       && cd /workspace/agent
       && gofmt -l . > /tmp/homeops-unformatted-go-files
       && test ! -s /tmp/homeops-unformatted-go-files
@@ -73,6 +76,7 @@ services:
       && GOOS=darwin GOARCH=arm64 go build -trimpath -o /out/homeops-agent ./cmd/homeops-agent"
     volumes:
       - ./agent:/source/agent:ro
+      - ./contracts:/source/contracts:ro
       - homeops-test-agent-out:/out
       - homeops-test-go-cache:/root/.cache/go-build
 
