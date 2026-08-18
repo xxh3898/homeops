@@ -2,6 +2,8 @@ import type {
   ActivityPage,
   ContainerDetail,
   ContainerInventory,
+  ContainerLogResponse,
+  ContainerLogTail,
   MetricHistory,
   MetricHistoryPeriod,
   SystemSummary,
@@ -167,6 +169,14 @@ export function getContainers(signal?: AbortSignal) {
 
 export function getContainerDetail(id: string, signal?: AbortSignal) {
   return getJson<ContainerDetail>(`/api/v1/containers/${encodeURIComponent(id)}`, signal)
+}
+
+export function getContainerLogs(id: string, tail: ContainerLogTail, signal?: AbortSignal) {
+  const parameters = new URLSearchParams({ tail: String(tail) })
+  return getJson<ContainerLogResponse>(
+    `/api/v1/containers/${encodeURIComponent(id)}/logs?${parameters}`,
+    signal,
+  )
 }
 
 export function getActivity(cursor?: string, signal?: AbortSignal) {

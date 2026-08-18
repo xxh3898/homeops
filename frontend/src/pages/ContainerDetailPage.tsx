@@ -13,6 +13,7 @@ import {
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { usePageVisible } from '../hooks/usePageVisible'
 import { Card } from '../ui/Card'
+import { ContainerLogsSection } from '../ui/ContainerLogsSection'
 import { StatusBadge } from '../ui/StatusBadge'
 import { formatBytes, formatContainerCpu, formatTimestamp } from '../utils/format'
 
@@ -167,6 +168,13 @@ export function ContainerDetailPage() {
           Container controls are not available in this read-only phase.
         </p>
       </Card>
+
+      <ContainerLogsSection
+        containerId={detail.container.id}
+        supportsContainerLogs={detail.supportsContainerLogs}
+        logsAllowed={detail.container.logsAllowed}
+        stale={effectivelyStale}
+      />
     </div>
   )
 }

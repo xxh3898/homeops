@@ -64,11 +64,12 @@ class ContainerLogBrokerTest {
 
     @Test
     void should_allowOnlyOneClaimedAgentWorkAtATime() {
-        broker.request("000000000001", 50);
+        ContainerLogRequestTicket ticket = broker.request("000000000001", 50);
         broker.request("000000000002", 50);
 
         ContainerLogWork first = broker.claimNext().orElseThrow();
 
+        assertThat(ticket.expiresAt()).isEqualTo(NOW.plusSeconds(6));
         assertThat(first.expiresAt()).isEqualTo(NOW.plusSeconds(6));
         assertThat(broker.claimNext()).isEmpty();
         broker.complete(success(first.requestId(), List.of("safe")));
@@ -125,6 +126,47 @@ class ContainerLogBrokerTest {
                 .hasCauseInstanceOf(ContainerLogRequestExpiredException.class);
         assertThatThrownBy(() -> broker.complete(success(work.requestId(), List.of("late"))))
                 .isInstanceOf(ContainerLogRequestGoneException.class);
+    }
+
+    @Test
+    void should_removePendingRequestAndPayloadReference_when_publicWaiterCancels() {
+        ContainerLogRequestTicket ticket = broker.request("000000000001", 50);
+
+        broker.cancel(ticket);
+
+        assertThat(broker.activeRequestCount()).isZero();
+        assertThat(broker.claimNext()).isEmpty();
+        assertThatThrownBy(() -> ticket.result().toCompletableFuture().join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(ContainerLogRequestCancelledException.class);
+        assertThat(broker.tombstoneCount()).isEqualTo(1);
+    }
+
+    @Test
+    void should_rejectLateAgentResult_when_claimedPublicWaiterCancels() {
+        ContainerLogRequestTicket ticket = broker.request("000000000001", 50);
+        ContainerLogWork work = broker.claimNext().orElseThrow();
+
+        broker.cancel(ticket);
+
+        assertThat(broker.activeRequestCount()).isZero();
+        assertThatThrownBy(() -> broker.complete(success(
+                work.requestId(), List.of("late payload"))))
+                .isInstanceOf(ContainerLogRequestGoneException.class);
+    }
+
+    @Test
+    void should_leaveCompletedResultIntact_when_cancelRacesAfterCompletion() {
+        ContainerLogRequestTicket ticket = broker.request("000000000001", 50);
+        ContainerLogWork work = broker.claimNext().orElseThrow();
+        broker.complete(success(work.requestId(), List.of("safe")));
+
+        broker.cancel(ticket);
+
+        assertThat(ticket.result().toCompletableFuture().join().lines())
+                .extracting(ContainerLogLine::message)
+                .containsExactly("safe");
+        assertThat(broker.tombstoneCount()).isEqualTo(1);
     }
 
     @Test

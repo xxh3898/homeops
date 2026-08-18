@@ -26,7 +26,7 @@
 
 ## Phase 1: 읽기 전용 대시보드 정확성 및 사용성
 
-**상태:** Source PARTIAL / Production ACTIVE / Acceptance PARTIAL. Host/system summary, container inventory와 Compose project grouping, metric aggregate 저장·retention, bounded metric history API/UI, latest snapshot 기반 Container Detail API/UI는 구현됐습니다. Container Logs는 bounded/redacted Agent protocol foundation까지만 구현됐고 public API/UI와 production acceptance는 아직 없습니다.
+**상태:** Source PARTIAL / Production ACTIVE (acceptance가 끝난 범위) / Acceptance PARTIAL. Host/system summary, container inventory와 Compose project grouping, metric aggregate 저장·retention, bounded metric history API/UI, latest snapshot 기반 Container Detail API/UI는 구현됐습니다. Container Logs는 bounded/redacted Agent foundation과 ADMIN 전용 one-shot public API/ephemeral Detail UI까지 source에 구현됐지만 production container opt-in, 실제 log retrieval, revoke/mobile acceptance는 별도 gate로 남아 있습니다.
 
 **목표:** 제어 기능을 추가하지 않고 현재 iPhone 대시보드를 신뢰할 수 있고 훑기 쉽게 만듭니다.
 
@@ -36,7 +36,7 @@
 | Project container group | mobile 친화적이고 접근 가능한 accordion과 명확한 aggregate health로 Docker Compose project별 inventory group화 | Frontend regression test, 여러 Compose project가 있는 iPhone visual check |
 | Metric history | `1h`/`6h`/`24h`/`7d`로 제한한 UTC aggregate API와 missing bucket을 보존하는 mobile history UI | PostgreSQL weighted/last-value integration test, API bound/auth test, frontend gap/stale/accessibility regression |
 | Container detail | 최신 Agent snapshot 안에서 12자리 identifier를 fail-closed resolve하고 freshness를 보존하는 mobile 읽기 전용 detail 제공 | Full-ID collision 및 auth/no-store Backend test, terminal cache와 mobile/accessibility Frontend test. Production acceptance는 source merge와 별도 gate |
-| Container tail log | Bounded/redacted tail endpoint 추가. output을 redact/limit하고 host path를 절대 받지 않음 | FOUNDATION IMPLEMENTED / FEATURE PARTIAL — Agent live resolver, dual redaction, bounded in-memory broker와 exact mTLS ingress 구현. Public API/UI 및 production acceptance는 후속 PR 필요 |
+| Container tail log | Fresh capability와 container별 exact opt-in에서만 `50`/`100`/`200` one-shot tail을 허용하고, output을 이중 redact/limit하며 host path를 받지 않음 | SOURCE IMPLEMENTED / ACCEPTANCE PARTIAL — Agent live resolver, bounded in-memory broker, exact mTLS ingress, synchronous ADMIN API와 ephemeral mobile UI 구현. Production opt-in·실제 retrieval·revoke/mobile acceptance는 별도 gate |
 
 **포함하지 않음:** start, stop, restart, 임의 Docker command, 전체 log retention.
 

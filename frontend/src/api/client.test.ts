@@ -4,6 +4,7 @@ import {
   ApiConnectionError,
   ApiError,
   getContainerDetail,
+  getContainerLogs,
   getMetricHistory,
   getSystemSummary,
   isAuthorizationError,
@@ -82,6 +83,31 @@ describe('HomeOps API client', () => {
       expect.objectContaining({
         cache: 'no-store',
         credentials: 'same-origin',
+      }),
+    )
+  })
+
+  it('requests bounded container logs with no-store and explicit tail', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        containerId: '0123456789ab',
+        requestedTail: 100,
+        collectedAt: '2026-08-18T00:00:00Z',
+        truncated: false,
+        redactionApplied: false,
+        lines: [],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getContainerLogs('abc/def', 100)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/containers/abc%2Fdef/logs?tail=100',
+      expect.objectContaining({
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal: expect.any(AbortSignal),
       }),
     )
   })

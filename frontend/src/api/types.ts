@@ -65,6 +65,7 @@ export interface ContainerView {
     type: string
   }>
   managed: boolean
+  logsAllowed: boolean
 }
 
 export interface ContainerInventory {
@@ -78,7 +79,27 @@ export interface ContainerDetail {
   agentStatus: 'CONNECTED' | 'STALE'
   lastUpdatedAt: string
   stale: boolean
+  supportsContainerLogs: boolean
   container: ContainerView
+}
+
+export const containerLogTails = [50, 100, 200] as const
+
+export type ContainerLogTail = (typeof containerLogTails)[number]
+
+export interface ContainerLogResponse {
+  containerId: string
+  requestedTail: ContainerLogTail
+  collectedAt: string
+  truncated: boolean
+  redactionApplied: boolean
+  lines: ContainerLogLine[]
+}
+
+export interface ContainerLogLine {
+  timestamp: string | null
+  stream: 'STDOUT' | 'STDERR' | 'COMBINED'
+  message: string
 }
 
 export interface ActivityEvent {

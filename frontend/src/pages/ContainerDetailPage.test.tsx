@@ -11,11 +11,13 @@ const SECOND_ID = 'abcdefabcdef'
 
 const mocks = vi.hoisted(() => ({
   getContainerDetail: vi.fn(),
+  getContainerLogs: vi.fn(),
 }))
 
 vi.mock('../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/client')>()),
   getContainerDetail: mocks.getContainerDetail,
+  getContainerLogs: mocks.getContainerLogs,
 }))
 vi.mock('../hooks/useOnlineStatus', () => ({
   useOnlineStatus: () => true,
@@ -27,6 +29,7 @@ vi.mock('../hooks/usePageVisible', () => ({
 describe('ContainerDetailPage', () => {
   beforeEach(() => {
     mocks.getContainerDetail.mockReset()
+    mocks.getContainerLogs.mockReset()
   })
 
   it('renders freshness and structured allowlisted container detail', async () => {
@@ -193,6 +196,30 @@ describe('ContainerDetailPage', () => {
     expect(screen.getByRole('button', { name: /Retry/i })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'homeops-api' })).not.toBeInTheDocument()
   })
+
+  it('removes loaded logs when background detail refresh becomes terminal', async () => {
+    mocks.getContainerDetail
+      .mockResolvedValueOnce(containerDetail({
+        container: { ...containerDetail().container, logsAllowed: true },
+      }))
+      .mockRejectedValue(new ApiError(404, 'removed'))
+    mocks.getContainerLogs.mockResolvedValue({
+      containerId: FIRST_ID,
+      requestedTail: 100,
+      collectedAt: '2026-08-04T12:00:00Z',
+      truncated: false,
+      redactionApplied: false,
+      lines: [{ timestamp: null, stream: 'STDOUT', message: 'ephemeral line' }],
+    })
+    const { queryClient } = renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Load logs' }))
+    expect(await screen.findByText('ephemeral line')).toBeInTheDocument()
+    await queryClient.refetchQueries({ queryKey: ['container', FIRST_ID] })
+
+    expect(await screen.findByText('Container no longer reported')).toBeInTheDocument()
+    expect(screen.queryByText('ephemeral line')).not.toBeInTheDocument()
+  })
 })
 
 function renderPage(path = `/containers/${FIRST_ID}`, includeSwitch = false) {
@@ -220,6 +247,7 @@ function containerDetail(overrides: Partial<ContainerDetail> = {}): ContainerDet
     agentStatus: 'CONNECTED',
     lastUpdatedAt: '2026-08-04T12:00:00Z',
     stale: false,
+    supportsContainerLogs: true,
     container: {
       id: FIRST_ID,
       name: 'homeops-api',
@@ -235,6 +263,7 @@ function containerDetail(overrides: Partial<ContainerDetail> = {}): ContainerDet
       memoryLimitBytes: 2048,
       ports: [{ privatePort: 8080, publicPort: 13080, type: 'TCP' }],
       managed: false,
+      logsAllowed: false,
     },
   }
   return { ...base, ...overrides }

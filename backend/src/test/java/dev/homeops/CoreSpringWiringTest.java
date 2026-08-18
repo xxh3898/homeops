@@ -7,6 +7,7 @@ import dev.homeops.agent.AgentSnapshotService;
 import dev.homeops.agent.ProcessedAgentSnapshotRetentionJob;
 import dev.homeops.agent.config.HomeOpsAgentProperties;
 import dev.homeops.agent.logs.ContainerLogBroker;
+import dev.homeops.agent.logs.ContainerLogQueryService;
 import dev.homeops.agent.logs.ContainerLogRedactor;
 import dev.homeops.agent.persistence.AgentStatusRepository;
 import dev.homeops.agent.persistence.AgentStatusStore;
@@ -61,6 +62,7 @@ class CoreSpringWiringTest {
                     AgentSnapshotService.class,
                     ContainerLogRedactor.class,
                     ContainerLogBroker.class,
+                    ContainerLogQueryService.class,
                     ProcessedAgentSnapshotRetentionJob.class,
                     HostMetricRetentionJob.class,
                     HostMetricHistoryStore.class,
@@ -70,6 +72,7 @@ class CoreSpringWiringTest {
 
             assertThat(context.getBean(AgentSnapshotService.class)).isNotNull();
             assertThat(context.getBean(ContainerLogBroker.class)).isNotNull();
+            assertThat(context.getBean(ContainerLogQueryService.class)).isNotNull();
             assertThat(context.getBean(ProcessedAgentSnapshotRetentionJob.class))
                     .isNotNull();
             assertThat(context.getBean(HostMetricRetentionJob.class)).isNotNull();
