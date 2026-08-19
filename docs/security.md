@@ -35,6 +35,7 @@
 | 반복 restart API | 현재 없음 | 향후 높음 | control 제외 | 구현 전 rate limit, idempotency, lock, audit, confirmation 필요 |
 | HomeOps outage | 중간 | 중간 | Kuma 독립 유지, stale UI, health check | HomeOps가 다운되면 스스로 alert할 수 없음 |
 | 전체 Mac outage | 중간 | 높음 | optional external heartbeat | 같은 host의 component는 전체 power/network loss를 보고할 수 없음 |
+| Discord webhook 유출 또는 arbitrary outbound | 낮음/중간 | 높음 | Secret은 environment에만 유지, official HTTPS host/path allowlist, no redirect/query/userinfo/custom port, disabled-by-default kill switch | API process 또는 host account 침해 시 in-memory credential과 outbound capability가 노출될 수 있음 |
 
 ## Docker API 경계
 
@@ -62,6 +63,12 @@ CI key는 stable bootstrap으로 강제되어야 합니다. v2 bootstrap은 full
 Secret migration 이전의 public workflow log에는 historical deployment-target metadata가 남아 있을 수 있습니다. 이 residual exposure에 credential이 포함됐다는 evidence나 현재 credential compromise evidence는 없지만, 기존 run 삭제 여부는 보존 영향과 별도 destructive 승인을 요구합니다. 실제 host/account 값을 issue, 문서 또는 cleanup 계획에 다시 기록하지 마세요.
 
 예시는 운영자 검토와 staging이 여전히 필요합니다. live SSH key, file owner/mode, Tailscale grant, production directory가 올바르게 구성되었다는 증거가 아닙니다.
+
+## Discord notification 경계
+
+Dormant outbox foundation은 typed allowlist payload만 JSONB로 저장하며 webhook URL/token, raw response, raw exception, monitored raw URL, host/Tailnet metadata, labels, logs, filesystem path 또는 full Docker ID를 저장하지 않습니다. Discord message는 content·attachment·image·URL·username/avatar override 없이 embed 하나와 최대 6개 field만 사용하고 `allowed_mentions.parse=[]`를 강제합니다. Webhook response는 bounded read 뒤 폐기합니다.
+
+`HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 webhook이 없어도 application이 시작하고 outbound를 수행하지 않습니다. 반대로 enabled 상태에서 missing/invalid webhook은 startup을 fail closed합니다. Regex와 allowlist는 credential-free delivery를 보장하지 않으므로 향후 producer별 payload review와 production channel visibility 승인이 별도로 필요합니다.
 
 ## 취약점 제보
 

@@ -4,7 +4,7 @@
 
 HomeOps는 Docker Desktop을 실행하는 Apple Silicon Mac용 단일 관리자 대시보드입니다. 소스를 fork하여 self-host할 수 있지만, 지원하는 ingress는 비공개 tailnet입니다. 인터넷 공개, Funnel, multi-tenant 격리, 임의 Docker 또는 shell 입력은 지원하지 않습니다.
 
-현재 마일스톤에서 호스트와 컨테이너 작업은 읽기 전용입니다. 호스트·컨테이너 인벤토리, bounded metric history, freshness-aware Container Detail, explicit opt-in bounded/redacted Container Logs, HMAC 인증 배포/백업 수집, 정확한 origin HTTP 서비스 점검, 인시던트 상태 전환, 범위 제한 점검 결과 보존, 페이지네이션 Activity 타임라인을 구현합니다. 운영 이력 입력은 운영자가 관리하는 secret 또는 origin allowlist를 설정하기 전까지 fail closed하고, Container Logs는 fresh capability와 container별 exact opt-in이 없으면 fail closed합니다. 알림과 컨테이너 제어는 이후 마일스톤으로 남아 있습니다.
+현재 마일스톤에서 호스트와 컨테이너 작업은 읽기 전용입니다. 호스트·컨테이너 인벤토리, bounded metric history, freshness-aware Container Detail, explicit opt-in bounded/redacted Container Logs, HMAC 인증 배포/백업 수집, 정확한 origin HTTP 서비스 점검, 인시던트 상태 전환, 범위 제한 점검 결과 보존, 페이지네이션 Activity 타임라인을 구현합니다. 운영 이력 입력은 운영자가 관리하는 secret 또는 origin allowlist를 설정하기 전까지 fail closed하고, Container Logs는 fresh capability와 container별 exact opt-in이 없으면 fail closed합니다. Phase 4에는 producer가 없는 dormant Discord outbox foundation만 존재하며 notification source 연결과 production activation은 아직 구현하지 않습니다. 컨테이너 제어도 이후 마일스톤으로 남아 있습니다.
 
 ## 런타임 토폴로지
 
@@ -59,11 +59,13 @@ Tailscale identity와 정확한 login allowlist가 주 인증 방식입니다. S
 
 HomeOps는 전용 PostgreSQL instance와 volume을 사용하며 다른 프로젝트와 데이터베이스를 공유하지 않습니다. 현재 구현은 1분 host metric aggregate, Agent liveness, 범위가 제한된 처리 snapshot 멱등성 ledger를 저장하고, 최신 상세 container snapshot은 API memory에 둡니다. container inventory response에는 Agent freshness가 포함되므로 Agent가 멈춰도 오래된 RUNNING 또는 HEALTHY 상태가 최신처럼 표시되지 않습니다.
 
-현재 배포는 API replica 하나와 in-process service-check scheduler 하나를 지원하며 distributed scheduler claim은 구현하지 않았습니다. 다만 incident 생성에는 서비스별 `OPEN` 또는 `ACKNOWLEDGED` incident의 PostgreSQL partial unique index가 있어 동시 caller가 경쟁하더라도 활성 incident는 최대 하나라는 불변식을 데이터베이스가 강제합니다.
+현재 배포는 API replica 하나와 in-process service-check scheduler 하나를 지원합니다. Notification outbox claim은 `FOR UPDATE SKIP LOCKED`와 lease-token compare-and-set으로 multi-process safety를 유지하지만, notification producer는 아직 연결하지 않았습니다. Incident 생성에는 서비스별 `OPEN` 또는 `ACKNOWLEDGED` incident의 PostgreSQL partial unique index가 있어 동시 caller가 경쟁하더라도 활성 incident는 최대 하나라는 불변식을 데이터베이스가 강제합니다.
 
 기본 metric policy는 1분 aggregate를 30일간, Agent 하나 기준 약 43,200행 보관하고 daily transaction에서 그보다 오래된 aggregate만 삭제합니다. 정상 service-check 결과는 기본 7일, 실패는 30일 보관합니다. Agent Activity record는 5초마다가 아니라 첫 연결 또는 version 변경 때만 기록합니다. schema에는 notification attempt, control audit event, settings, Spring session용 normalized table도 예약되어 있습니다. JSONB는 보조 metadata로 제한하며 검색할 state와 identity field는 일반 column으로 유지합니다.
 
 HomeOps는 container log, Docker inspect document, `.env` 내용, credential, webhook URL을 저장하지 않습니다. `backup_run`은 다른 프로젝트의 backup 결과를 설명할 뿐 HomeOps가 자체 데이터베이스를 자동 백업한다는 뜻이 아닙니다. 신뢰하는 script는 범위가 제한된 시간 HMAC signature가 있을 때만 deployment 또는 backup 결과를 제출할 수 있고, event key는 재시도 전달을 멱등하게 하며 terminal state 변경은 거부됩니다. service-check 대상은 운영자가 제공한 정확한 HTTPS origin과 일치해야 하고 redirect를 따르지 않으며 request timeout은 제한됩니다.
+
+Notification foundation은 domain transaction에서 typed intent만 insert하고 Discord HTTP를 수행하지 않습니다. Worker는 짧은 claim transaction을 commit한 뒤 DB transaction 밖에서 한 건씩 전송하며, 별도 transaction이 lease token을 조건으로 결과를 기록합니다. Deterministic producer dedup은 intent 중복을 막지만 Discord end-to-end exactly-once를 보장하지 않습니다. 명확한 408, 429, 5xx 또는 전송 전 connect failure만 bounded retry하고, remote 처리 여부가 모호한 timeout·응답은 `DELIVERY_UNKNOWN`으로 종료해 자동 재전송하지 않습니다. Disabled kill switch에서는 due intent를 `SUPPRESSED`로 종료해 이후 enable 시 historical replay가 발생하지 않습니다.
 
 ## Uptime Kuma 역할
 
