@@ -48,6 +48,8 @@
 
 - API:
 - Data / Migration:
+- Agent:
+- Infrastructure / CI:
 - Security / Privacy:
 - Documentation:
 

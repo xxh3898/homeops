@@ -97,6 +97,11 @@ body:
     attributes:
       label: Security / Privacy Impact
       description: Secret, permission, network boundary, private metadata와 evidence redaction 방식을 적어주세요. 없으면 `없음`으로 적고 실제 민감 값은 기록하지 마세요.
+      placeholder: |
+        Secret Handling:
+        Permission / Network Boundary:
+        Private Metadata:
+        Evidence Redaction:
     validations:
       required: true
 

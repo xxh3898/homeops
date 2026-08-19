@@ -46,7 +46,8 @@ Codex는 PR merge, Issue 임의 close, Release 생성, production deploy, migrat
 - `READY`: Issue contract, local/Hosted validation, docs, scope와 review gate를 모두 충족하고 PR이 Draft가 아니다.
 - `DRAFT_BLOCKED`: 구현 방향은 명확하지만 CI, 권한, dependency, safe workspace 또는 external gate 때문에 완료할 수 없다. 가능한 evidence와 Draft PR을 보존한다.
 - `DECISION_REQUIRED`: Product, Architecture, Data, Security, scope 또는 branch/release 결정이 필요하다. 임의 구현하지 않는다.
-- `NO_OP`: accepted implementation이 base에 이미 존재해 새 diff가 필요 없다.
+
+Base에 accepted implementation이 이미 존재해 새 diff가 필요 없으면 Issue와 branch 상태를 확인한 뒤 `READY` 또는 `DECISION_REQUIRED` 조건에 따라 판정한다.
 
 하나라도 READY 조건이 미충족이면 READY라고 보고하지 않는다.
 

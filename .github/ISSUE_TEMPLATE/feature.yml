@@ -102,8 +102,9 @@ body:
     id: delivery
     attributes:
       label: Delivery / Production Contract
-      description: Migration, release classification과 production gate를 항목별로 확정하세요.
+      description: Production Mutation 선택과 별개로 production 영향, migration, release classification과 production gate를 항목별로 확정하세요.
       placeholder: |
+        Production Impact:
         DB migration compatibility:
         API/Web deployment:
         Agent artifact classification:
