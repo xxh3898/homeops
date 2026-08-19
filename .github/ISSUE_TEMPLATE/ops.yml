@@ -1,11 +1,12 @@
 name: Operations / Acceptance
-description: Production 검증, drill, CI/CD, monitoring 또는 운영 보안 작업을 계획합니다.
+description: Production 검증, drill, CI/CD, monitoring 또는 운영 보안 작업을 승인 경계와 함께 계획합니다.
 title: "[Ops] "
 body:
   - type: markdown
     attributes:
       value: |
-        운영 변경 권한은 Issue 생성만으로 부여되지 않습니다. Secret, credential, private deployment metadata, private address 또는 Tailnet 상세를 기록하지 마세요.
+        Issue 생성이나 계획 승인은 production mutation, Secret 접근 또는 deploy 권한이 아닙니다. Exact target과 evidence를 확인하고 실행 승인을 별도로 받으세요.
+        Secret, credential, private deployment metadata, private address 또는 Tailnet 상세를 기록하지 마세요.
 
   - type: textarea
     id: purpose
@@ -55,18 +56,31 @@ body:
       required: true
 
   - type: textarea
+    id: target
+    attributes:
+      label: Exact Target / Data Impact
+      description: Exact environment, project, service와 실제 사용자·운영 data 영향을 적어주세요. 민감한 주소나 값은 logical name으로 기록하세요.
+      placeholder: |
+        Environment:
+        Project / Service:
+        User / Operational Data Impact:
+        Expected Mutation:
+    validations:
+      required: true
+
+  - type: textarea
     id: preflight
     attributes:
-      label: Preflight Gate
-      description: 실행 전에 확인해야 할 identity, health, backup, switch, permission 또는 승인 조건을 적어주세요.
+      label: Preconditions / Preflight Gate
+      description: 실행 전에 확인할 identity, health, backup, switch, permission, concurrent 작업과 승인 조건을 적어주세요.
     validations:
       required: true
 
   - type: textarea
     id: acceptance
     attributes:
-      label: Acceptance Criteria
-      description: PASS, HOLD 또는 rollback을 판정할 observable evidence를 적어주세요.
+      label: Exact Acceptance Evidence
+      description: PASS, HOLD, rollback을 판정할 observable evidence와 수집 위치를 적어주세요.
     validations:
       required: true
 
@@ -74,22 +88,35 @@ body:
     id: recovery
     attributes:
       label: Rollback / Recovery
-      description: 실패 시 복원 방법과 중단 조건을 적어주세요. Read-only 작업이면 `N/A`와 이유를 적어주세요.
+      description: 실패 시 중단 조건, 복원 방법과 복원 완료 기준을 적어주세요. Read-only 작업이면 `N/A`와 이유를 적어주세요.
     validations:
       required: true
 
   - type: textarea
     id: security
     attributes:
-      label: Security Impact
-      description: Secret, permission, network boundary, private metadata 영향을 적어주세요. 없으면 `없음`으로 적고 실제 민감 값은 기록하지 마세요.
+      label: Security / Privacy Impact
+      description: Secret, permission, network boundary, private metadata와 evidence redaction 방식을 적어주세요. 없으면 `없음`으로 적고 실제 민감 값은 기록하지 마세요.
     validations:
       required: true
 
   - type: textarea
     id: evidence
     attributes:
-      label: Evidence
+      label: Existing Evidence
       description: Actions run, redacted log, review 문서 또는 확인할 artifact 위치를 적어주세요. 실제 민감 값은 포함하지 마세요.
     validations:
       required: false
+
+  - type: checkboxes
+    id: authorization
+    attributes:
+      label: Execution Authority 확인
+      description: Issue 작성 단계에서 아래 경계를 확인하세요.
+      options:
+        - label: Issue 생성만으로 production mutation, deploy, restart 또는 Secret 접근 권한이 생기지 않음을 확인했습니다.
+          required: true
+        - label: 실제 사용자 data와 민감한 운영 metadata를 Issue에 포함하지 않았습니다.
+          required: true
+    validations:
+      required: true
