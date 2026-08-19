@@ -68,6 +68,8 @@ Secret migration 이전의 public workflow log에는 historical deployment-targe
 
 Dormant outbox foundation은 typed allowlist payload만 JSONB로 저장하며 webhook URL/token, raw response, raw exception, monitored raw URL, host/Tailnet metadata, labels, logs, filesystem path 또는 full Docker ID를 저장하지 않습니다. Discord message는 content·attachment·image·URL·username/avatar override 없이 embed 하나와 최대 6개 field만 사용하고 `allowed_mentions.parse=[]`를 강제합니다. Webhook response는 bounded read 뒤 폐기합니다.
 
+Deployment producer는 신뢰하는 HMAC ingestion의 실제 insert 또는 terminal transition winner만 같은 transaction에서 outbox에 연결합니다. Discord payload에는 project, environment, 12자리 commit identity와 bounded status만 포함하며 raw failure summary, actor, workflow URL, image tag 또는 private deployment metadata를 저장하지 않습니다. Producer는 Discord transport를 직접 호출하지 않습니다.
+
 `HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 webhook이 없어도 application이 시작하고 outbound를 수행하지 않습니다. 반대로 enabled 상태에서 missing/invalid webhook은 startup을 fail closed합니다. Regex와 allowlist는 credential-free delivery를 보장하지 않으므로 향후 producer별 payload review와 production channel visibility 승인이 별도로 필요합니다.
 
 Service별 `notification_enabled`는 Discord Secret이나 activation switch가 아니라 future incident eligibility입니다. Existing service의 변경 endpoint는 ADMIN session과 CSRF를 요구하고 service ID와 boolean만 받으며, unknown service field를 fail closed합니다. 응답과 오류에는 monitored raw URL, incident payload 또는 credential을 추가하지 않습니다. Toggle만으로 outbox row, historical replay 또는 outbound를 만들지 않습니다.
