@@ -41,6 +41,7 @@
 | `HOMEOPS_MONITORING_SCHEDULER_DELAY` | 아니요 | 아니요 | 점검 대상 service scan delay. 기본값 `5s` |
 | `HOMEOPS_MONITORING_CLEANUP_CRON` | 아니요 | 아니요 | UTC 기준 점검 결과 cleanup cron |
 | `HOMEOPS_NOTIFICATIONS_ENABLED` | 아니요 | 아니요 | Discord notification kill switch. 기본값 `false`이며 disabled event는 replay 불가 `SUPPRESSED`로 종료 |
+| `HOMEOPS_INCIDENT_NOTIFICATION_ESCALATION_AFTER` | 아니요 | 아니요 | Open incident의 장기 failure escalation threshold. 기본값 `15m`, 허용 범위 `5m..24h` |
 | `HOMEOPS_DISCORD_WEBHOOK_URL` | Phase 4 activation | 예 | Official Discord HTTPS webhook. notifications가 `false`면 비어 있어도 시작하며 `true`면 strict URL이 없을 때 fail closed |
 | `HOMEOPS_NOTIFICATION_CONNECT_TIMEOUT` | 아니요 | 아니요 | Discord connect timeout. 기본값 `3s`, 최대 `10s` |
 | `HOMEOPS_NOTIFICATION_REQUEST_TIMEOUT` | 아니요 | 아니요 | Discord request timeout. 기본값 `5s`, 최대 `15s` |
@@ -149,5 +150,5 @@ GitHub Actions는 workflow의 scoped package access에 `GITHUB_TOKEN`을 자동 
 - production `.env`와 TLS material은 mode를 제한하고 source checkout 밖에 둡니다.
 - Compose label, GitHub variable, command argument, log, issue body, deployment state에 secret 값을 넣지 마세요.
 - private deployment metadata를 repository/environment Variable, step summary, public log, issue body에 기록하지 마세요.
-- Discord outbox foundation에는 deployment와 backup source producer가 연결되어 있습니다. `HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 생성된 intent가 replay 불가 `SUPPRESSED`로 끝나며 webhook이 필요하지 않고 outbound도 없습니다. Phase 4 activation 승인 전에는 webhook을 설치하거나 switch를 켜지 마세요. Webhook URL/token은 Git, DB, `app_setting`, log, error response 또는 Activity에 기록하지 않습니다.
+- Discord outbox foundation에는 deployment, backup과 incident lifecycle source producer가 연결되어 있습니다. Incident는 explicit service authority가 있는 future OPEN winner만 root를 만들고, escalation/recovery는 SENT root에만 연결됩니다. `HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 생성된 root intent가 replay 불가 `SUPPRESSED`로 끝나며 child, webhook requirement와 outbound가 없습니다. Phase 4 activation 승인 전에는 webhook을 설치하거나 switch를 켜지 마세요. Webhook URL/token은 Git, DB, `app_setting`, log, error response 또는 Activity에 기록하지 않습니다.
 - credential 값이 Git history나 workflow log에 나타나면 rotate하세요. 보이는 줄을 지우는 것만으로는 충분하지 않습니다.

@@ -54,6 +54,14 @@ class NotificationOutboxTransactions {
                 store.insertOrFind(intent, canonicalHash, payload, status, now)));
     }
 
+    Optional<NotificationEventReference> findEvent(
+            NotificationSourceType sourceType,
+            UUID sourceId,
+            String eventType) {
+        return required(transactions.execute(transaction ->
+                store.findEvent(sourceType, sourceId, eventType)));
+    }
+
     Optional<NotificationClaim> claimNext() {
         Instant now = clock.instant();
         UUID leaseToken = UUID.randomUUID();

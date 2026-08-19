@@ -195,7 +195,7 @@ class PostgresqlMonitoringIntegrationTest {
             MonitoredServiceResponse service, CountDownLatch ready, CountDownLatch start) throws Exception {
         ready.countDown();
         assertThat(start.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-        return store.openIncident(service, NOW);
+        return store.openIncident(service, NOW).isPresent();
     }
 
     private boolean resultOf(Future<Boolean> attempt) {

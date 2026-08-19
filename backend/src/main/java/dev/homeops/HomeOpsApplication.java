@@ -5,6 +5,7 @@ import dev.homeops.metrics.HomeOpsMetricProperties;
 import dev.homeops.ingestion.config.HomeOpsIngestionProperties;
 import dev.homeops.monitoring.config.HomeOpsMonitoringProperties;
 import dev.homeops.notification.config.HomeOpsNotificationProperties;
+import dev.homeops.notification.config.IncidentNotificationProperties;
 import dev.homeops.security.HomeOpsSecurityProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -19,6 +20,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
     HomeOpsMetricProperties.class,
     HomeOpsIngestionProperties.class,
     HomeOpsMonitoringProperties.class,
+    IncidentNotificationProperties.class,
     HomeOpsNotificationProperties.class,
     HomeOpsSecurityProperties.class
 })

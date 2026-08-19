@@ -114,21 +114,26 @@ public class MonitoredServiceStore {
 
     public Optional<OpenIncident> findOpenIncident(UUID serviceId) {
         return jdbc.query("""
-                SELECT id, status FROM incident
+                SELECT id, status, opened_at FROM incident
                 WHERE service_id = ? AND status IN ('OPEN', 'ACKNOWLEDGED')
                 ORDER BY opened_at DESC LIMIT 1
                 """, (row, index) -> new OpenIncident(
-                row.getObject("id", UUID.class), row.getString("status")), serviceId).stream().findFirst();
+                row.getObject("id", UUID.class), row.getString("status"),
+                row.getTimestamp("opened_at").toInstant()), serviceId).stream().findFirst();
     }
 
-    public boolean openIncident(MonitoredServiceResponse service, Instant now) {
-        return jdbc.update("""
+    public Optional<UUID> openIncident(MonitoredServiceResponse service, Instant now) {
+        UUID incidentId = UUID.randomUUID();
+        return jdbc.query("""
                 INSERT INTO incident
                     (id, service_id, incident_type, severity, status, title, opened_at, last_observed_at)
                 VALUES (?, ?, ?, ?, 'OPEN', ?, ?, ?)
                 ON CONFLICT DO NOTHING
-                """, UUID.randomUUID(), service.id(), "HEALTH_CHECK", service.severity(),
-                service.name() + " is unavailable", Timestamp.from(now), Timestamp.from(now)) == 1;
+                RETURNING id
+                """, (row, index) -> row.getObject("id", UUID.class),
+                incidentId, service.id(), "HEALTH_CHECK", service.severity(),
+                service.name() + " is unavailable", Timestamp.from(now), Timestamp.from(now))
+                .stream().findFirst();
     }
 
     public void observeIncident(UUID incidentId, Instant now) {
@@ -136,12 +141,12 @@ public class MonitoredServiceStore {
                 Timestamp.from(now), incidentId);
     }
 
-    public void resolveIncident(UUID incidentId, Instant now) {
-        jdbc.update("""
+    public boolean resolveIncident(UUID incidentId, Instant now) {
+        return jdbc.update("""
                 UPDATE incident SET status = 'RESOLVED', resolved_at = ?, last_observed_at = ?,
                     resolved_xid = pg_current_xact_id()
                 WHERE id = ? AND status IN ('OPEN', 'ACKNOWLEDGED')
-                """, Timestamp.from(now), Timestamp.from(now), incidentId);
+                """, Timestamp.from(now), Timestamp.from(now), incidentId) == 1;
     }
 
     public int deleteExpiredResults(Instant healthyThreshold, Instant failureThreshold) {
@@ -243,5 +248,5 @@ public class MonitoredServiceStore {
                 row.getBoolean("notification_enabled"));
     }
 
-    public record OpenIncident(UUID id, String status) { }
+    public record OpenIncident(UUID id, String status, Instant openedAt) { }
 }
