@@ -70,6 +70,8 @@ Dormant outbox foundation은 typed allowlist payload만 JSONB로 저장하며 we
 
 `HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 webhook이 없어도 application이 시작하고 outbound를 수행하지 않습니다. 반대로 enabled 상태에서 missing/invalid webhook은 startup을 fail closed합니다. Regex와 allowlist는 credential-free delivery를 보장하지 않으므로 향후 producer별 payload review와 production channel visibility 승인이 별도로 필요합니다.
 
+Service별 `notification_enabled`는 Discord Secret이나 activation switch가 아니라 future incident eligibility입니다. Existing service의 변경 endpoint는 ADMIN session과 CSRF를 요구하고 service ID와 boolean만 받으며, unknown service field를 fail closed합니다. 응답과 오류에는 monitored raw URL, incident payload 또는 credential을 추가하지 않습니다. Toggle만으로 outbox row, historical replay 또는 outbound를 만들지 않습니다.
+
 ## 취약점 제보
 
 `SECURITY.md`에 설명한 비공개 GitHub security advisory 채널을 사용하세요. credential, private host name, Tailnet map, 개인 login, certificate, environment dump, raw service log를 공개 report에 포함하지 마세요.

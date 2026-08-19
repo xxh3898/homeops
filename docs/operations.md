@@ -104,7 +104,14 @@ Flyway가 이미 database를 바꿨을 수 있으므로 image rollback은 backwa
 
 ## Uptime Kuma 및 알림
 
-Uptime Kuma를 독립 HTTP availability source로 유지하고 현재 email 동작을 보존하세요. service-ownership matrix를 구성하기 전까지 HomeOps가 duplicate health alert를 내보내면 안 됩니다. 이후 HomeOps Discord event는 Docker, Agent, deployment, backup-result ingestion, internal incident transition을 다뤄야 합니다. critical long-duration failure는 email로 escalate할 수 있지만 같은 incident에는 owner 하나와 deduplication key 하나가 필요합니다.
+| Owner | 담당 signal | Delivery |
+|---|---|---|
+| Uptime Kuma | 외부 HTTP/Tailnet reachability | 기존 email path |
+| HomeOps | HomeOps가 persisted한 exact-origin incident 중 명시적으로 opt-in한 service의 future transition | Phase 4 Discord producer가 구현·활성화된 이후 |
+
+`monitored_service.notification_enabled`는 HomeOps Discord incident의 future eligibility만 나타냅니다. Uptime Kuma monitor/email 설정이나 Discord global kill switch를 변경하지 않습니다. 이 값을 바꾸는 것만으로 notification intent, historical/open incident replay 또는 outbound가 발생하지 않습니다. Existing service는 boolean-only ADMIN + CSRF operation으로만 이 authority를 변경하며 DB default와 legacy migration 결과는 fail-closed `false`입니다.
+
+Docker, Agent, deployment와 backup-result는 별도 producer 계약으로 추가합니다. Critical 장기 failure의 optional email escalation은 같은 incident의 owner와 deduplication policy를 검증한 뒤에만 고려합니다.
 
 ## 데이터 손실 및 재구성
 

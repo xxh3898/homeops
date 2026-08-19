@@ -4,7 +4,7 @@
 
 HomeOps는 Docker Desktop을 실행하는 Apple Silicon Mac용 단일 관리자 대시보드입니다. 소스를 fork하여 self-host할 수 있지만, 지원하는 ingress는 비공개 tailnet입니다. 인터넷 공개, Funnel, multi-tenant 격리, 임의 Docker 또는 shell 입력은 지원하지 않습니다.
 
-현재 마일스톤에서 호스트와 컨테이너 작업은 읽기 전용입니다. 호스트·컨테이너 인벤토리, bounded metric history, freshness-aware Container Detail, explicit opt-in bounded/redacted Container Logs, HMAC 인증 배포/백업 수집, 정확한 origin HTTP 서비스 점검, 인시던트 상태 전환, 범위 제한 점검 결과 보존, 페이지네이션 Activity 타임라인을 구현합니다. 운영 이력 입력은 운영자가 관리하는 secret 또는 origin allowlist를 설정하기 전까지 fail closed하고, Container Logs는 fresh capability와 container별 exact opt-in이 없으면 fail closed합니다. Phase 4에는 producer가 없는 dormant Discord outbox foundation만 존재하며 notification source 연결과 production activation은 아직 구현하지 않습니다. 컨테이너 제어도 이후 마일스톤으로 남아 있습니다.
+현재 마일스톤에서 호스트와 컨테이너 작업은 읽기 전용입니다. 호스트·컨테이너 인벤토리, bounded metric history, freshness-aware Container Detail, explicit opt-in bounded/redacted Container Logs, HMAC 인증 배포/백업 수집, 정확한 origin HTTP 서비스 점검, 인시던트 상태 전환, 범위 제한 점검 결과 보존, 페이지네이션 Activity 타임라인을 구현합니다. 운영 이력 입력은 운영자가 관리하는 secret 또는 origin allowlist를 설정하기 전까지 fail closed하고, Container Logs는 fresh capability와 container별 exact opt-in이 없으면 fail closed합니다. Phase 4에는 producer가 없는 dormant Discord outbox foundation과 fail-closed service eligibility authority만 존재하며 notification source 연결과 production activation은 아직 구현하지 않습니다. 컨테이너 제어도 이후 마일스톤으로 남아 있습니다.
 
 ## 런타임 토폴로지
 
@@ -61,6 +61,8 @@ HomeOps는 전용 PostgreSQL instance와 volume을 사용하며 다른 프로젝
 
 현재 배포는 API replica 하나와 in-process service-check scheduler 하나를 지원합니다. Notification outbox claim은 `FOR UPDATE SKIP LOCKED`와 lease-token compare-and-set으로 multi-process safety를 유지하지만, notification producer는 아직 연결하지 않았습니다. Incident 생성에는 서비스별 `OPEN` 또는 `ACKNOWLEDGED` incident의 PostgreSQL partial unique index가 있어 동시 caller가 경쟁하더라도 활성 incident는 최대 하나라는 불변식을 데이터베이스가 강제합니다.
 
+`monitored_service.notification_enabled`는 향후 HomeOps Discord incident producer의 service별 eligibility authority입니다. DB default와 legacy row migration은 `false`이며 existing service는 ADMIN + CSRF boolean-only operation으로만 opt-in/out합니다. Authority 변경은 outbox insert, current/open incident 또는 historical health-result replay를 수행하지 않고 Uptime Kuma 설정이나 global notification kill switch도 바꾸지 않습니다.
+
 기본 metric policy는 1분 aggregate를 30일간, Agent 하나 기준 약 43,200행 보관하고 daily transaction에서 그보다 오래된 aggregate만 삭제합니다. 정상 service-check 결과는 기본 7일, 실패는 30일 보관합니다. Agent Activity record는 5초마다가 아니라 첫 연결 또는 version 변경 때만 기록합니다. schema에는 notification attempt, control audit event, settings, Spring session용 normalized table도 예약되어 있습니다. JSONB는 보조 metadata로 제한하며 검색할 state와 identity field는 일반 column으로 유지합니다.
 
 HomeOps는 container log, Docker inspect document, `.env` 내용, credential, webhook URL을 저장하지 않습니다. `backup_run`은 다른 프로젝트의 backup 결과를 설명할 뿐 HomeOps가 자체 데이터베이스를 자동 백업한다는 뜻이 아닙니다. 신뢰하는 script는 범위가 제한된 시간 HMAC signature가 있을 때만 deployment 또는 backup 결과를 제출할 수 있고, event key는 재시도 전달을 멱등하게 하며 terminal state 변경은 거부됩니다. service-check 대상은 운영자가 제공한 정확한 HTTPS origin과 일치해야 하고 redirect를 따르지 않으며 request timeout은 제한됩니다.
@@ -69,7 +71,7 @@ Notification foundation은 domain transaction에서 typed intent만 insert하고
 
 ## Uptime Kuma 역할
 
-Uptime Kuma는 독립적인 가용성 monitor로 유지합니다. HTTP reachability와 기존 email path를 담당해야 합니다. HomeOps는 실제 Mac metric, Docker inventory, deployment, backup-result metadata, incident, 이후 마일스톤의 Discord 중심 운영 event를 담당합니다.
+Uptime Kuma는 독립적인 가용성 monitor로 유지하며 외부 HTTP/Tailnet reachability와 기존 email path를 담당합니다. HomeOps는 실제 Mac metric, Docker inventory, deployment, backup-result metadata와 persisted exact-origin incident를 소유합니다. 향후 Discord incident producer는 `notification_enabled=true`인 service의 future transition만 대상으로 하므로 같은 flag를 Uptime Kuma email/reachability authority로 해석하지 않습니다.
 
 HomeOps는 비공식 Uptime Kuma API에 의존하지 않습니다. 두 서비스가 같은 Mac에서 실행되면 어느 쪽도 해당 Mac의 완전한 host outage를 보고할 수 없습니다. 외부 heartbeat는 선택 사항이며 비용, metadata 공개, 새 dependency를 유발하므로 이 repository에서는 활성화하지 않습니다.
 
