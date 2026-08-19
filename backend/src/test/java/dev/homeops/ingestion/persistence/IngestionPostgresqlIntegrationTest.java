@@ -12,6 +12,7 @@ import dev.homeops.ingestion.api.BackupIngestionRequest;
 import dev.homeops.ingestion.api.DeploymentIngestionRequest;
 import dev.homeops.ingestion.api.IngestionAcceptedResponse;
 import dev.homeops.notification.DeploymentNotificationProducer;
+import dev.homeops.notification.BackupNotificationProducer;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -51,7 +52,8 @@ class IngestionPostgresqlIntegrationTest {
         jdbc = new JdbcTemplate(dataSource);
         transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
         service = new IngestionService(new DeploymentIngestionStore(jdbc), new BackupIngestionStore(jdbc),
-                new IngestionDigest(), mock(DeploymentNotificationProducer.class));
+                new IngestionDigest(), mock(DeploymentNotificationProducer.class),
+                mock(BackupNotificationProducer.class));
     }
 
     @BeforeEach

@@ -2,7 +2,6 @@ package dev.homeops.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
 
 import dev.homeops.common.InvalidIngestionStateTransitionException;
 import dev.homeops.ingestion.IngestionDigest;
@@ -28,17 +27,18 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.ObjectMapper;
 
 @EnabledIfEnvironmentVariable(named = "HOMEOPS_TEST_POSTGRES_URL", matches = ".+")
-class DeploymentNotificationProducerPostgresqlIntegrationTest {
-    private static final Instant NOW = Instant.parse("2026-08-19T04:00:00Z");
-    private static final Instant STARTED_AT = Instant.parse("2026-08-19T03:00:00.123456789Z");
-    private static final Instant FINISHED_AT = Instant.parse("2026-08-19T03:05:00.999999500Z");
-    private static final String COMMIT_SHA = "0123456789abcdef0123456789abcdef01234567";
+class BackupNotificationProducerPostgresqlIntegrationTest {
+    private static final Instant NOW = Instant.parse("2026-08-19T06:00:00Z");
+    private static final Instant STARTED_AT = Instant.parse("2026-08-19T05:00:00.123456789Z");
+    private static final Instant FINISHED_AT = Instant.parse("2026-08-19T05:05:00.999999500Z");
     private static final String WEBHOOK = "https://discord.com/api/webhooks/123456789012345678/"
             + "x".repeat(64);
 
@@ -73,201 +73,264 @@ class DeploymentNotificationProducerPostgresqlIntegrationTest {
     }
 
     @Test
-    void should_atomicallyPersistStartedIntentAsSuppressed_when_runningDeploymentIsInserted() {
-        DeploymentIngestionRequest request = deployment(
-                "deploy-started", DeploymentIngestionRequest.DeploymentStatus.RUNNING, null);
+    void should_atomicallyPersistStartedIntentAsSuppressed_when_runningBackupIsInserted() {
+        BackupIngestionRequest request = backup(
+                "backup-started", BackupIngestionRequest.BackupStatus.RUNNING, null);
 
-        IngestionAcceptedResponse accepted = inTransaction(() -> disabledService.acceptDeployment(request));
+        IngestionAcceptedResponse accepted = inTransaction(() -> disabledService.acceptBackup(request));
 
         assertThat(accepted.duplicate()).isFalse();
         assertThat(notificationCount()).isEqualTo(1);
-        NotificationRow row = notificationRow("DEPLOYMENT_STARTED");
-        assertThat(row.sourceType()).isEqualTo("DEPLOYMENT");
+        NotificationRow row = notificationRow("BACKUP_STARTED");
+        assertThat(row.sourceType()).isEqualTo("BACKUP");
         assertThat(row.sourceId()).isEqualTo(accepted.id());
         assertThat(row.severity()).isEqualTo("INFO");
         assertThat(row.status()).isEqualTo("SUPPRESSED");
         assertThat(row.occurredAt()).isEqualTo(canonical(STARTED_AT));
     }
 
-    @Test
-    void should_persistOnlyTerminalIntent_when_firstDeploymentEventIsTerminal() {
-        DeploymentIngestionRequest request = deployment(
-                "deploy-first-terminal", DeploymentIngestionRequest.DeploymentStatus.FAILED, FINISHED_AT);
+    @ParameterizedTest
+    @CsvSource({
+        "SUCCESS, BACKUP_SUCCEEDED, INFO",
+        "FAILED, BACKUP_FAILED, CRITICAL",
+        "INCOMPLETE, BACKUP_INCOMPLETE, WARNING"
+    })
+    void should_persistOnlyTerminalIntent_when_firstBackupEventIsTerminal(
+            BackupIngestionRequest.BackupStatus status,
+            String eventType,
+            String severity) {
+        BackupIngestionRequest request = backup("backup-first-" + status, status, FINISHED_AT);
 
-        inTransaction(() -> disabledService.acceptDeployment(request));
+        IngestionAcceptedResponse accepted = inTransaction(() -> disabledService.acceptBackup(request));
 
-        assertThat(notificationEventTypes()).containsExactly("DEPLOYMENT_FAILED");
-        NotificationRow row = notificationRow("DEPLOYMENT_FAILED");
-        assertThat(row.severity()).isEqualTo("CRITICAL");
+        assertThat(notificationEventTypes()).containsExactly(eventType);
+        NotificationRow row = notificationRow(eventType);
+        assertThat(row.sourceType()).isEqualTo("BACKUP");
+        assertThat(row.sourceId()).isEqualTo(accepted.id());
+        assertThat(row.severity()).isEqualTo(severity);
         assertThat(row.occurredAt()).isEqualTo(canonical(FINISHED_AT));
     }
 
+    @ParameterizedTest
+    @CsvSource({
+        "SUCCESS, BACKUP_SUCCEEDED, INFO",
+        "FAILED, BACKUP_FAILED, CRITICAL",
+        "INCOMPLETE, BACKUP_INCOMPLETE, WARNING"
+    })
+    void should_persistTerminalIntent_when_runningBackupTransitionWins(
+            BackupIngestionRequest.BackupStatus status,
+            String eventType,
+            String severity) {
+        String eventKey = "backup-transition-" + status;
+        IngestionAcceptedResponse started = inTransaction(() -> disabledService.acceptBackup(backup(
+                eventKey, BackupIngestionRequest.BackupStatus.RUNNING, null)));
+
+        IngestionAcceptedResponse terminal = inTransaction(() -> disabledService.acceptBackup(backup(
+                eventKey, status, FINISHED_AT)));
+
+        assertThat(terminal.id()).isEqualTo(started.id());
+        assertThat(terminal.duplicate()).isFalse();
+        assertThat(notificationEventTypes())
+                .containsExactlyInAnyOrder("BACKUP_STARTED", eventType);
+        NotificationRow row = notificationRow(eventType);
+        assertThat(row.sourceId()).isEqualTo(started.id());
+        assertThat(row.severity()).isEqualTo(severity);
+    }
+
     @Test
-    void should_notCreateSecondIntent_when_existingRequestedDeploymentTransitionsToRunning() {
-        String eventKey = "deploy-requested-running";
-        inTransaction(() -> disabledService.acceptDeployment(deployment(
-                eventKey, DeploymentIngestionRequest.DeploymentStatus.REQUESTED, null)));
+    void should_notCreateSecondIntent_when_initialBackupRequestIsReplayed() {
+        BackupIngestionRequest request = backup(
+                "backup-initial-replay", BackupIngestionRequest.BackupStatus.RUNNING, null);
 
-        inTransaction(() -> disabledService.acceptDeployment(deployment(
-                eventKey, DeploymentIngestionRequest.DeploymentStatus.RUNNING, null)));
+        IngestionAcceptedResponse first = inTransaction(() -> disabledService.acceptBackup(request));
+        IngestionAcceptedResponse replay = inTransaction(() -> disabledService.acceptBackup(request));
 
-        assertThat(notificationEventTypes()).containsExactly("DEPLOYMENT_STARTED");
+        assertThat(first.duplicate()).isFalse();
+        assertThat(replay).isEqualTo(new IngestionAcceptedResponse(first.id(), true));
+        assertThat(notificationEventTypes()).containsExactly("BACKUP_STARTED");
     }
 
     @Test
     void should_createOneTerminalIntent_when_terminalWinnerIsReplayed() {
-        String eventKey = "deploy-replay";
-        inTransaction(() -> disabledService.acceptDeployment(deployment(
-                eventKey, DeploymentIngestionRequest.DeploymentStatus.RUNNING, null)));
-        DeploymentIngestionRequest terminal = deployment(
-                eventKey, DeploymentIngestionRequest.DeploymentStatus.SUCCESS, FINISHED_AT);
+        String eventKey = "backup-terminal-replay";
+        inTransaction(() -> disabledService.acceptBackup(backup(
+                eventKey, BackupIngestionRequest.BackupStatus.RUNNING, null)));
+        BackupIngestionRequest terminal = backup(
+                eventKey, BackupIngestionRequest.BackupStatus.SUCCESS, FINISHED_AT);
 
-        IngestionAcceptedResponse first = inTransaction(() -> disabledService.acceptDeployment(terminal));
-        IngestionAcceptedResponse replay = inTransaction(() -> disabledService.acceptDeployment(terminal));
+        IngestionAcceptedResponse first = inTransaction(() -> disabledService.acceptBackup(terminal));
+        IngestionAcceptedResponse replay = inTransaction(() -> disabledService.acceptBackup(terminal));
 
         assertThat(first.duplicate()).isFalse();
         assertThat(replay).isEqualTo(new IngestionAcceptedResponse(first.id(), true));
         assertThat(notificationEventTypes())
-                .containsExactlyInAnyOrder("DEPLOYMENT_STARTED", "DEPLOYMENT_SUCCEEDED");
+                .containsExactlyInAnyOrder("BACKUP_STARTED", "BACKUP_SUCCEEDED");
     }
 
     @Test
-    void should_rollBackDeploymentAndIntent_when_payloadEncodingFails() {
+    void should_rollBackBackupAndIntent_when_payloadEncodingFails() {
         IngestionService failingService = service(
                 new NotificationPayloadCodec(new ObjectMapper(), 1), false);
 
-        assertThatThrownBy(() -> inTransaction(() -> failingService.acceptDeployment(deployment(
-                "deploy-rollback", DeploymentIngestionRequest.DeploymentStatus.RUNNING, null))))
+        assertThatThrownBy(() -> inTransaction(() -> failingService.acceptBackup(backup(
+                "backup-encoding-rollback", BackupIngestionRequest.BackupStatus.RUNNING, null))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Notification payload exceeds the serialized byte limit");
 
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM deployment", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM backup_run", Integer.class)).isZero();
         assertThat(notificationCount()).isZero();
     }
 
     @Test
-    void should_rollBackDeploymentAndIntent_when_outerTransactionRollsBack() {
+    void should_rollBackTerminalTransition_when_outboxEnqueueFails() {
+        String eventKey = "backup-transition-rollback";
+        inTransaction(() -> disabledService.acceptBackup(backup(
+                eventKey, BackupIngestionRequest.BackupStatus.RUNNING, null)));
+        IngestionService failingService = service(
+                new NotificationPayloadCodec(new ObjectMapper(), 1), false);
+
+        assertThatThrownBy(() -> inTransaction(() -> failingService.acceptBackup(backup(
+                eventKey, BackupIngestionRequest.BackupStatus.SUCCESS, FINISHED_AT))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Notification payload exceeds the serialized byte limit");
+
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM backup_run WHERE event_key = ?", String.class, eventKey))
+                .isEqualTo("RUNNING");
+        assertThat(notificationEventTypes()).containsExactly("BACKUP_STARTED");
+    }
+
+    @Test
+    void should_rollBackBackupAndIntent_when_outerTransactionRollsBack() {
         transactions.executeWithoutResult(status -> {
-            disabledService.acceptDeployment(deployment(
-                    "deploy-outer-rollback", DeploymentIngestionRequest.DeploymentStatus.RUNNING, null));
+            disabledService.acceptBackup(backup(
+                    "backup-outer-rollback", BackupIngestionRequest.BackupStatus.RUNNING, null));
             status.setRollbackOnly();
         });
 
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM deployment", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM backup_run", Integer.class)).isZero();
         assertThat(notificationCount()).isZero();
     }
 
     @Test
-    void should_createOneDeploymentAndOneIntent_when_identicalInitialRequestsRace() throws Exception {
-        DeploymentIngestionRequest request = deployment(
-                "deploy-insert-race", DeploymentIngestionRequest.DeploymentStatus.RUNNING, null);
+    void should_createOneBackupAndOneIntent_when_identicalInitialRequestsRace() throws Exception {
+        BackupIngestionRequest request = backup(
+                "backup-insert-race", BackupIngestionRequest.BackupStatus.RUNNING, null);
 
-        List<IngestionAcceptedResponse> responses = race(() -> disabledService.acceptDeployment(request));
+        List<IngestionAcceptedResponse> responses = race(() -> disabledService.acceptBackup(request));
 
         assertThat(responses).extracting(IngestionAcceptedResponse::duplicate)
                 .containsExactlyInAnyOrder(false, true);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM deployment", Integer.class)).isEqualTo(1);
-        assertThat(notificationEventTypes()).containsExactly("DEPLOYMENT_STARTED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM backup_run", Integer.class)).isEqualTo(1);
+        assertThat(notificationEventTypes()).containsExactly("BACKUP_STARTED");
     }
 
     @Test
     void should_createOneTerminalIntent_when_identicalTerminalRequestsRace() throws Exception {
-        String eventKey = "deploy-terminal-race";
-        inTransaction(() -> disabledService.acceptDeployment(deployment(
-                eventKey, DeploymentIngestionRequest.DeploymentStatus.RUNNING, null)));
-        DeploymentIngestionRequest terminal = deployment(
-                eventKey, DeploymentIngestionRequest.DeploymentStatus.SUCCESS, FINISHED_AT);
+        String eventKey = "backup-terminal-race";
+        inTransaction(() -> disabledService.acceptBackup(backup(
+                eventKey, BackupIngestionRequest.BackupStatus.RUNNING, null)));
+        BackupIngestionRequest terminal = backup(
+                eventKey, BackupIngestionRequest.BackupStatus.SUCCESS, FINISHED_AT);
 
-        List<IngestionAcceptedResponse> responses = race(() -> disabledService.acceptDeployment(terminal));
+        List<IngestionAcceptedResponse> responses = race(() -> disabledService.acceptBackup(terminal));
 
         assertThat(responses).extracting(IngestionAcceptedResponse::duplicate)
                 .containsExactlyInAnyOrder(false, true);
         assertThat(notificationEventTypes())
-                .containsExactlyInAnyOrder("DEPLOYMENT_STARTED", "DEPLOYMENT_SUCCEEDED");
+                .containsExactlyInAnyOrder("BACKUP_STARTED", "BACKUP_SUCCEEDED");
     }
 
     @Test
     void should_createOnlyWinnerIntent_when_differentTerminalRequestsRace() throws Exception {
-        String eventKey = "deploy-competing-terminal-race";
-        inTransaction(() -> disabledService.acceptDeployment(deployment(
-                eventKey, DeploymentIngestionRequest.DeploymentStatus.RUNNING, null)));
+        String eventKey = "backup-competing-terminal-race";
+        inTransaction(() -> disabledService.acceptBackup(backup(
+                eventKey, BackupIngestionRequest.BackupStatus.RUNNING, null)));
 
         List<String> outcomes = raceCompetingTerminal(eventKey);
 
         assertThat(outcomes).containsExactlyInAnyOrder("accepted", "rejected");
         List<String> eventTypes = notificationEventTypes();
-        assertThat(eventTypes).hasSize(2).contains("DEPLOYMENT_STARTED");
-        assertThat(eventTypes.stream().filter(type -> !type.equals("DEPLOYMENT_STARTED")).toList())
+        assertThat(eventTypes).hasSize(2).contains("BACKUP_STARTED");
+        assertThat(eventTypes.stream().filter(type -> !type.equals("BACKUP_STARTED")).toList())
                 .singleElement()
-                .isIn("DEPLOYMENT_SUCCEEDED", "DEPLOYMENT_FAILED");
+                .isIn("BACKUP_SUCCEEDED", "BACKUP_FAILED");
     }
 
     @Test
     void should_persistOnlyAllowlistedPayload_when_ingestionContainsPrivateMetadata() {
-        DeploymentIngestionRequest request = new DeploymentIngestionRequest(
-                "private-event-key",
+        BackupIngestionRequest request = new BackupIngestionRequest(
+                "private-backup-event-key",
                 "homeops",
-                "production",
-                "private-branch",
-                COMMIT_SHA,
-                "private-image-tag",
-                "fedcba9876543210fedcba9876543210fedcba98",
-                DeploymentIngestionRequest.DeploymentStatus.FAILED,
+                "POSTGRESQL",
+                "private/location/backup.dump",
+                BackupIngestionRequest.BackupStatus.FAILED,
                 STARTED_AT,
                 FINISHED_AT,
-                "private-failure-stage",
+                987_654_321L,
+                Instant.parse("2026-09-19T05:00:00Z"),
                 "private-failure-summary",
-                "private-actor",
-                "private-run-id",
-                "https://private.invalid/workflow",
-                false);
+                Instant.parse("2026-09-20T05:00:00Z"),
+                "PRIVATE_RESTORE_STATUS");
 
-        inTransaction(() -> disabledService.acceptDeployment(request));
+        inTransaction(() -> disabledService.acceptBackup(request));
 
         String payload = jdbc.queryForObject(
                 "SELECT payload::text FROM notification_event", String.class);
         assertThat(payload)
-                .contains("Project", "homeops", "Environment", "production", "Commit", "0123456789ab",
-                        "Status", "FAILED")
+                .contains("Project", "homeops", "Database", "POSTGRESQL", "Status", "FAILED")
                 .doesNotContain(
-                        request.eventKey(), request.branch(), request.commitSha(), request.imageTag(),
-                        request.previousCommitSha(), request.failureStage(), request.failureSummary(),
-                        request.actor(), request.workflowRunId(), request.workflowRunUrl());
+                        request.eventKey(), request.logicalLocation(), request.failureSummary(),
+                        request.restoreTestStatus(), request.sizeBytes().toString(),
+                        request.expiresAt().toString(), request.restoreTestedAt().toString());
     }
 
     @Test
-    void should_notCreateNotification_when_backupIsAccepted() {
-        BackupIngestionRequest request = new BackupIngestionRequest(
-                "backup-37", "homeops", "POSTGRESQL", "backups/backup.dump",
-                BackupIngestionRequest.BackupStatus.SUCCESS,
-                STARTED_AT, FINISHED_AT, 1_024L, null, null, null, null);
-
-        inTransaction(() -> disabledService.acceptBackup(request));
-
-        assertThat(notificationCount()).isZero();
-    }
-
-    @Test
-    void should_notReplaySuppressedDeploymentIntent_when_notificationsAreLaterEnabled() {
-        inTransaction(() -> disabledService.acceptDeployment(deployment(
-                "deploy-no-replay", DeploymentIngestionRequest.DeploymentStatus.RUNNING, null)));
+    void should_notReplaySuppressedBackupIntent_when_notificationsAreLaterEnabled() {
+        inTransaction(() -> disabledService.acceptBackup(backup(
+                "backup-no-replay", BackupIngestionRequest.BackupStatus.RUNNING, null)));
 
         NotificationOutboxTransactions enabled = outboxTransactions(codec, true);
 
         assertThat(enabled.claimNext()).isEmpty();
-        assertThat(notificationRow("DEPLOYMENT_STARTED").status()).isEqualTo("SUPPRESSED");
+        assertThat(notificationRow("BACKUP_STARTED").status()).isEqualTo("SUPPRESSED");
+    }
+
+    @Test
+    void should_preserveDeploymentProducerResult_when_backupProducerIsConnected() {
+        DeploymentIngestionRequest request = new DeploymentIngestionRequest(
+                "deployment-regression-39",
+                "homeops",
+                "production",
+                "main",
+                "0123456789abcdef0123456789abcdef01234567",
+                "sha-0123456",
+                null,
+                DeploymentIngestionRequest.DeploymentStatus.RUNNING,
+                STARTED_AT,
+                null,
+                null,
+                null,
+                "github-actions",
+                "39",
+                null,
+                false);
+
+        inTransaction(() -> disabledService.acceptDeployment(request));
+
+        assertThat(notificationEventTypes()).containsExactly("DEPLOYMENT_STARTED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM backup_run", Integer.class)).isZero();
     }
 
     private static IngestionService service(NotificationPayloadCodec payloadCodec, boolean enabled) {
         NotificationOutboxTransactions outboxTransactions = outboxTransactions(payloadCodec, enabled);
-        DeploymentNotificationProducer producer = new DeploymentNotificationProducer(
-                new NotificationOutbox(outboxTransactions));
+        NotificationOutbox outbox = new NotificationOutbox(outboxTransactions);
         return new IngestionService(
                 new DeploymentIngestionStore(jdbc),
                 new BackupIngestionStore(jdbc),
                 new IngestionDigest(),
-                producer,
-                mock(BackupNotificationProducer.class));
+                new DeploymentNotificationProducer(outbox),
+                new BackupNotificationProducer(outbox));
     }
 
     private static NotificationOutboxTransactions outboxTransactions(
@@ -323,9 +386,9 @@ class DeploymentNotificationProducerPostgresqlIntegrationTest {
             CountDownLatch start = new CountDownLatch(1);
             List<Future<String>> results = List.of(
                     executor.submit(() -> terminalOutcome(eventKey,
-                            DeploymentIngestionRequest.DeploymentStatus.SUCCESS, ready, start)),
+                            BackupIngestionRequest.BackupStatus.SUCCESS, ready, start)),
                     executor.submit(() -> terminalOutcome(eventKey,
-                            DeploymentIngestionRequest.DeploymentStatus.FAILED, ready, start)));
+                            BackupIngestionRequest.BackupStatus.FAILED, ready, start)));
             assertThat(ready.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             start.countDown();
             return results.stream().map(this::future).toList();
@@ -334,13 +397,13 @@ class DeploymentNotificationProducerPostgresqlIntegrationTest {
 
     private String terminalOutcome(
             String eventKey,
-            DeploymentIngestionRequest.DeploymentStatus status,
+            BackupIngestionRequest.BackupStatus status,
             CountDownLatch ready,
             CountDownLatch start) throws Exception {
         ready.countDown();
         assertThat(start.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
         try {
-            inTransaction(() -> disabledService.acceptDeployment(deployment(eventKey, status, FINISHED_AT)));
+            inTransaction(() -> disabledService.acceptBackup(backup(eventKey, status, FINISHED_AT)));
             return "accepted";
         } catch (InvalidIngestionStateTransitionException exception) {
             return "rejected";
@@ -351,7 +414,7 @@ class DeploymentNotificationProducerPostgresqlIntegrationTest {
         try {
             return result.get(5, java.util.concurrent.TimeUnit.SECONDS);
         } catch (Exception exception) {
-            throw new AssertionError("Concurrent deployment ingestion did not complete", exception);
+            throw new AssertionError("Concurrent backup ingestion did not complete", exception);
         }
     }
 
@@ -381,27 +444,23 @@ class DeploymentNotificationProducerPostgresqlIntegrationTest {
         return dev.homeops.common.PostgresqlTimestamp.canonicalize(instant);
     }
 
-    private static DeploymentIngestionRequest deployment(
+    private static BackupIngestionRequest backup(
             String eventKey,
-            DeploymentIngestionRequest.DeploymentStatus status,
+            BackupIngestionRequest.BackupStatus status,
             Instant finishedAt) {
-        return new DeploymentIngestionRequest(
+        return new BackupIngestionRequest(
                 eventKey,
                 "homeops",
-                "production",
-                "main",
-                COMMIT_SHA,
-                "sha-0123456",
-                null,
+                "POSTGRESQL",
+                "homeops/backup.dump",
                 status,
                 STARTED_AT,
                 finishedAt,
+                1_024L,
                 null,
                 null,
-                "github-actions",
-                "37",
                 null,
-                false);
+                null);
     }
 
     private record NotificationRow(
