@@ -31,7 +31,9 @@ HomeOps는 자체 PostgreSQL에 대해 Master Playbook의 recurring/offsite back
 
 ## 배포 transaction
 
-Phase 3 source와 production ingestion/monitoring은 활성 상태입니다. Production의 `dev.homeops.ingestion-reporter` LaunchAgent는 범위 제한 `--drain` retry를 담당하고 신뢰하는 project의 deployment/backup event가 Activity에 수신됩니다. Exact-origin service checker와 incident history도 동작합니다. 이 production 활성 evidence와 별개로 Phase 3의 formal acceptance는 아직 PARTIAL입니다.
+Phase 3 source와 production ingestion/monitoring은 활성 상태이며 formal production acceptance도 COMPLETE입니다. Production의 `dev.homeops.ingestion-reporter` LaunchAgent는 범위 제한 `--drain` retry를 담당하고 신뢰하는 project의 deployment/backup event가 Activity에 수신됩니다. Exact-origin service checker와 incident history가 동작하며, retained ingestion metadata, check growth와 incident recovery, Activity의 안정 cursor 전체 pagination과 mobile 표시를 production mutation 없이 검증했습니다.
+
+자동 retention은 metric aggregate, 처리한 Agent snapshot 멱등성 ledger와 service-check result에 적용됩니다. Deployment, backup, incident와 Agent 장기 event에는 automatic deletion policy가 없으므로, 운영자는 임의 cleanup을 실행하지 말고 별도의 보존 기간·삭제 안전성·감사 요구사항을 먼저 정해야 합니다. 이 operational debt는 현재 Phase 3 acceptance를 미완료로 되돌리는 의미가 아닙니다.
 
 새 host에서 Phase 3를 활성화하는 작업은 source release와 분리합니다. HomeOps `.env`에 생성한 64글자 소문자 hexadecimal `HOMEOPS_INGESTION_SHARED_SECRET` 하나가 있는지, `smoke.origin`이 의도한 tailnet HTTPS origin인지, 두 file이 owner-only mode `0600`인지, deployment account의 `~/Server/data/homeops/ingestion-spool`이 owner-only mode `0700`인지 확인합니다. private reporter copy와 LaunchAgent를 load 전에 lint하고, reporter warning을 application deploy 또는 backup 실패로 취급하지 말며 spool과 HomeOps ingestion health를 따로 검사하세요.
 

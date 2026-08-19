@@ -29,9 +29,9 @@
 | container/image name injection | 현재 낮음 | control에서는 매우 높음 | 값은 표시 전용, shell interpolation 또는 control endpoint 없음 | 이후 control은 live ID와 고정 SDK call만 사용해야 함 |
 | app network의 악성 container | 낮음 | 높음 | 전용 internal network, HomeOps service만 연결 | 침해된 Web container가 API에 접근할 수 있어 proxy hardening이 중요 |
 | PostgreSQL credential 유출 | 낮음 | 높음 | private `.env`, internal DB port, 전용 role/database | host account 침해 뒤 volume과 history가 노출됨 |
-| backup path 공개 | 낮음 | 중간 | metadata에는 logical identifier만 허용 | 이후 ingestion은 raw private path를 거부해야 함 |
+| backup path 공개 | 낮음 | 중간 | bounded relative logical identifier만 허용하고 absolute·traversal·invalid identifier는 fail closed | 운영자가 선택한 logical identifier 자체에는 민감한 이름을 넣지 않아야 함 |
 | 위조 deploy request | 낮음 | 매우 높음 | Tailscale OIDC, 별도 CI key, forced command grammar, 정확한 SHA/digest, stdin의 GHCR token | 침해된 GitHub production secret이 승인된 package name을 배포할 수 있음 |
-| 위조 history ingestion | 낮음 | 높음 | raw JSON의 범위 제한 시간 HMAC, fail-closed secret configuration, event key idempotency 및 state transition | 전용 ingestion secret을 가진 caller는 rotate 전까지 false history를 제출할 수 있음 |
+| 위조 history ingestion | 낮음 | 높음 | bounded body·timestamp HMAC-SHA-256, fail-closed secret configuration, event key idempotency 및 state transition | 전용 ingestion secret을 가진 caller는 rotate 전까지 false history를 제출할 수 있음 |
 | 반복 restart API | 현재 없음 | 향후 높음 | control 제외 | 구현 전 rate limit, idempotency, lock, audit, confirmation 필요 |
 | HomeOps outage | 중간 | 중간 | Kuma 독립 유지, stale UI, health check | HomeOps가 다운되면 스스로 alert할 수 없음 |
 | 전체 Mac outage | 중간 | 높음 | optional external heartbeat | 같은 host의 component는 전체 power/network loss를 보고할 수 없음 |
@@ -45,6 +45,8 @@ Agent는 명시적으로 구성한 Unix socket을 통해 version discovery, snap
 ## 브라우저 및 PWA 통제
 
 - API response에는 `Cache-Control: no-store`가 있습니다.
+- 브라우저 read API의 ADMIN session과 reporter ingestion 인증을 분리합니다. Ingestion은 bounded body와 timestamp window의 HMAC-SHA-256을 요구하고 missing·wrong·malformed signature를 controller 전에 거부하며 raw signature나 request body를 error response에 반사하지 않습니다.
+- Activity는 deployment, backup, incident와 Agent event의 bounded allowlist context만 노출하며 visibility-snapshot cursor를 사용하는 no-store pagination을 제공합니다.
 - Workbox는 API GET request에 `NetworkOnly`를 사용하며 상태 변경 method는 cache하지 않습니다.
 - Container Logs는 explicit user action에만 요청하고 UI memory에만 잠시 보관합니다. route, tail 또는 disclosure authority가 바뀌면 표시 payload를 제거합니다.
 - offline data를 current로 표시하지 않으며 현 마일스톤에는 control button이 없습니다.

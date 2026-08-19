@@ -20,7 +20,7 @@
 |---|---|---|---|
 | Phase 1 읽기 전용 대시보드 | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 2 native Agent rollout | IMPLEMENTED | ACTIVE | COMPLETE |
-| Phase 3 운영 이력 | IMPLEMENTED | ACTIVE | PARTIAL |
+| Phase 3 운영 이력 | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 4 알림 | NOT IMPLEMENTED | INACTIVE | NOT DONE |
 | Phase 5 제한된 컨테이너 제어 | NOT IMPLEMENTED | INACTIVE | NOT DONE |
 
@@ -65,16 +65,18 @@
 
 ## Phase 3: 운영 이력
 
-**상태:** Source IMPLEMENTED / Production ACTIVE / Acceptance PARTIAL. Production에서 ingestion reporter, deployment/backup event, service-check scheduler, incident history와 Activity API/UI가 동작합니다. 다만 roadmap 전체 formal acceptance를 COMPLETE로 확정한 기록은 아직 없습니다.
+**상태:** Source IMPLEMENTED / Production ACTIVE / Acceptance COMPLETE. 신뢰하는 reporter의 deployment/backup ingestion, exact-origin service check와 incident transition, 안정 cursor를 사용하는 Activity API/UI가 production에서 동작하며 formal read-only acceptance를 완료했습니다.
 
 **목표:** 예약한 data model을 범위가 제한되고 감사 가능한 운영 이력으로 만듭니다.
 
 | 항목 | 범위 | 완료 근거 |
 |---|---|---|
-| Deployment ingestion | 신뢰하는 deployment path에서 멱등적인 deployment start/success/failure event 수신 | signature/auth, idempotency, state transition test |
-| Backup-result ingestion | 기존 project backup script에서 metadata 수신. HomeOps는 backup을 실행하지 않음 | logical identifier validation 및 failure-path test |
-| Service check 및 incident | 구성한 HTTP check, 연속 failure/recovery logic, incident history | timeout, state transition, retention test |
-| Activity view | deployment, backup, incident, Agent event를 위한 mobile timeline | empty, stale, error, pagination test |
+| Deployment ingestion | 신뢰하는 deployment path에서 멱등적인 deployment start/success/failure event 수신 | 시간·본문 bound HMAC-SHA-256 인증, event/digest 멱등성, terminal transition과 concurrent update regression. Production reporter 설치와 live ingestion 확인 |
+| Backup-result ingestion | 기존 project backup script에서 metadata 수신. HomeOps는 backup을 실행하지 않음 | `RUNNING`/`SUCCESS`/`FAILED`/`INCOMPLETE` lifecycle, bounded logical identifier, 멱등성·terminal conflict regression. Production reporter와 live metadata ingestion 확인 |
+| Service check 및 incident | 구성한 HTTP check, 연속 failure/recovery logic, incident history | exact-origin·no-redirect·timeout, per-service in-flight 보호, failure/recovery threshold, single active incident와 check-result retention regression. Production scheduler와 recovery history 확인 |
+| Activity view | deployment, backup, incident, Agent event를 위한 mobile timeline | Allowlist projection, deterministic ordering과 visibility-snapshot cursor, no-store, empty/stale/error/pagination regression. Production multi-page duplicate-free 조회와 `390x844` mobile acceptance 완료 |
+
+Deployment, backup, incident와 Agent 장기 event의 automatic deletion retention은 현재 Phase 3 범위에 포함하지 않습니다. 정상/비정상 service-check result에는 별도의 bounded retention이 적용되며, 장기 운영 이력 보존·삭제 정책은 별도 operational policy로 다뤄야 합니다.
 
 **포함하지 않음:** Uptime Kuma internal API dependency 또는 독립 reachability 역할의 대체.
 
