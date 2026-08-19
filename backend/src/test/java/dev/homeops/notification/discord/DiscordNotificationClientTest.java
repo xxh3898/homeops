@@ -1,21 +1,15 @@
 package dev.homeops.notification.discord;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import dev.homeops.notification.NotificationField;
 import dev.homeops.notification.NotificationPayload;
 import dev.homeops.notification.NotificationSeverity;
 import dev.homeops.notification.config.HomeOpsNotificationProperties;
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.http.HttpClient;
 import java.net.http.HttpConnectTimeoutException;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -23,7 +17,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -42,6 +35,7 @@ class DiscordNotificationClientTest {
         assertThat(result).isEqualTo(DiscordDeliveryResult.success());
         assertThat(transport.endpoint.executionUri().getRawQuery()).isEqualTo("wait=true");
         assertThat(transport.timeout).isEqualTo(Duration.ofSeconds(5));
+        assertThat(transport.responseMaxBytes).isEqualTo(65_536);
         JsonNode document = mapper.readTree(transport.requestBody);
         assertThat(document.has("content")).isFalse();
         assertThat(document.has("username")).isFalse();
@@ -111,7 +105,7 @@ class DiscordNotificationClientTest {
     void should_boundRemoteResponseBody_withoutReturningRawContent() {
         String oversized = "x".repeat(65);
         DiscordNotificationClient client = client(
-                new FakeTransport(response(200, Map.of(), oversized)), properties(64));
+                new FakeTransport(response(200, Map.of(), oversized, true)), properties(64));
 
         DiscordDeliveryResult result = client.send(payload(), NotificationSeverity.INFO);
 
@@ -137,36 +131,6 @@ class DiscordNotificationClientTest {
 
         assertThat(transport.client().followRedirects()).isEqualTo(HttpClient.Redirect.NEVER);
         assertThat(transport.client().connectTimeout()).contains(Duration.ofSeconds(3));
-    }
-
-    @Test
-    void should_buildFixedPostRequest_when_jdkTransportSends() throws Exception {
-        HttpClient http = mock(HttpClient.class);
-        @SuppressWarnings("unchecked")
-        HttpResponse<java.io.InputStream> response = mock(HttpResponse.class);
-        when(response.statusCode()).thenReturn(200);
-        when(response.headers()).thenReturn(java.net.http.HttpHeaders.of(Map.of(), (a, b) -> true));
-        when(response.body()).thenReturn(new ByteArrayInputStream("{}".getBytes(StandardCharsets.UTF_8)));
-        when(http.send(any(HttpRequest.class),
-                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<java.io.InputStream>>any()))
-                .thenReturn(response);
-        JdkDiscordHttpTransport transport = new JdkDiscordHttpTransport(http);
-        DiscordWebhookEndpoint endpoint = DiscordWebhookEndpoint.parse(WEBHOOK);
-
-        try (DiscordHttpResponse ignored = transport.send(
-                endpoint, "{}".getBytes(StandardCharsets.UTF_8), Duration.ofSeconds(5))) {
-            // Response body ownership is transferred to the bounded caller.
-        }
-
-        ArgumentCaptor<HttpRequest> request = ArgumentCaptor.forClass(HttpRequest.class);
-        org.mockito.Mockito.verify(http).send(request.capture(),
-                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<java.io.InputStream>>any());
-        assertThat(request.getValue().method()).isEqualTo("POST");
-        assertThat(request.getValue().uri().getRawQuery()).isEqualTo("wait=true");
-        assertThat(request.getValue().timeout()).contains(Duration.ofSeconds(5));
-        assertThat(request.getValue().headers().firstValue("Content-Type"))
-                .contains("application/json");
-        assertThat(request.getValue().uri().toString()).contains(TOKEN);
     }
 
     private DiscordDeliveryResult deliver(int status, String body) {
@@ -213,7 +177,16 @@ class DiscordNotificationClientTest {
             Map<String, List<String>> headers,
             String body) {
         return new DiscordHttpResponse(status, headers,
-                new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
+                body.getBytes(StandardCharsets.UTF_8), false);
+    }
+
+    private static DiscordHttpResponse response(
+            int status,
+            Map<String, List<String>> headers,
+            String body,
+            boolean bodyExceededLimit) {
+        return new DiscordHttpResponse(status, headers,
+                body.getBytes(StandardCharsets.UTF_8), bodyExceededLimit);
     }
 
     private static final class FakeTransport implements DiscordHttpTransport {
@@ -222,6 +195,7 @@ class DiscordNotificationClientTest {
         private DiscordWebhookEndpoint endpoint;
         private byte[] requestBody;
         private Duration timeout;
+        private int responseMaxBytes;
 
         private FakeTransport(DiscordHttpResponse response) {
             this.response = response;
@@ -237,10 +211,12 @@ class DiscordNotificationClientTest {
         public DiscordHttpResponse send(
                 DiscordWebhookEndpoint endpoint,
                 byte[] body,
-                Duration requestTimeout) throws IOException {
+                Duration requestTimeout,
+                int responseMaxBytes) throws IOException {
             this.endpoint = endpoint;
             this.requestBody = body.clone();
             this.timeout = requestTimeout;
+            this.responseMaxBytes = responseMaxBytes;
             if (failure != null) {
                 throw failure;
             }

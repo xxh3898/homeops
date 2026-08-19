@@ -3,13 +3,11 @@ package dev.homeops.notification.discord;
 import dev.homeops.notification.NotificationPayload;
 import dev.homeops.notification.NotificationSeverity;
 import dev.homeops.notification.config.HomeOpsNotificationProperties;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.UnknownHostException;
 import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -48,10 +46,12 @@ public class DiscordNotificationClient {
             return DiscordDeliveryResult.terminal("PAYLOAD_INVALID");
         }
 
-        try (DiscordHttpResponse response = transport.send(
-                endpoint.orElseThrow(), requestBody, properties.requestTimeout())) {
-            BoundedBody body = readBounded(response);
-            return classify(response.statusCode(), response.headers(), body);
+        try {
+            DiscordHttpResponse response = transport.send(
+                    endpoint.orElseThrow(), requestBody,
+                    properties.requestTimeout(), properties.responseMaxBytes());
+            return classify(response.statusCode(), response.headers(),
+                    response.body(), response.bodyExceededLimit());
         } catch (HttpConnectTimeoutException | ConnectException | UnknownHostException exception) {
             return DiscordDeliveryResult.retryable("CONNECT_FAILED", null);
         } catch (HttpTimeoutException exception) {
@@ -67,12 +67,13 @@ public class DiscordNotificationClient {
     private DiscordDeliveryResult classify(
             int status,
             Map<String, List<String>> headers,
-            BoundedBody body) {
+            byte[] body,
+            boolean bodyExceededLimit) {
         if (status >= 200 && status < 300) {
-            if (body.exceeded()) {
+            if (bodyExceededLimit) {
                 return DiscordDeliveryResult.unknown("SUCCESS_RESPONSE_TOO_LARGE");
             }
-            return hasConfirmedMessageId(body.bytes())
+            return hasConfirmedMessageId(body)
                     ? DiscordDeliveryResult.success()
                     : DiscordDeliveryResult.unknown("SUCCESS_NOT_CONFIRMED");
         }
@@ -83,10 +84,10 @@ public class DiscordNotificationClient {
             return DiscordDeliveryResult.retryable("HTTP_408", null);
         }
         if (status == 429) {
-            if (body.exceeded()) {
+            if (bodyExceededLimit) {
                 return DiscordDeliveryResult.terminal("RATE_LIMIT_RESPONSE_TOO_LARGE");
             }
-            Optional<Duration> retryAfter = retryAfter(headers, body.bytes());
+            Optional<Duration> retryAfter = retryAfter(headers, body);
             if (retryAfter.filter(delay -> delay.compareTo(properties.maxBackoff()) > 0).isPresent()) {
                 return DiscordDeliveryResult.terminal("RATE_LIMIT_DELAY_OUT_OF_RANGE");
             }
@@ -154,29 +155,4 @@ public class DiscordNotificationClient {
                 .findFirst();
     }
 
-    private BoundedBody readBounded(DiscordHttpResponse response) throws IOException {
-        int maximum = properties.responseMaxBytes();
-        try (ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(maximum, 8_192))) {
-            byte[] buffer = new byte[4_096];
-            int total = 0;
-            while (true) {
-                int read = response.body().read(buffer, 0, Math.min(buffer.length, maximum + 1 - total));
-                if (read == -1) {
-                    return new BoundedBody(output.toByteArray(), false);
-                }
-                output.write(buffer, 0, read);
-                total += read;
-                if (total > maximum) {
-                    return new BoundedBody(output.toByteArray(), true);
-                }
-            }
-        }
-    }
-
-    private record BoundedBody(byte[] bytes, boolean exceeded) {
-        @Override
-        public String toString() {
-            return "BoundedBody[bytes=redacted, exceeded=" + exceeded + "]";
-        }
-    }
 }

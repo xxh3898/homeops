@@ -7,5 +7,6 @@ interface DiscordHttpTransport {
     DiscordHttpResponse send(
             DiscordWebhookEndpoint endpoint,
             byte[] body,
-            Duration requestTimeout) throws IOException, InterruptedException;
+            Duration requestTimeout,
+            int responseMaxBytes) throws IOException, InterruptedException;
 }
