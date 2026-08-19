@@ -84,7 +84,7 @@ Deployment, backup, incident와 Agent 장기 event의 automatic deletion retenti
 
 **상태:** Source NOT IMPLEMENTED / Production INACTIVE / Acceptance NOT DONE.
 
-현재 source에는 dormant transactional outbox와 fail-closed service eligibility authority, deployment ingestion winner producer가 있습니다. Global notification activation과 나머지 source producer가 없으므로 Phase 전체 상태는 아직 변경하지 않습니다.
+현재 source에는 dormant transactional outbox와 fail-closed service eligibility authority, deployment 및 backup ingestion winner producer가 있습니다. Global notification activation과 나머지 source producer가 없으므로 Phase 전체 상태는 아직 변경하지 않습니다.
 
 **목표:** 중복 alert storm 없이 유용한 운영 signal을 제공합니다.
 

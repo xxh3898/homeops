@@ -15,6 +15,7 @@ import dev.homeops.ingestion.api.BackupIngestionRequest;
 import dev.homeops.ingestion.api.DeploymentIngestionRequest;
 import dev.homeops.ingestion.persistence.BackupIngestionStore;
 import dev.homeops.ingestion.persistence.DeploymentIngestionStore;
+import dev.homeops.notification.BackupNotificationProducer;
 import dev.homeops.notification.DeploymentNotificationProducer;
 import java.time.Instant;
 import java.util.Optional;
@@ -31,6 +32,7 @@ class IngestionServiceTest {
     @Mock private DeploymentIngestionStore deployments;
     @Mock private BackupIngestionStore backups;
     @Mock private DeploymentNotificationProducer deploymentNotifications;
+    @Mock private BackupNotificationProducer backupNotifications;
     @InjectMocks private IngestionService service;
     @Spy private final IngestionDigest digest = new IngestionDigest();
 
@@ -129,6 +131,33 @@ class IngestionServiceTest {
     }
 
     @Test
+    void should_acceptBackup_when_eventKeyIsInsertedFirst() {
+        var request = backup(BackupIngestionRequest.BackupStatus.RUNNING);
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000018");
+        when(backups.find(request.eventKey())).thenReturn(Optional.empty());
+        when(backups.insertIfAbsent(eq(request), any())).thenReturn(Optional.of(id));
+
+        var result = service.acceptBackup(request);
+
+        assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, false));
+        verify(backupNotifications).recordInitial(id, request);
+    }
+
+    @Test
+    void should_markDuplicate_when_backupPayloadMatchesStoredDigest() {
+        var request = backup(BackupIngestionRequest.BackupStatus.RUNNING);
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000019");
+        String requestDigest = digest.calculate(request);
+        when(backups.find(request.eventKey())).thenReturn(Optional.of(
+                backupStored(id, "RUNNING", requestDigest)));
+
+        var result = service.acceptBackup(request);
+
+        assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
+        verifyNoInteractions(backupNotifications);
+    }
+
+    @Test
     void should_rejectBackup_when_runningPayloadConflicts() {
         var request = backup(BackupIngestionRequest.BackupStatus.RUNNING);
         when(backups.find(request.eventKey())).thenReturn(Optional.of(
@@ -151,6 +180,7 @@ class IngestionServiceTest {
 
         assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, false));
         verify(backups).update(request, requestDigest, BackupIngestionRequest.BackupStatus.RUNNING);
+        verify(backupNotifications).recordTransition(id, request);
     }
 
     @Test
@@ -197,6 +227,23 @@ class IngestionServiceTest {
 
         assertThatThrownBy(() -> service.acceptBackup(request))
                 .isInstanceOf(InvalidIngestionStateTransitionException.class);
+        verifyNoInteractions(backupNotifications);
+    }
+
+    @Test
+    void should_markDuplicate_when_concurrentBackupUpdateAlreadyStoredMatchingTerminalEvent() {
+        var request = backup(BackupIngestionRequest.BackupStatus.SUCCESS);
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000020");
+        String requestDigest = digest.calculate(request);
+        when(backups.find(request.eventKey())).thenReturn(
+                Optional.of(backupStored(id, "RUNNING", "running-digest")),
+                Optional.of(backupStored(id, "SUCCESS", requestDigest)));
+        when(backups.update(request, requestDigest, BackupIngestionRequest.BackupStatus.RUNNING)).thenReturn(false);
+
+        var result = service.acceptBackup(request);
+
+        assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
+        verifyNoInteractions(backupNotifications);
     }
 
     @Test
