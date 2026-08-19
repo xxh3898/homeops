@@ -2,6 +2,7 @@ package dev.homeops.ingestion.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 import dev.homeops.common.EventKeyConflictException;
 import dev.homeops.common.InvalidIngestionStateTransitionException;
@@ -10,6 +11,7 @@ import dev.homeops.ingestion.IngestionService;
 import dev.homeops.ingestion.api.BackupIngestionRequest;
 import dev.homeops.ingestion.api.DeploymentIngestionRequest;
 import dev.homeops.ingestion.api.IngestionAcceptedResponse;
+import dev.homeops.notification.DeploymentNotificationProducer;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -49,7 +51,7 @@ class IngestionPostgresqlIntegrationTest {
         jdbc = new JdbcTemplate(dataSource);
         transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
         service = new IngestionService(new DeploymentIngestionStore(jdbc), new BackupIngestionStore(jdbc),
-                new IngestionDigest());
+                new IngestionDigest(), mock(DeploymentNotificationProducer.class));
     }
 
     @BeforeEach

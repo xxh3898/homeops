@@ -107,11 +107,11 @@ Flyway가 이미 database를 바꿨을 수 있으므로 image rollback은 backwa
 | Owner | 담당 signal | Delivery |
 |---|---|---|
 | Uptime Kuma | 외부 HTTP/Tailnet reachability | 기존 email path |
-| HomeOps | HomeOps가 persisted한 exact-origin incident 중 명시적으로 opt-in한 service의 future transition | Phase 4 Discord producer가 구현·활성화된 이후 |
+| HomeOps | 신뢰하는 reporter의 future deployment lifecycle과, persisted exact-origin incident 중 명시적으로 opt-in한 service의 future transition | 각 source producer와 Phase 4 Discord delivery가 활성화된 이후 |
 
 `monitored_service.notification_enabled`는 HomeOps Discord incident의 future eligibility만 나타냅니다. Uptime Kuma monitor/email 설정이나 Discord global kill switch를 변경하지 않습니다. 이 값을 바꾸는 것만으로 notification intent, historical/open incident replay 또는 outbound가 발생하지 않습니다. Existing service는 boolean-only ADMIN + CSRF operation으로만 이 authority를 변경하며 DB default와 legacy migration 결과는 fail-closed `false`입니다.
 
-Docker, Agent, deployment와 backup-result는 별도 producer 계약으로 추가합니다. Critical 장기 failure의 optional email escalation은 같은 incident의 owner와 deduplication policy를 검증한 뒤에만 고려합니다.
+Deployment producer는 실제 ingestion insert 또는 terminal transition winner만 typed outbox intent로 기록하며 replay나 경쟁 loser는 새 intent를 만들지 않습니다. Global switch가 disabled이면 이 intent는 `SUPPRESSED`로 끝나고 enable 뒤 재생되지 않습니다. Docker, Agent와 backup-result는 별도 producer 계약으로 추가합니다. Critical 장기 failure의 optional email escalation은 같은 incident의 owner와 deduplication policy를 검증한 뒤에만 고려합니다.
 
 ## 데이터 손실 및 재구성
 

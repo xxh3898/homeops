@@ -7,6 +7,7 @@ import dev.homeops.ingestion.api.DeploymentIngestionRequest;
 import dev.homeops.ingestion.api.IngestionAcceptedResponse;
 import dev.homeops.ingestion.persistence.BackupIngestionStore;
 import dev.homeops.ingestion.persistence.DeploymentIngestionStore;
+import dev.homeops.notification.DeploymentNotificationProducer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,9 +16,17 @@ public class IngestionService {
     private final DeploymentIngestionStore deployments;
     private final BackupIngestionStore backups;
     private final IngestionDigest digest;
+    private final DeploymentNotificationProducer deploymentNotifications;
 
-    public IngestionService(DeploymentIngestionStore deployments, BackupIngestionStore backups, IngestionDigest digest) {
-        this.deployments = deployments; this.backups = backups; this.digest = digest;
+    public IngestionService(
+            DeploymentIngestionStore deployments,
+            BackupIngestionStore backups,
+            IngestionDigest digest,
+            DeploymentNotificationProducer deploymentNotifications) {
+        this.deployments = deployments;
+        this.backups = backups;
+        this.digest = digest;
+        this.deploymentNotifications = deploymentNotifications;
     }
 
     @Transactional
@@ -28,6 +37,7 @@ public class IngestionService {
         if (existing.isEmpty()) {
             var inserted = deployments.insertIfAbsent(canonicalRequest, requestDigest);
             if (inserted.isPresent()) {
+                deploymentNotifications.recordInitial(inserted.get(), canonicalRequest);
                 return new IngestionAcceptedResponse(inserted.get(), false);
             }
             existing = deployments.find(canonicalRequest.eventKey());
@@ -40,6 +50,7 @@ public class IngestionService {
             throw new InvalidIngestionStateTransitionException(current.name(), canonicalRequest.status().name());
         }
         if (deployments.update(canonicalRequest, requestDigest, current)) {
+            deploymentNotifications.recordTransition(stored.id(), canonicalRequest);
             return new IngestionAcceptedResponse(stored.id(), false);
         }
         return resolveDeploymentAfterConditionalUpdateMiss(canonicalRequest, requestDigest);

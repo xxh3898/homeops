@@ -149,5 +149,5 @@ GitHub Actions는 workflow의 scoped package access에 `GITHUB_TOKEN`을 자동 
 - production `.env`와 TLS material은 mode를 제한하고 source checkout 밖에 둡니다.
 - Compose label, GitHub variable, command argument, log, issue body, deployment state에 secret 값을 넣지 마세요.
 - private deployment metadata를 repository/environment Variable, step summary, public log, issue body에 기록하지 마세요.
-- Discord outbox foundation은 producer 없이 dormant 상태이며 `HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 webhook이 필요하지 않고 outbound도 없습니다. Phase 4 activation 승인 전에는 webhook을 설치하거나 switch를 켜지 마세요. Webhook URL/token은 Git, DB, `app_setting`, log, error response 또는 Activity에 기록하지 않습니다.
+- Discord outbox foundation에는 deployment source producer만 연결되어 있습니다. `HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 생성된 intent가 replay 불가 `SUPPRESSED`로 끝나며 webhook이 필요하지 않고 outbound도 없습니다. Phase 4 activation 승인 전에는 webhook을 설치하거나 switch를 켜지 마세요. Webhook URL/token은 Git, DB, `app_setting`, log, error response 또는 Activity에 기록하지 않습니다.
 - credential 값이 Git history나 workflow log에 나타나면 rotate하세요. 보이는 줄을 지우는 것만으로는 충분하지 않습니다.

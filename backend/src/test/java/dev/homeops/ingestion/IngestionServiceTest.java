@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import dev.homeops.common.EventKeyConflictException;
@@ -14,6 +15,7 @@ import dev.homeops.ingestion.api.BackupIngestionRequest;
 import dev.homeops.ingestion.api.DeploymentIngestionRequest;
 import dev.homeops.ingestion.persistence.BackupIngestionStore;
 import dev.homeops.ingestion.persistence.DeploymentIngestionStore;
+import dev.homeops.notification.DeploymentNotificationProducer;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
@@ -28,6 +30,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class IngestionServiceTest {
     @Mock private DeploymentIngestionStore deployments;
     @Mock private BackupIngestionStore backups;
+    @Mock private DeploymentNotificationProducer deploymentNotifications;
     @InjectMocks private IngestionService service;
     @Spy private final IngestionDigest digest = new IngestionDigest();
 
@@ -43,6 +46,7 @@ class IngestionServiceTest {
 
         assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
         verify(deployments, never()).update(any(), any(), any());
+        verifyNoInteractions(deploymentNotifications);
     }
 
     @Test
@@ -55,6 +59,7 @@ class IngestionServiceTest {
         var result = service.acceptDeployment(request);
 
         assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, false));
+        verify(deploymentNotifications).recordInitial(id, request);
     }
 
     @Test
@@ -69,6 +74,7 @@ class IngestionServiceTest {
         var result = service.acceptDeployment(request);
 
         assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
+        verifyNoInteractions(deploymentNotifications);
     }
 
     @Test
@@ -86,6 +92,7 @@ class IngestionServiceTest {
         assertThat(result.duplicate()).isFalse();
         verify(deployments).update(eq(request), eq(requestDigest),
                 eq(DeploymentIngestionRequest.DeploymentStatus.RUNNING));
+        verify(deploymentNotifications).recordTransition(id, request);
     }
 
     @Test
@@ -160,6 +167,7 @@ class IngestionServiceTest {
         var result = service.acceptDeployment(request);
 
         assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
+        verifyNoInteractions(deploymentNotifications);
     }
 
     @Test
