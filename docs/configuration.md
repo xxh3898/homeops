@@ -40,6 +40,21 @@
 | `HOMEOPS_FAILURE_RESULT_RETENTION` | 아니요 | 아니요 | 실패 점검 결과 보존 기간. 기본값 `30d` |
 | `HOMEOPS_MONITORING_SCHEDULER_DELAY` | 아니요 | 아니요 | 점검 대상 service scan delay. 기본값 `5s` |
 | `HOMEOPS_MONITORING_CLEANUP_CRON` | 아니요 | 아니요 | UTC 기준 점검 결과 cleanup cron |
+| `HOMEOPS_NOTIFICATIONS_ENABLED` | 아니요 | 아니요 | Discord notification kill switch. 기본값 `false`이며 disabled event는 replay 불가 `SUPPRESSED`로 종료 |
+| `HOMEOPS_DISCORD_WEBHOOK_URL` | Phase 4 activation | 예 | Official Discord HTTPS webhook. notifications가 `false`면 비어 있어도 시작하며 `true`면 strict URL이 없을 때 fail closed |
+| `HOMEOPS_NOTIFICATION_CONNECT_TIMEOUT` | 아니요 | 아니요 | Discord connect timeout. 기본값 `3s`, 최대 `10s` |
+| `HOMEOPS_NOTIFICATION_REQUEST_TIMEOUT` | 아니요 | 아니요 | Discord request timeout. 기본값 `5s`, 최대 `15s` |
+| `HOMEOPS_NOTIFICATION_LEASE_DURATION` | 아니요 | 아니요 | Outbox claim lease. request timeout보다 길어야 하며 기본값 `30s` |
+| `HOMEOPS_NOTIFICATION_POLL_DELAY` | 아니요 | 아니요 | Bounded worker poll delay. 기본값 `1s` |
+| `HOMEOPS_NOTIFICATION_BATCH_SIZE` | 아니요 | 아니요 | Tick당 최대 claim 수. 기본값 및 최대 `10` |
+| `HOMEOPS_NOTIFICATION_MAX_ATTEMPTS` | 아니요 | 아니요 | Known retryable failure의 최대 attempt 수. 기본값 및 최대 `6` |
+| `HOMEOPS_NOTIFICATION_INITIAL_BACKOFF` | 아니요 | 아니요 | Exponential retry 시작 delay. 기본값 `5s` |
+| `HOMEOPS_NOTIFICATION_MAX_BACKOFF` | 아니요 | 아니요 | Jitter와 server rate-limit delay를 포함한 지원 상한. 기본값 및 최대 `15m` |
+| `HOMEOPS_NOTIFICATION_RESPONSE_MAX_BYTES` | 아니요 | 아니요 | Discord response read 상한. 기본값 및 최대 `65536` bytes |
+| `HOMEOPS_NOTIFICATION_PAYLOAD_MAX_BYTES` | 아니요 | 아니요 | Persisted typed payload와 rendered message 상한. 기본값 및 최대 `8192` bytes |
+| `HOMEOPS_NOTIFICATION_SENT_RETENTION` | 아니요 | 아니요 | `SENT`/`SUPPRESSED` outbox retention. 기본값 `30d` |
+| `HOMEOPS_NOTIFICATION_FAILED_RETENTION` | 아니요 | 아니요 | `FAILED`/`DELIVERY_UNKNOWN` retention. 기본값 `90d` |
+| `HOMEOPS_NOTIFICATION_CLEANUP_CRON` | 아니요 | 아니요 | Notification terminal row cleanup UTC cron. 기본값 `0 41 3 * * *` |
 
 `HOMEOPS_AUTH_MODE=DEV`는 Spring `dev` profile에서만 허용됩니다. production 환경에서는 절대 설정하지 마세요.
 
@@ -134,5 +149,5 @@ GitHub Actions는 workflow의 scoped package access에 `GITHUB_TOKEN`을 자동 
 - production `.env`와 TLS material은 mode를 제한하고 source checkout 밖에 둡니다.
 - Compose label, GitHub variable, command argument, log, issue body, deployment state에 secret 값을 넣지 마세요.
 - private deployment metadata를 repository/environment Variable, step summary, public log, issue body에 기록하지 마세요.
-- 이후 notification adapter를 구현할 때만 Discord webhook과 SMTP credential을 저장하세요. 현재 읽기 전용 runtime의 일부가 아닙니다.
+- Discord outbox foundation은 producer 없이 dormant 상태이며 `HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 webhook이 필요하지 않고 outbound도 없습니다. Phase 4 activation 승인 전에는 webhook을 설치하거나 switch를 켜지 마세요. Webhook URL/token은 Git, DB, `app_setting`, log, error response 또는 Activity에 기록하지 않습니다.
 - credential 값이 Git history나 workflow log에 나타나면 rotate하세요. 보이는 줄을 지우는 것만으로는 충분하지 않습니다.
