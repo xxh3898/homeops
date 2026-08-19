@@ -80,6 +80,8 @@ public class SecurityConfig {
                         .hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/v1/services")
                         .hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PATCH, "/api/v1/services/*/notification")
+                        .hasRole("ADMIN")
                         .anyRequest().denyAll())
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(

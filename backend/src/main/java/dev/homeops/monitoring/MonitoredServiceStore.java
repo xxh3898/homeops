@@ -62,6 +62,28 @@ public class MonitoredServiceStore {
                 """, MonitoredServiceStore::mapService, Timestamp.from(now));
     }
 
+    public Optional<Boolean> findNotificationAuthorityForUpdate(UUID serviceId) {
+        return jdbc.query("""
+                SELECT notification_enabled
+                FROM monitored_service
+                WHERE id = ?
+                FOR UPDATE
+                """, (row, index) -> row.getBoolean("notification_enabled"), serviceId)
+                .stream()
+                .findFirst();
+    }
+
+    public void updateNotificationAuthority(UUID serviceId, boolean enabled) {
+        int updated = jdbc.update("""
+                UPDATE monitored_service
+                SET notification_enabled = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND notification_enabled IS DISTINCT FROM ?
+                """, enabled, serviceId, enabled);
+        if (updated != 1) {
+            throw new IllegalStateException("Monitored service notification authority update failed");
+        }
+    }
+
     private static MonitoredServiceResponse response(UUID id, MonitoredServiceRequest request) {
         return new MonitoredServiceResponse(id, request.name(), request.url(), request.method().name(),
                 request.expectedStatus(), request.timeoutMs(), request.intervalSeconds(),

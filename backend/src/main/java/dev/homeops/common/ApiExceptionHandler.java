@@ -12,6 +12,7 @@ import dev.homeops.agent.logs.ContainerLogsNotAllowedException;
 import dev.homeops.agent.logs.InvalidContainerLogTailException;
 import dev.homeops.metrics.InvalidMetricHistoryPeriodException;
 import dev.homeops.monitoring.SafeServiceUrlPolicy.UnsafeServiceUrlException;
+import dev.homeops.monitoring.MonitoredServiceNotFoundException;
 import dev.homeops.system.AmbiguousContainerIdentifierException;
 import dev.homeops.system.ContainerInventoryUnavailableException;
 import dev.homeops.system.ContainerNotFoundException;
@@ -200,6 +201,16 @@ public class ApiExceptionHandler {
         ProblemDetail detail = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
         detail.setType(URI.create("urn:homeops:problem:duplicate-service-name"));
         detail.setTitle("Service name already exists");
+        return detail;
+    }
+
+    @ExceptionHandler(MonitoredServiceNotFoundException.class)
+    ProblemDetail handleMonitoredServiceNotFound() {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.NOT_FOUND,
+                "The monitored service does not exist");
+        detail.setType(URI.create("urn:homeops:problem:monitored-service-not-found"));
+        detail.setTitle("Monitored service not found");
         return detail;
     }
 
