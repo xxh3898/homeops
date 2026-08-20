@@ -96,6 +96,59 @@ func TestResultValidateEnforcesStatusReasonMatrix(t *testing.T) {
 	}
 }
 
+func TestResultDeliveryDeadlineAllowsOnlyFixedBoundedGrace(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		expiresAt time.Time
+		want      time.Time
+		wantError bool
+	}{
+		{
+			name:      "operation active",
+			expiresAt: modelTestNow.Add(15 * time.Second),
+			want:      modelTestNow.Add(30 * time.Second),
+		},
+		{
+			name:      "operation expired within grace",
+			expiresAt: modelTestNow.Add(-5 * time.Second),
+			want:      modelTestNow.Add(10 * time.Second),
+		},
+		{
+			name:      "grace expired",
+			expiresAt: modelTestNow.Add(-ResultReportingGrace),
+			wantError: true,
+		},
+		{
+			name: "far future",
+			expiresAt: modelTestNow.Add(
+				MaximumExpiryHorizon + time.Nanosecond),
+			wantError: true,
+		},
+		{
+			name:      "missing",
+			expiresAt: time.Time{},
+			wantError: true,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			deadline, err := ResultDeliveryDeadline(test.expiresAt, modelTestNow)
+			if test.wantError {
+				if err == nil {
+					t.Fatalf("ResultDeliveryDeadline accepted invalid expiry: %s", deadline)
+				}
+				return
+			}
+			if err != nil || !deadline.Equal(test.want) {
+				t.Fatalf("deadline/error = %s/%v, want %s/nil", deadline, err, test.want)
+			}
+		})
+	}
+}
+
 func validWork(operation Operation, expiresAt time.Time) Work {
 	return Work{
 		RequestID:      "10000000-0000-4000-8000-000000000001",

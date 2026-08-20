@@ -454,6 +454,24 @@ func TestDeliverContainerControlResultRetriesTransportOnlyAndReleasesPayload(t *
 	assertControlResultReleased(t, result)
 }
 
+func TestDeliverContainerControlResultAcceptsResultAfterOperationExpiry(t *testing.T) {
+	t.Parallel()
+	clock := &mutableTime{value: time.Date(2026, 8, 20, 12, 0, 1, 0, time.UTC)}
+	controlTransport := &recordingControlTransport{}
+	application := controlRetryTestApp(clock, controlTransport)
+	result := successfulControlResult(clock.value.Add(-time.Second))
+
+	delivery := application.deliverContainerControlResult(
+		context.Background(),
+		&result,
+		clock.value.Add(-time.Second))
+
+	if delivery != resultDeliveryCompleted || controlTransport.sendCalls != 1 {
+		t.Fatalf("delivery/calls = %d/%d", delivery, controlTransport.sendCalls)
+	}
+	assertControlResultReleased(t, result)
+}
+
 func TestDeliverContainerControlResultRetriesKnownTransientStatuses(t *testing.T) {
 	t.Parallel()
 	for _, status := range []int{408, 429, 500, 503} {
@@ -532,19 +550,39 @@ func TestDeliverContainerControlResultTreatsOldAPIAsUnsupported(t *testing.T) {
 	}
 }
 
-func TestDeliverContainerControlResultStopsAtExpiryWithoutPersistence(t *testing.T) {
+func TestDeliverContainerControlResultStopsAtReportingDeadlineWithoutPersistence(t *testing.T) {
 	t.Parallel()
 	clock := &mutableTime{value: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)}
 	controlTransport := &recordingControlTransport{sendError: errors.New("network unavailable")}
 	application := controlRetryTestApp(clock, controlTransport)
 	result := successfulControlResult(clock.value)
+	expiresAt := clock.value.Add(
+		-containercontrol.ResultReportingGrace + 250*time.Millisecond)
 
 	delivery := application.deliverContainerControlResult(
 		context.Background(),
 		&result,
-		clock.value.Add(250*time.Millisecond))
+		expiresAt)
 
 	if delivery != resultDeliveryCompleted || controlTransport.sendCalls != 2 {
+		t.Fatalf("delivery/calls = %d/%d", delivery, controlTransport.sendCalls)
+	}
+	assertControlResultReleased(t, result)
+}
+
+func TestDeliverContainerControlResultDropsPayloadAfterReportingGrace(t *testing.T) {
+	t.Parallel()
+	clock := &mutableTime{value: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)}
+	controlTransport := &recordingControlTransport{}
+	application := controlRetryTestApp(clock, controlTransport)
+	result := successfulControlResult(clock.value.Add(-containercontrol.ResultReportingGrace))
+
+	delivery := application.deliverContainerControlResult(
+		context.Background(),
+		&result,
+		clock.value.Add(-containercontrol.ResultReportingGrace))
+
+	if delivery != resultDeliveryCompleted || controlTransport.sendCalls != 0 {
 		t.Fatalf("delivery/calls = %d/%d", delivery, controlTransport.sendCalls)
 	}
 	assertControlResultReleased(t, result)
@@ -691,6 +729,39 @@ func TestControlResultDeliveryRetryNeverReexecutesDockerOperation(t *testing.T) 
 	}
 }
 
+func TestPostSendUnknownResultIsDeliveredWithinGraceWithoutReexecution(t *testing.T) {
+	t.Parallel()
+	clock := &mutableTime{value: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)}
+	expiresAt := clock.value.Add(250 * time.Millisecond)
+	executor := &recordingControlExecutor{
+		outcome: containercontrol.Outcome{
+			Status:     containercontrol.StatusOutcomeUnknown,
+			ReasonCode: containercontrol.ReasonDockerOutcomeUnknown,
+		},
+		onCall: func() {
+			clock.value = expiresAt.Add(50 * time.Millisecond)
+		},
+	}
+	controlTransport := &recordingControlTransport{}
+	application := controlRetryTestApp(clock, controlTransport)
+	application.config.MaxContainers = 128
+	application.controlExecutor = executor
+	work := validControlWork(expiresAt)
+
+	result := application.executeContainerControlWork(context.Background(), work)
+	delivery := application.deliverContainerControlResult(
+		context.Background(), &result, work.ExpiresAt)
+
+	if delivery != resultDeliveryCompleted || executor.calls != 1 ||
+		controlTransport.sendCalls != 1 ||
+		controlTransport.lastResult.Status != containercontrol.StatusOutcomeUnknown ||
+		controlTransport.lastResult.Reason != containercontrol.ReasonDockerOutcomeUnknown {
+		t.Fatalf("delivery/executor/send/result = %d/%d/%d/%#v",
+			delivery, executor.calls, controlTransport.sendCalls,
+			controlTransport.lastResult)
+	}
+}
+
 func TestContainerLogBackoffClassifiesOldAPIAsUnsupported(t *testing.T) {
 	t.Parallel()
 	if delay := containerLogBackoff(
@@ -775,6 +846,7 @@ type recordingLogTransport struct {
 type recordingControlExecutor struct {
 	outcome containercontrol.Outcome
 	calls   int
+	onCall  func()
 }
 
 func (executor *recordingControlExecutor) ControlContainer(
@@ -786,6 +858,9 @@ func (executor *recordingControlExecutor) ControlContainer(
 	time.Time,
 ) containercontrol.Outcome {
 	executor.calls++
+	if executor.onCall != nil {
+		executor.onCall()
+	}
 	return executor.outcome
 }
 
@@ -796,6 +871,7 @@ type recordingControlTransport struct {
 	sendCalls  int
 	sendError  error
 	sendErrors []error
+	lastResult containercontrol.Result
 }
 
 func (controlTransport *recordingControlTransport) NextContainerControlWork(
@@ -808,10 +884,11 @@ func (controlTransport *recordingControlTransport) NextContainerControlWork(
 }
 
 func (controlTransport *recordingControlTransport) SendContainerControlResult(
-	context.Context,
-	containercontrol.Result,
+	_ context.Context,
+	result containercontrol.Result,
 ) error {
 	controlTransport.sendCalls++
+	controlTransport.lastResult = result
 	if len(controlTransport.sendErrors) > 0 {
 		err := controlTransport.sendErrors[0]
 		controlTransport.sendErrors = controlTransport.sendErrors[1:]
