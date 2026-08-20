@@ -1,6 +1,8 @@
 package dev.homeops.common;
 
 import dev.homeops.activity.InvalidActivityCursorException;
+import dev.homeops.agent.control.ContainerControlRequestGoneException;
+import dev.homeops.agent.control.ContainerControlResultRejectedException;
 import dev.homeops.agent.logs.ContainerLogBrokerCapacityException;
 import dev.homeops.agent.logs.ContainerLogCapabilityUnavailableException;
 import dev.homeops.agent.logs.ContainerLogRequestConflictException;
@@ -134,6 +136,26 @@ public class ApiExceptionHandler {
                 "Container log request is no longer available");
         detail.setType(URI.create("urn:homeops:problem:container-log-request-gone"));
         detail.setTitle("Container log request expired");
+        return detail;
+    }
+
+    @ExceptionHandler(ContainerControlRequestGoneException.class)
+    ProblemDetail handleContainerControlRequestGone() {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.GONE,
+                "Container control request is no longer available");
+        detail.setType(URI.create("urn:homeops:problem:container-control-request-gone"));
+        detail.setTitle("Container control request expired");
+        return detail;
+    }
+
+    @ExceptionHandler(ContainerControlResultRejectedException.class)
+    ProblemDetail handleContainerControlResultRejected() {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.UNPROCESSABLE_CONTENT,
+                "Container control result cannot be processed");
+        detail.setType(URI.create("urn:homeops:problem:container-control-result-rejected"));
+        detail.setTitle("Container control result rejected");
         return detail;
     }
 

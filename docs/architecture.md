@@ -4,7 +4,7 @@
 
 HomeOps는 Docker Desktop을 실행하는 Apple Silicon Mac용 단일 관리자 대시보드입니다. 소스를 fork하여 self-host할 수 있지만, 지원하는 ingress는 비공개 tailnet입니다. 인터넷 공개, Funnel, multi-tenant 격리, 임의 Docker 또는 shell 입력은 지원하지 않습니다.
 
-현재 마일스톤에서 호스트와 컨테이너 작업은 읽기 전용입니다. 호스트·컨테이너 인벤토리, bounded metric history, freshness-aware Container Detail, explicit opt-in bounded/redacted Container Logs, HMAC 인증 배포/백업 수집, 정확한 origin HTTP 서비스 점검, 인시던트 상태 전환, 범위 제한 점검 결과 보존, 페이지네이션 Activity 타임라인을 구현합니다. 운영 이력 입력은 운영자가 관리하는 secret 또는 origin allowlist를 설정하기 전까지 fail closed하고, Container Logs는 fresh capability와 container별 exact opt-in이 없으면 fail closed합니다. Phase 4의 transactional Discord outbox, fail-closed service eligibility authority와 deployment·backup·incident·Agent lifecycle·Docker episode producer도 production acceptance를 완료했습니다. Acceptance 종료 뒤 webhook Secret은 설치된 상태로 유지하되 `HOMEOPS_NOTIFICATIONS_ENABLED=false`로 outbound를 닫아 두었습니다. Phase 5는 exact managed label과 server-owned project allowlist를 결합한 internal candidate authority까지만 source에 있으며 실제 컨테이너 mutation은 아직 없습니다.
+현재 사용자에게 제공하는 호스트와 컨테이너 기능은 읽기 전용입니다. 호스트·컨테이너 인벤토리, bounded metric history, freshness-aware Container Detail, explicit opt-in bounded/redacted Container Logs, HMAC 인증 배포/백업 수집, 정확한 origin HTTP 서비스 점검, 인시던트 상태 전환, 범위 제한 점검 결과 보존, 페이지네이션 Activity 타임라인을 구현합니다. 운영 이력 입력은 운영자가 관리하는 secret 또는 origin allowlist를 설정하기 전까지 fail closed하고, Container Logs는 fresh capability와 container별 exact opt-in이 없으면 fail closed합니다. Phase 4의 transactional Discord outbox, fail-closed service eligibility authority와 deployment·backup·incident·Agent lifecycle·Docker episode producer도 production acceptance를 완료했습니다. Acceptance 종료 뒤 webhook Secret은 설치된 상태로 유지하되 `HOMEOPS_NOTIFICATIONS_ENABLED=false`로 outbound를 닫아 두었습니다. Phase 5 source에는 public enqueue가 없는 fixed Agent control protocol foundation이 있지만 production rollout/activation과 public mutation API/UI는 없습니다.
 
 ## 런타임 토폴로지
 
@@ -16,7 +16,7 @@ flowchart LR
     api --> db["전용 PostgreSQL"]
     api -->|"정확한 origin HTTPS 점검"| monitored["설정된 서비스 origin"]
     agent["Native macOS Go Agent"] -->|"Loopback TLS 1.3 + client certificate"| web
-    agent -->|"읽기 전용 고정 Docker API 호출"| docker["Docker Desktop Engine"]
+    agent -->|"고정 Docker read + dormant control API"| docker["Docker Desktop Engine"]
     agent -->|"고정 macOS 명령 및 syscall"| mac["macOS host"]
     actions["GitHub Actions"] -->|"ARM64 digest-pinned image"| ghcr["GHCR"]
     actions -->|"Tailscale + 강제 SSH 명령"| bootstrap["고정 배포 bootstrap"]
@@ -24,9 +24,9 @@ flowchart LR
     kuma["Uptime Kuma"] -.->|"독립 가용성 점검"| serve
 ```
 
-API와 데이터베이스에는 Docker socket을 절대 제공하지 않습니다. 이를 접근할 수 있는 것은 native Agent뿐입니다. Agent는 inbound listener가 없고 명령 이름, Docker path/query, shell fragment를 받지 않습니다. Container Logs work는 fixed DTO의 12자리 short ID, allowlisted tail과 absolute expiry만 전달하며, Agent가 live full ID와 exact opt-in을 다시 검증한 뒤 고정 Docker API를 호출합니다.
+API와 데이터베이스에는 Docker socket을 절대 제공하지 않습니다. 이를 접근할 수 있는 것은 native Agent뿐입니다. Agent는 inbound listener가 없고 generic command, Docker path/query나 shell fragment를 받지 않습니다. Container Logs work는 fixed DTO의 12자리 short ID, allowlisted tail과 absolute expiry만 전달하며, Agent가 live full ID와 exact opt-in을 다시 검증한 뒤 고정 Docker API를 호출합니다. Control work도 server UUID, 12자리 ID, exact project, `START|STOP|RESTART`, absolute expiry만 전달하며 arbitrary Docker input을 포함하지 않습니다.
 
-Phase 5 candidate authority는 Docker를 호출하지 않습니다. Agent snapshot의 exact `managed` boolean, existing full-ID prefix resolution, captured/received freshness와 default-empty exact Compose project allowlist를 결합해 eligible short ID와 project만 internal result로 만듭니다. Stale/missing snapshot, ambiguous/absent ID, unmanaged, standalone/unknown, HomeOps와 allowlist 밖 project는 stable denial code로 끝나며 full Docker ID, raw label, image나 private metadata를 response/error/log/persistence에 추가하지 않습니다. Snapshot은 후보 판정일 뿐 최종 mutation 증거가 아니므로 후속 fixed-operation protocol은 Agent에서 live Docker list와 exact label/project를 다시 검증해야 합니다.
+Phase 5 candidate authority 자체는 Docker를 호출하지 않습니다. Agent snapshot의 exact `managed` boolean, existing full-ID prefix resolution, captured/received freshness와 default-empty exact Compose project allowlist를 결합해 eligible short ID와 project만 internal work로 만듭니다. Bounded memory broker는 active work를 global 1개로 제한하고 claimed work를 requeue하지 않습니다. Agent는 별도 outbound long-poll worker에서 full ID를 live resolve하고 selected inspect의 exact managed/project/service와 mount protection을 재검증합니다. HomeOps project, protected service 이름, writable bind/volume 또는 판정 불가능 mount는 hard deny하며, 통과한 target만 fixed Docker POST를 work당 최대 한 번 수행합니다. Result 전송은 expiry 안에서 재시도할 수 있지만 operation은 재실행하지 않고 post-send 불명확 결과는 `OUTCOME_UNKNOWN`으로 끝냅니다. Full Docker ID, raw label/mount source/error body는 result, log, public API나 persistence에 추가하지 않습니다.
 
 ## native Agent가 필요한 이유
 

@@ -18,7 +18,7 @@
 | Tailnet account 침해 | 낮음/중간 | 높음 | Tailnet MFA, 좁은 grant, 정확한 login allowlist, session cookie | 승인된 identity는 모든 dashboard data를 볼 수 있음 |
 | 잠금 해제된 iPhone 분실 | 중간 | 높음 | device passcode/biometric, Tailscale device revoke, 짧은 운영 대응 | 기존 PWA session은 revoke 또는 expiry 전까지 유효할 수 있음 |
 | local header spoofing | 낮음 | 높음 | Web port loopback 전용, API internal network, LAN bind 없음 | 침해된 local macOS account가 Serve header를 가장할 수 있음 |
-| Docker socket 침해 | 낮음 | 매우 높음 | socket은 native Agent에만 제공, inbound Agent API 없음, 고정 GET endpoint | Agent process는 OS 경계에서 여전히 Docker Engine과 동등한 read/control potential을 가짐 |
+| Docker socket 침해 | 낮음 | 매우 높음 | socket은 native Agent에만 제공, inbound Agent API 없음, allowlist형 read와 dormant fixed control endpoint | Agent process는 OS 경계에서 여전히 Docker Engine과 동등한 read/control potential을 가짐 |
 | Agent client key 탈취 | 낮음 | 높음 | `0600` key, 운영자 전용 directory, mTLS, 정확한 Agent ID, payload limit | 탈취한 key는 같은 Mac account context에서 false snapshot을 제출할 수 있음 |
 | API 취약점 | 중간 | 높음 | same-origin, Spring Security, validation, no-store, 최소 endpoint, dependency scanning | 알려지지 않은 framework 또는 application defect 가능 |
 | API outbound egress 악용 | 낮음/중간 | 중간/높음 | API 전용 `egress` bridge, 정확한 HTTPS origin allowlist, 일반 request endpoint 없음 | Docker network name은 방향을 강제하지 않으므로 침해된 API process는 outbound connection을 시작할 수 있음 |
@@ -32,16 +32,16 @@
 | backup path 공개 | 낮음 | 중간 | bounded relative logical identifier만 허용하고 absolute·traversal·invalid identifier는 fail closed | 운영자가 선택한 logical identifier 자체에는 민감한 이름을 넣지 않아야 함 |
 | 위조 deploy request | 낮음 | 매우 높음 | Tailscale OIDC, 별도 CI key, forced command grammar, 정확한 SHA/digest, stdin의 GHCR token | 침해된 GitHub production secret이 승인된 package name을 배포할 수 있음 |
 | 위조 history ingestion | 낮음 | 높음 | bounded body·timestamp HMAC-SHA-256, fail-closed secret configuration, event key idempotency 및 state transition | 전용 ingestion secret을 가진 caller는 rotate 전까지 false history를 제출할 수 있음 |
-| 반복 restart API | 현재 없음 | 향후 높음 | control 제외 | 구현 전 rate limit, idempotency, lock, audit, confirmation 필요 |
+| 반복 restart API | public API 없음 | 향후 높음 | internal work global 1, TTL, at-most-once operation; public enqueue 제외 | public 구현 전 client idempotency, rate limit, durable audit, CSRF/Origin, confirmation 필요 |
 | HomeOps outage | 중간 | 중간 | Kuma 독립 유지, stale UI, health check | HomeOps가 다운되면 스스로 alert할 수 없음 |
 | 전체 Mac outage | 중간 | 높음 | optional external heartbeat | 같은 host의 component는 전체 power/network loss를 보고할 수 없음 |
 | Discord webhook 유출 또는 arbitrary outbound | 낮음/중간 | 높음 | Secret은 environment에만 유지, official HTTPS host/path allowlist, no redirect/query/userinfo/custom port, disabled-by-default kill switch | API process 또는 host account 침해 시 in-memory credential과 outbound capability가 노출될 수 있음 |
 
 ## Docker API 경계
 
-Agent는 명시적으로 구성한 Unix socket을 통해 version discovery, snapshot용 container listing/inspect/stats와 opt-in log 작업용 lightweight list, 선택 container TTY inspect, bounded logs read만 구현합니다. allowlist 구조로 decode한 뒤 raw response를 버립니다. API에 Docker proxy endpoint를 노출하지 않습니다. mTLS ingress도 bounded request, 짧은 proxy timeout, source별 작은 burst/rate limit을 강제합니다.
+Agent는 명시적으로 구성한 Unix socket을 통해 version discovery, snapshot용 container listing/inspect/stats, opt-in log 작업용 lightweight list/TTY inspect/bounded logs read와 dormant control용 lightweight list/selected inspect/fixed POST만 구현합니다. allowlist 구조로 decode한 뒤 raw response를 버립니다. API에 Docker proxy endpoint를 노출하지 않습니다. mTLS ingress도 bounded request, 짧은 proxy timeout, source별 작은 burst/rate limit을 강제합니다.
 
-Phase 5의 현재 source는 mutation이 아닌 candidate authority만 추가합니다. Agent는 exact `homeops.managed=true`를 boolean으로만 전달하고 Backend는 fresh latest snapshot, unique bounded short ID와 default-empty exact Compose project allowlist를 함께 요구합니다. `homeops`, standalone/blank/unknown project는 hard deny하며 denial은 stable code만 유지합니다. Full Docker ID, raw labels, image/registry와 allowlist 전체를 public API, error, log 또는 persistence에 노출하지 않습니다. Snapshot authority만으로 Docker를 변경하지 않으며 후속 protocol의 live label/project revalidation, database protection, operation lock, idempotency, audit와 confirmation 전에는 start/stop/restart가 없습니다.
+Phase 5 source는 exact `homeops.managed=true`, fresh latest snapshot, unique bounded short ID와 default-empty exact Compose project allowlist를 함께 요구한 뒤에만 internal control work를 생성할 수 있습니다. Public enqueue는 없습니다. Agent는 operation 직전에 current Docker list/inspect에서 unique full ID, exact label/project, nonblank service와 mount protection을 다시 확인합니다. `homeops`, protected database/cache service 이름, writable bind/volume와 판정 불가능 mount는 hard deny합니다. Work는 fixed operation과 expiry 외 command/path/query/body를 받지 않으며 Docker operation은 최대 한 번입니다. Result delivery만 memory에서 재시도하고 ambiguous post-send outcome은 자동 재실행하지 않습니다. Full Docker ID, raw labels/mount source/error body, image/registry와 allowlist 전체를 public API, result, error, log 또는 persistence에 노출하지 않습니다. Durable audit, client idempotency, rate limit, CSRF/Origin과 confirmation 전에는 browser control을 열지 않습니다.
 
 읽기 접근도 운영 metadata를 드러낼 수 있습니다. Agent binary와 configuration은 privileged로 다루세요. root로 실행하거나 `sudo`를 제공하지 말고, spool을 container에 mount하거나 임의 TCP Docker endpoint를 구성하지 마세요.
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/xxh3898/homeops/agent/internal/collector"
 	"github.com/xxh3898/homeops/agent/internal/config"
+	"github.com/xxh3898/homeops/agent/internal/containercontrol"
 	"github.com/xxh3898/homeops/agent/internal/containerlog"
 	"github.com/xxh3898/homeops/agent/internal/docker"
 	"github.com/xxh3898/homeops/agent/internal/snapshot"
@@ -24,17 +25,19 @@ import (
 )
 
 type App struct {
-	config       config.Config
-	version      string
-	host         hostCollector
-	docker       dockerCollector
-	transport    snapshotTransport
-	logReader    containerLogReader
-	logTransport containerLogTransport
-	spool        snapshotSpool
-	logger       *slog.Logger
-	now          func() time.Time
-	wait         func(context.Context, time.Duration) bool
+	config           config.Config
+	version          string
+	host             hostCollector
+	docker           dockerCollector
+	transport        snapshotTransport
+	logReader        containerLogReader
+	logTransport     containerLogTransport
+	controlExecutor  containerControlExecutor
+	controlTransport containerControlTransport
+	spool            snapshotSpool
+	logger           *slog.Logger
+	now              func() time.Time
+	wait             func(context.Context, time.Duration) bool
 }
 
 type hostCollector interface {
@@ -64,6 +67,22 @@ type containerLogTransport interface {
 	SendContainerLogResult(context.Context, containerlog.Result) error
 }
 
+type containerControlExecutor interface {
+	ControlContainer(
+		context.Context,
+		string,
+		string,
+		containercontrol.Operation,
+		int,
+		time.Time,
+	) containercontrol.Outcome
+}
+
+type containerControlTransport interface {
+	NextContainerControlWork(context.Context) (*containercontrol.Work, error)
+	SendContainerControlResult(context.Context, containercontrol.Result) error
+}
+
 type snapshotSpool interface {
 	Drain(func([]byte) error) (spool.DrainResult, error)
 	Store(string, []byte) error
@@ -72,11 +91,16 @@ type snapshotSpool interface {
 const collectionTimeout = 20 * time.Second
 
 const (
-	unsupportedLogAPIDelay  = 30 * time.Second
-	transientLogErrorDelay  = time.Second
-	emptyLogPollDelay       = 250 * time.Millisecond
-	initialResultRetryDelay = 100 * time.Millisecond
-	maximumResultRetryDelay = 500 * time.Millisecond
+	unsupportedLogAPIDelay         = 30 * time.Second
+	transientLogErrorDelay         = time.Second
+	emptyLogPollDelay              = 250 * time.Millisecond
+	initialResultRetryDelay        = 100 * time.Millisecond
+	maximumResultRetryDelay        = 500 * time.Millisecond
+	unsupportedControlAPIDelay     = 30 * time.Second
+	transientControlErrorDelay     = time.Second
+	emptyControlPollDelay          = 250 * time.Millisecond
+	initialControlResultRetryDelay = 100 * time.Millisecond
+	maximumControlResultRetryDelay = 500 * time.Millisecond
 )
 
 var fullSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -103,17 +127,19 @@ func New(
 		return nil, err
 	}
 	return &App{
-		config:       config,
-		version:      version,
-		host:         collector.NewHostCollector(collector.ExecRunner{}),
-		docker:       dockerClient,
-		transport:    transportClient,
-		logReader:    dockerClient,
-		logTransport: transportClient,
-		spool:        spoolStore,
-		logger:       logger,
-		now:          func() time.Time { return time.Now().UTC() },
-		wait:         waitFor,
+		config:           config,
+		version:          version,
+		host:             collector.NewHostCollector(collector.ExecRunner{}),
+		docker:           dockerClient,
+		transport:        transportClient,
+		logReader:        dockerClient,
+		logTransport:     transportClient,
+		controlExecutor:  dockerClient,
+		controlTransport: transportClient,
+		spool:            spoolStore,
+		logger:           logger,
+		now:              func() time.Time { return time.Now().UTC() },
+		wait:             waitFor,
 	}, nil
 }
 
@@ -124,6 +150,13 @@ func (app *App) Run(ctx context.Context) error {
 		go func() {
 			defer workers.Done()
 			app.runContainerLogWorker(ctx)
+		}()
+	}
+	if app.controlExecutor != nil && app.controlTransport != nil {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			app.runContainerControlWorker(ctx)
 		}()
 	}
 	err := app.runSnapshotLoop(ctx)
@@ -251,6 +284,73 @@ func (app *App) runContainerLogWorker(ctx context.Context) {
 	}
 }
 
+func (app *App) runContainerControlWorker(ctx context.Context) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		work, err := app.controlTransport.NextContainerControlWork(ctx)
+		if err != nil {
+			app.logger.Info("container control work poll unavailable")
+			if !app.waitFor(ctx, containerControlBackoff(err)) {
+				return
+			}
+			continue
+		}
+		if work == nil {
+			if !app.waitFor(ctx, emptyControlPollDelay) {
+				return
+			}
+			continue
+		}
+		result := app.executeContainerControlWork(ctx, *work)
+		delivery := app.deliverContainerControlResult(
+			ctx,
+			&result,
+			work.ExpiresAt)
+		if delivery == resultDeliveryCancelled {
+			return
+		}
+		if delivery == resultDeliveryUnsupported {
+			app.logger.Info("container control result delivery unavailable")
+			if !app.waitFor(ctx, unsupportedControlAPIDelay) {
+				return
+			}
+		}
+	}
+}
+
+func (app *App) executeContainerControlWork(
+	ctx context.Context,
+	work containercontrol.Work,
+) containercontrol.Result {
+	now := app.currentTime()
+	result := containercontrol.Result{
+		RequestID: work.RequestID,
+		Status:    containercontrol.StatusFailed,
+		Reason:    containercontrol.ReasonDockerUnavailable,
+		Finished:  now.Truncate(time.Microsecond),
+	}
+	if err := work.Validate(now); err != nil {
+		if !work.ExpiresAt.IsZero() && !now.Before(work.ExpiresAt) {
+			result.Status = containercontrol.StatusExpired
+			result.Reason = containercontrol.ReasonWorkExpired
+		}
+		return result
+	}
+	outcome := app.controlExecutor.ControlContainer(
+		ctx,
+		work.ContainerID,
+		work.ComposeProject,
+		work.Operation,
+		app.config.MaxContainers,
+		work.ExpiresAt)
+	result.Status = outcome.Status
+	result.Reason = outcome.ReasonCode
+	result.Finished = app.currentTime().Truncate(time.Microsecond)
+	return result
+}
+
 func (app *App) executeContainerLogWork(
 	ctx context.Context,
 	work containerlog.Work,
@@ -373,6 +473,63 @@ func (app *App) deliverContainerLogResult(
 	}
 }
 
+func (app *App) deliverContainerControlResult(
+	ctx context.Context,
+	result *containercontrol.Result,
+	expiresAt time.Time,
+) resultDelivery {
+	defer func() {
+		*result = containercontrol.Result{}
+	}()
+	if err := containercontrol.ValidateExpiry(expiresAt, app.currentTime()); err != nil {
+		return resultDeliveryCompleted
+	}
+	delay := initialControlResultRetryDelay
+	for {
+		if ctx.Err() != nil {
+			return resultDeliveryCancelled
+		}
+		remaining := expiresAt.Sub(app.currentTime())
+		if remaining <= 0 {
+			return resultDeliveryCompleted
+		}
+		attemptContext, cancel := context.WithTimeout(ctx, remaining)
+		err := app.controlTransport.SendContainerControlResult(
+			attemptContext,
+			*result)
+		cancel()
+		if err == nil {
+			return resultDeliveryCompleted
+		}
+		var statusError transport.StatusError
+		if errors.As(err, &statusError) {
+			switch statusError.StatusCode {
+			case 404, 405:
+				return resultDeliveryUnsupported
+			case 410:
+				return resultDeliveryCompleted
+			}
+			retryableStatus := statusError.StatusCode == 408 ||
+				statusError.StatusCode == 429 ||
+				(statusError.StatusCode >= 500 && statusError.StatusCode < 600)
+			if !retryableStatus {
+				return resultDeliveryCompleted
+			}
+		}
+		remaining = expiresAt.Sub(app.currentTime())
+		if remaining <= 0 {
+			return resultDeliveryCompleted
+		}
+		if delay > remaining {
+			delay = remaining
+		}
+		if !app.waitFor(ctx, delay) {
+			return resultDeliveryCancelled
+		}
+		delay = min(delay*2, maximumControlResultRetryDelay)
+	}
+}
+
 func containerLogBackoff(err error) time.Duration {
 	var statusError transport.StatusError
 	if errors.As(err, &statusError) &&
@@ -380,6 +537,15 @@ func containerLogBackoff(err error) time.Duration {
 		return unsupportedLogAPIDelay
 	}
 	return transientLogErrorDelay
+}
+
+func containerControlBackoff(err error) time.Duration {
+	var statusError transport.StatusError
+	if errors.As(err, &statusError) &&
+		(statusError.StatusCode == 404 || statusError.StatusCode == 405) {
+		return unsupportedControlAPIDelay
+	}
+	return transientControlErrorDelay
 }
 
 func waitFor(ctx context.Context, delay time.Duration) bool {

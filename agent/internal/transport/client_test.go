@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xxh3898/homeops/agent/internal/containercontrol"
 	"github.com/xxh3898/homeops/agent/internal/containerlog"
 )
 
@@ -28,23 +30,149 @@ func TestStatusErrorKeepsAuthenticationFailureRetryable(t *testing.T) {
 
 func TestDeriveEndpointsUsesFixedPathsOnValidatedOrigin(t *testing.T) {
 	t.Parallel()
-	snapshot, work, result, err := deriveEndpoints(
+	snapshot, work, result, controlWork, controlResult, err := deriveEndpoints(
 		"https://127.0.0.1:13443/api/v1/internal/agent/snapshots")
 	if err != nil {
 		t.Fatalf("deriveEndpoints returned an error: %v", err)
 	}
 	if snapshot != "https://127.0.0.1:13443"+snapshotPath ||
 		work != "https://127.0.0.1:13443"+logWorkPath ||
-		result != "https://127.0.0.1:13443"+logResultPath {
-		t.Fatalf("derived endpoints = %q, %q, %q", snapshot, work, result)
+		result != "https://127.0.0.1:13443"+logResultPath ||
+		controlWork != "https://127.0.0.1:13443"+controlWorkPath ||
+		controlResult != "https://127.0.0.1:13443"+controlResultPath {
+		t.Fatalf("derived endpoints = %q, %q, %q, %q, %q",
+			snapshot, work, result, controlWork, controlResult)
 	}
 }
 
 func TestDeriveEndpointsRejectsAlternateConfiguredPath(t *testing.T) {
 	t.Parallel()
-	if _, _, _, err := deriveEndpoints(
+	if _, _, _, _, _, err := deriveEndpoints(
 		"https://127.0.0.1:13443/api/v1/internal/agent/log-results"); err == nil {
 		t.Fatal("deriveEndpoints accepted an alternate configured path")
+	}
+}
+
+func TestNextContainerControlWorkAcceptsOnlyFixedBoundedContract(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(
+		response http.ResponseWriter,
+		request *http.Request,
+	) {
+		if request.Method != http.MethodGet || request.URL.Path != controlWorkPath {
+			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(response,
+			`{"requestId":"10000000-0000-4000-8000-000000000001","containerId":"0123456789ab","composeProject":"example","operation":"RESTART","expiresAt":"2026-08-20T12:00:15Z"}`)
+	}))
+	defer server.Close()
+	client := &Client{
+		controlWorkEndpoint: server.URL + controlWorkPath,
+		httpClient:          server.Client(),
+		now:                 func() time.Time { return now },
+	}
+
+	work, err := client.NextContainerControlWork(context.Background())
+
+	if err != nil || work == nil ||
+		work.ContainerID != "0123456789ab" ||
+		work.ComposeProject != "example" ||
+		work.Operation != containercontrol.OperationRestart {
+		t.Fatalf("work/error = %#v/%v", work, err)
+	}
+}
+
+func TestNextContainerControlWorkTreatsOldAPI404AsStatusError(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+	client := &Client{
+		controlWorkEndpoint: server.URL + controlWorkPath,
+		httpClient:          server.Client(),
+	}
+
+	_, err := client.NextContainerControlWork(context.Background())
+
+	statusError, ok := err.(StatusError)
+	if !ok || statusError.StatusCode != http.StatusNotFound {
+		t.Fatalf("error = %#v, want 404 StatusError", err)
+	}
+}
+
+func TestNextContainerControlWorkRejectsUnknownOperationFieldAndExpiry(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	base := `{"requestId":"10000000-0000-4000-8000-000000000001","containerId":"0123456789ab","composeProject":"example","operation":"%s","expiresAt":"%s"%s}`
+	cases := map[string]string{
+		"unknown operation": fmt.Sprintf(base, "REMOVE", "2026-08-20T12:00:15Z", ""),
+		"unknown field":     fmt.Sprintf(base, "START", "2026-08-20T12:00:15Z", `,"command":"forbidden"`),
+		"expired":           fmt.Sprintf(base, "START", "2026-08-20T12:00:00Z", ""),
+		"far future":        fmt.Sprintf(base, "START", "2026-08-20T12:00:17Z", ""),
+	}
+	for name, payload := range cases {
+		name, payload := name, payload
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(
+				response http.ResponseWriter,
+				_ *http.Request,
+			) {
+				_, _ = io.WriteString(response, payload)
+			}))
+			defer server.Close()
+			client := &Client{
+				controlWorkEndpoint: server.URL + controlWorkPath,
+				httpClient:          server.Client(),
+				now:                 func() time.Time { return now },
+			}
+
+			work, err := client.NextContainerControlWork(context.Background())
+			if err == nil || work != nil {
+				t.Fatalf("work/error = %#v/%v, want strict rejection", work, err)
+			}
+		})
+	}
+}
+
+func TestSendContainerControlResultPostsOnlyBoundedDTO(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(
+		response http.ResponseWriter,
+		request *http.Request,
+	) {
+		if request.Method != http.MethodPost || request.URL.Path != controlResultPath {
+			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		text := string(body)
+		if !strings.Contains(text, `"status":"APPLIED"`) ||
+			!strings.Contains(text, `"reasonCode":"APPLIED"`) ||
+			strings.Contains(text, "fullContainerId") ||
+			strings.Contains(text, "composeProject") ||
+			strings.Contains(text, "rawError") {
+			t.Fatalf("result body = %s", text)
+		}
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	client := &Client{
+		controlResultEndpoint: server.URL + controlResultPath,
+		httpClient:            server.Client(),
+	}
+
+	err := client.SendContainerControlResult(context.Background(), containercontrol.Result{
+		RequestID: "10000000-0000-4000-8000-000000000001",
+		Status:    containercontrol.StatusApplied,
+		Reason:    containercontrol.ReasonApplied,
+		Finished:  time.Date(2026, 8, 20, 12, 0, 1, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("SendContainerControlResult returned an error: %v", err)
 	}
 }
 
