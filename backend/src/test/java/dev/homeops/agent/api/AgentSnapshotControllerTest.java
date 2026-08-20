@@ -1,6 +1,8 @@
 package dev.homeops.agent.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -14,6 +16,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
@@ -53,6 +56,42 @@ class AgentSnapshotControllerTest {
                 .andExpect(jsonPath("$.snapshotId")
                         .value(snapshotId.toString()))
                 .andExpect(jsonPath("$.duplicate").value(false));
+    }
+
+    @Test
+    void should_forwardNotificationCapability_when_containerSnapshotIsValid() throws Exception {
+        UUID snapshotId = UUID.fromString(
+                "10000000-0000-0000-0000-000000000014");
+        when(service.accept(any())).thenReturn(
+                new AgentSnapshotAcceptedResponse(
+                        snapshotId,
+                        Instant.parse("2026-08-04T12:00:00Z"),
+                        false));
+
+        mockMvc.perform(post("/api/v1/internal/agent/snapshots")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validJson(snapshotId).replace(
+                                "\"containers\": []",
+                                """
+                                "containers": [{
+                                  "id": "0123456789abcdef",
+                                  "name": "example-api",
+                                  "image": "example/api:sha-test",
+                                  "state": "RUNNING",
+                                  "health": "HEALTHY",
+                                  "restartCount": 0,
+                                  "ports": [],
+                                  "managed": false,
+                                  "logsAllowed": false,
+                                  "notificationsAllowed": true
+                                }]
+                                """.strip())))
+                .andExpect(status().isAccepted());
+
+        ArgumentCaptor<AgentSnapshotRequest> request =
+                ArgumentCaptor.forClass(AgentSnapshotRequest.class);
+        verify(service).accept(request.capture());
+        assertThat(request.getValue().containers().getFirst().notificationsAllowed()).isTrue();
     }
 
     @Test

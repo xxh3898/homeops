@@ -66,11 +66,48 @@ public record AgentSnapshotRequest(
             @Positive Long memoryLimitBytes,
             @NotNull @Size(max = 64) List<@NotNull @Valid ContainerPort> ports,
             boolean managed,
-            Boolean logsAllowed) {
+            Boolean logsAllowed,
+            Boolean notificationsAllowed) {
 
         public ContainerSnapshot {
             logsAllowed = Boolean.TRUE.equals(logsAllowed);
+            notificationsAllowed = Boolean.TRUE.equals(notificationsAllowed);
             ports = ports == null ? null : List.copyOf(ports);
+        }
+
+        public ContainerSnapshot(
+                String id,
+                String name,
+                String composeProject,
+                String image,
+                ContainerState state,
+                ContainerHealth health,
+                String status,
+                Instant startedAt,
+                long restartCount,
+                Double cpuUsagePercent,
+                Long memoryUsageBytes,
+                Long memoryLimitBytes,
+                List<ContainerPort> ports,
+                boolean managed,
+                Boolean logsAllowed) {
+            this(
+                    id,
+                    name,
+                    composeProject,
+                    image,
+                    state,
+                    health,
+                    status,
+                    startedAt,
+                    restartCount,
+                    cpuUsagePercent,
+                    memoryUsageBytes,
+                    memoryLimitBytes,
+                    ports,
+                    managed,
+                    logsAllowed,
+                    false);
         }
 
         public ContainerSnapshot(
@@ -103,6 +140,7 @@ public record AgentSnapshotRequest(
                     memoryLimitBytes,
                     ports,
                     managed,
+                    false,
                     false);
         }
     }

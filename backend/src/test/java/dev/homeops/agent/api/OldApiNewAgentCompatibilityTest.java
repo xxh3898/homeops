@@ -38,7 +38,7 @@ class OldApiNewAgentCompatibilityTest {
                                   "capturedAt":"2026-08-18T00:00:00Z",
                                   "supportsContainerLogs":true,
                                   "host":{},
-                                  "containers":[{"id":"0123456789abcdef","logsAllowed":true}]
+                                  "containers":[{"id":"0123456789abcdef","logsAllowed":true,"notificationsAllowed":true}]
                                 }
                                 """))
                 .andExpect(status().isAccepted());

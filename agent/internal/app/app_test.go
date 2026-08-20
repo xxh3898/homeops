@@ -142,6 +142,10 @@ func TestCollectAndSendContinuesAfterPermanentRejectionsAreQuarantined(
 func TestCollectAndSendAdvertisesContainerLogCapability(t *testing.T) {
 	t.Parallel()
 	snapshotTransport := &recordingTransport{}
+	docker := &recordingDockerCollector{containers: []snapshot.Container{{
+		ID:                   "0123456789abcdef",
+		NotificationsAllowed: true,
+	}}}
 	application := &App{
 		config: config.Config{
 			AgentID:       "local-mac",
@@ -149,7 +153,7 @@ func TestCollectAndSendAdvertisesContainerLogCapability(t *testing.T) {
 		},
 		version:   "1111111111111111111111111111111111111111",
 		host:      &recordingHostCollector{},
-		docker:    &recordingDockerCollector{},
+		docker:    docker,
 		transport: snapshotTransport,
 		spool:     &recordingSpool{},
 		logger:    discardLogger(),
@@ -164,6 +168,9 @@ func TestCollectAndSendAdvertisesContainerLogCapability(t *testing.T) {
 	}
 	if !captured.SupportsContainerLogs {
 		t.Fatal("supportsContainerLogs = false, want true")
+	}
+	if len(captured.Containers) != 1 || !captured.Containers[0].NotificationsAllowed {
+		t.Fatalf("containers = %#v, want bounded notification capability", captured.Containers)
 	}
 }
 
@@ -490,6 +497,7 @@ func (collector *recordingHostCollector) Collect(
 
 type recordingDockerCollector struct {
 	containerCalls int
+	containers     []snapshot.Container
 }
 
 func (collector *recordingDockerCollector) Containers(
@@ -497,7 +505,7 @@ func (collector *recordingDockerCollector) Containers(
 	int,
 ) ([]snapshot.Container, error) {
 	collector.containerCalls++
-	return nil, nil
+	return collector.containers, nil
 }
 
 type recordingTransport struct {

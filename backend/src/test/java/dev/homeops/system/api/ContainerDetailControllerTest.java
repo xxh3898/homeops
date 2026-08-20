@@ -58,7 +58,24 @@ class ContainerDetailControllerTest {
                 .andExpect(jsonPath("$.container.name").value("example-api"))
                 .andExpect(jsonPath("$.container.health").value("HEALTHY"))
                 .andExpect(jsonPath("$.container.logsAllowed").value(true))
+                .andExpect(jsonPath("$.container.notificationsAllowed").doesNotExist())
                 .andExpect(content().string(not(containsString(FULL_ID))));
+    }
+
+    @Test
+    void should_notExposeNotificationCapability_when_returningContainerInventory() throws Exception {
+        ContainerDetailResponse detail = response();
+        when(agentSnapshotService.containerInventory()).thenReturn(new ContainerInventoryResponse(
+                detail.agentStatus(),
+                detail.lastUpdatedAt(),
+                detail.stale(),
+                List.of(detail.container())));
+
+        mockMvc.perform(get("/api/v1/containers"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.containers[0].id").value(SHORT_ID))
+                .andExpect(jsonPath("$.containers[0].logsAllowed").value(true))
+                .andExpect(jsonPath("$.containers[0].notificationsAllowed").doesNotExist());
     }
 
     @Test
