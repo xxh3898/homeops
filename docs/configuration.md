@@ -112,10 +112,13 @@ production directory에는 `smoke.origin`도 있습니다. path, query, fragment
 - `com.docker.compose.project`
 - `homeops.managed`
 - `homeops.logs`
+- `homeops.notifications`
 
 `homeops.managed=true`는 이 마일스톤에서 표시용입니다. control endpoint는 없습니다. 이후 control 마일스톤에서는 live label을 다시 읽고 추가 project allowlist, operation lock, idempotency key, confirmation policy, audit record를 강제해야 합니다.
 
 `homeops.logs=true`는 Container Logs disclosure를 위한 container별 exact opt-in입니다. Agent root capability와 fresh snapshot이 함께 있어야 하며 stale snapshot은 authority가 아닙니다. Public API/UI source가 존재해도 label이 없는 container는 `422`로 fail closed하고 실행 가능한 UI control을 표시하지 않습니다. Controlled production opt-in/revoke acceptance는 완료했지만, 이후 service opt-in도 code deployment와 분리된 security-sensitive configuration gate로서 service별 privacy review와 명시적 승인을 요구합니다. Agent와 API는 raw log를 snapshot spool, file, DB 또는 Activity에 저장하지 않습니다.
+
+`homeops.notifications=true`는 future Docker notification을 위한 별도 exact opt-in입니다. Key와 value는 case-sensitive하며 `TRUE`, `True`, `1`, `yes` 또는 공백이 포함된 값은 opt-in이 아닙니다. Agent는 이 label을 `notificationsAllowed` boolean으로만 snapshot에 전달하고, `homeops.managed` 및 `homeops.logs` authority와 독립적으로 해석합니다. Old Agent 또는 rollback Agent가 field를 보내지 않으면 API는 false로 해석합니다. 현재는 capability propagation만 있고 Docker episode persistence, notification producer, Discord outbound는 없습니다.
 
 ## GitHub repository 구성
 

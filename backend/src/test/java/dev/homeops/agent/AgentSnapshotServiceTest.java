@@ -449,6 +449,32 @@ class AgentSnapshotServiceTest {
     }
 
     @Test
+    void should_replaceLatestNotificationCapabilityWithFalse_when_rolledBackAgentOmitsField() {
+        Instant enabledAt = NOW.minusSeconds(2);
+        accept(snapshotWithContainers(
+                "10000000-0000-0000-0000-000000000057",
+                enabledAt,
+                List.of(container(
+                        FULL_CONTAINER_ID,
+                        "example-api",
+                        enabledAt,
+                        false,
+                        true))));
+
+        assertThat(service.latest().orElseThrow().snapshot().containers().getFirst()
+                .notificationsAllowed()).isTrue();
+
+        Instant rolledBackAt = NOW.minusSeconds(1);
+        accept(snapshotWithContainers(
+                "10000000-0000-0000-0000-000000000058",
+                rolledBackAt,
+                List.of(container(FULL_CONTAINER_ID, "example-api", rolledBackAt, false))));
+
+        assertThat(service.latest().orElseThrow().snapshot().containers().getFirst()
+                .notificationsAllowed()).isFalse();
+    }
+
+    @Test
     void should_failClosedForContainerLogs_when_snapshotIsStale() {
         Instant capturedAt = NOW.minus(Duration.ofMinutes(4));
         accept(snapshotWithCapability(
@@ -763,6 +789,15 @@ class AgentSnapshotServiceTest {
             String name,
             Instant capturedAt,
             boolean logsAllowed) {
+        return container(identifier, name, capturedAt, logsAllowed, false);
+    }
+
+    private static AgentSnapshotRequest.ContainerSnapshot container(
+            String identifier,
+            String name,
+            Instant capturedAt,
+            boolean logsAllowed,
+            boolean notificationsAllowed) {
         AgentSnapshotRequest.ContainerSnapshot fixture = AgentSnapshotFixtures
                 .snapshot(UUID.fromString("10000000-0000-0000-0000-000000000099"), capturedAt)
                 .containers()
@@ -782,6 +817,7 @@ class AgentSnapshotServiceTest {
                 fixture.memoryLimitBytes(),
                 fixture.ports(),
                 fixture.managed(),
-                logsAllowed);
+                logsAllowed,
+                notificationsAllowed);
     }
 }
