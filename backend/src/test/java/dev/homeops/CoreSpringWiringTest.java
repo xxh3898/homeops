@@ -19,6 +19,7 @@ import dev.homeops.metrics.HostMetricHistoryStore;
 import dev.homeops.metrics.HostMetricRetentionJob;
 import dev.homeops.metrics.MetricHistoryService;
 import dev.homeops.notification.AgentLifecycleNotificationProducer;
+import dev.homeops.notification.ContainerNotificationProducer;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -59,6 +60,9 @@ class CoreSpringWiringTest {
             context.registerBean(
                     AgentLifecycleNotificationProducer.class,
                     () -> mock(AgentLifecycleNotificationProducer.class));
+            context.registerBean(
+                    ContainerNotificationProducer.class,
+                    () -> mock(ContainerNotificationProducer.class));
             context.registerBean(
                     JdbcTemplate.class,
                     () -> mock(JdbcTemplate.class));
