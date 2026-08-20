@@ -2,6 +2,7 @@ package dev.homeops.agent.persistence;
 
 import dev.homeops.common.PostgresqlTimestamp;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -29,6 +30,24 @@ public class AgentStatusStore {
                 PostgresqlTimestamp.toTimestamp(receivedAt)) == 1;
     }
 
+    public Optional<AgentStatusSnapshot> findForUpdate(String agentId) {
+        return jdbcTemplate.query("""
+                SELECT agent_id, agent_version, last_snapshot_id,
+                       last_captured_at, last_seen_at
+                FROM agent_status
+                WHERE agent_id = ?
+                FOR UPDATE
+                """, (row, index) -> new AgentStatusSnapshot(
+                row.getString("agent_id"),
+                row.getString("agent_version"),
+                row.getObject("last_snapshot_id", UUID.class),
+                row.getTimestamp("last_captured_at") == null
+                        ? null : row.getTimestamp("last_captured_at").toInstant(),
+                row.getTimestamp("last_seen_at") == null
+                        ? null : row.getTimestamp("last_seen_at").toInstant()),
+                agentId).stream().findFirst();
+    }
+
     public boolean updateIfCapturedAtIsNotOlder(
             String agentId,
             UUID snapshotId,
@@ -49,4 +68,11 @@ public class AgentStatusStore {
                 PostgresqlTimestamp.toTimestamp(receivedAt), agentId,
                 PostgresqlTimestamp.toTimestamp(capturedAt)) == 1;
     }
+
+    public record AgentStatusSnapshot(
+            String agentId,
+            String agentVersion,
+            UUID lastSnapshotId,
+            Instant lastCapturedAt,
+            Instant lastSeenAt) { }
 }
