@@ -45,7 +45,7 @@
 | `HOMEOPS_CONTAINER_NOTIFICATION_FAILURE_AFTER` | 아니요 | 아니요 | Opt-in container sustained-failure threshold. 기본값 `30s`, 허용 범위 `5s..10m` |
 | `HOMEOPS_CONTAINER_NOTIFICATION_REALERT_COOLDOWN` | 아니요 | 아니요 | 같은 logical container의 새 failure episode root cooldown. 기본값 `5m`, 허용 범위 `30s..1h` |
 | `HOMEOPS_INCIDENT_NOTIFICATION_ESCALATION_AFTER` | 아니요 | 아니요 | Open incident의 장기 failure escalation threshold. 기본값 `15m`, 허용 범위 `5m..24h` |
-| `HOMEOPS_DISCORD_WEBHOOK_URL` | Phase 4 activation | 예 | Official Discord HTTPS webhook. notifications가 `false`면 비어 있어도 시작하며 `true`면 strict URL이 없을 때 fail closed |
+| `HOMEOPS_DISCORD_WEBHOOK_URL` | Discord delivery enable 시 | 예 | Official Discord HTTPS webhook. notifications가 `false`면 비어 있어도 시작하며 `true`면 strict URL이 없을 때 fail closed |
 | `HOMEOPS_NOTIFICATION_CONNECT_TIMEOUT` | 아니요 | 아니요 | Discord connect timeout. 기본값 `3s`, 최대 `10s` |
 | `HOMEOPS_NOTIFICATION_REQUEST_TIMEOUT` | 아니요 | 아니요 | Discord request timeout. 기본값 `5s`, 최대 `15s` |
 | `HOMEOPS_NOTIFICATION_LEASE_DURATION` | 아니요 | 아니요 | Outbox claim lease. request timeout보다 길어야 하며 기본값 `30s` |
@@ -59,6 +59,8 @@
 | `HOMEOPS_NOTIFICATION_SENT_RETENTION` | 아니요 | 아니요 | `SENT`/`SUPPRESSED` outbox retention. 기본값 `30d` |
 | `HOMEOPS_NOTIFICATION_FAILED_RETENTION` | 아니요 | 아니요 | `FAILED`/`DELIVERY_UNKNOWN` retention. 기본값 `90d` |
 | `HOMEOPS_NOTIFICATION_CLEANUP_CRON` | 아니요 | 아니요 | Notification terminal row cleanup UTC cron. 기본값 `0 41 3 * * *` |
+
+Production acceptance 종료 현재 webhook Secret은 값 비노출 상태로 설치되어 있고 `HOMEOPS_NOTIFICATIONS_ENABLED=false`입니다. Secret 존재만으로 notification이 활성화되지 않으며, disabled 상태의 qualifying intent는 replay 불가 `SUPPRESSED`로 끝납니다. 이후 switch enable 또는 Secret 변경은 별도 production gate입니다.
 
 `HOMEOPS_AUTH_MODE=DEV`는 Spring `dev` profile에서만 허용됩니다. production 환경에서는 절대 설정하지 마세요.
 
@@ -156,5 +158,5 @@ GitHub Actions는 workflow의 scoped package access에 `GITHUB_TOKEN`을 자동 
 - production `.env`와 TLS material은 mode를 제한하고 source checkout 밖에 둡니다.
 - Compose label, GitHub variable, command argument, log, issue body, deployment state에 secret 값을 넣지 마세요.
 - private deployment metadata를 repository/environment Variable, step summary, public log, issue body에 기록하지 마세요.
-- Discord outbox foundation에는 deployment, backup, incident, Agent lifecycle과 Docker episode producer가 연결되어 있습니다. Incident는 explicit service authority가 있는 future OPEN winner만 root를 만들고, incident·Agent·Docker recovery는 각 SENT root에만 연결됩니다. `HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 생성된 root intent가 replay 불가 `SUPPRESSED`로 끝나며 child, webhook requirement와 outbound가 없습니다. Phase 4 activation 승인 전에는 webhook을 설치하거나 switch를 켜지 마세요. Webhook URL/token은 Git, DB, `app_setting`, log, error response 또는 Activity에 기록하지 않습니다.
+- Discord outbox에는 deployment, backup, incident, Agent lifecycle과 Docker episode producer가 연결되어 있습니다. Incident는 explicit service authority가 있는 future OPEN winner만 root를 만들고, incident·Agent·Docker recovery는 각 SENT root에만 연결됩니다. `HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 생성된 root intent가 replay 불가 `SUPPRESSED`로 끝나며 child와 outbound가 없습니다. Production acceptance용 webhook Secret 설치와 controlled enable/disable은 완료됐으며 현재 switch는 다시 `false`입니다. 이후 enable 또는 Secret rotate는 별도 승인을 요구합니다. Webhook URL/token은 Git, DB, `app_setting`, log, error response 또는 Activity에 기록하지 않습니다.
 - credential 값이 Git history나 workflow log에 나타나면 rotate하세요. 보이는 줄을 지우는 것만으로는 충분하지 않습니다.

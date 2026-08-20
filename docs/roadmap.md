@@ -21,7 +21,7 @@
 | Phase 1 읽기 전용 대시보드 | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 2 native Agent rollout | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 3 운영 이력 | IMPLEMENTED | ACTIVE | COMPLETE |
-| Phase 4 알림 | NOT IMPLEMENTED | INACTIVE | NOT DONE |
+| Phase 4 알림 | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 5 제한된 컨테이너 제어 | NOT IMPLEMENTED | INACTIVE | NOT DONE |
 
 ## Phase 1: 읽기 전용 대시보드 정확성 및 사용성
@@ -82,18 +82,20 @@ Deployment, backup, incident와 Agent 장기 event의 automatic deletion retenti
 
 ## Phase 4: 알림
 
-**상태:** Source NOT IMPLEMENTED / Production INACTIVE / Acceptance NOT DONE.
+**상태:** Source IMPLEMENTED / Production ACTIVE / Acceptance COMPLETE.
 
-현재 source에는 dormant transactional outbox와 fail-closed service eligibility authority, deployment·backup ingestion winner, incident lifecycle, Agent freshness/version 및 Docker episode producer가 있습니다. Incident producer는 future opt-in OPEN winner와 SENT root가 있는 bounded escalation/recovery만 생성합니다. Agent producer는 persisted expected status의 stale episode와 actual current snapshot winner만 사용하고 SENT stale root에만 recovery를 연결합니다. Docker producer는 exact `homeops.notifications=true`를 전달한 fresh·strictly-newer current snapshot만 authority로 삼아 baseline, sustained failure, cooldown과 SENT-root recovery를 bounded current state에 기록합니다. Global notification activation과 production Docker opt-in/Discord acceptance가 없으므로 Phase 전체 상태는 아직 변경하지 않습니다.
+Transactional outbox와 bounded Discord worker, fail-closed service eligibility authority, deployment·backup ingestion winner, incident lifecycle, Agent freshness/version 및 Docker episode producer가 구현되어 있습니다. Incident producer는 future opt-in OPEN winner와 SENT root가 있는 bounded escalation/recovery만 생성합니다. Agent producer는 persisted expected status의 stale episode와 actual current snapshot winner만 사용하고 SENT stale root에만 recovery를 연결합니다. Docker producer는 exact `homeops.notifications=true`를 전달한 fresh·strictly-newer current snapshot만 authority로 삼아 baseline, sustained failure, cooldown과 SENT-root recovery를 bounded current state에 기록합니다.
+
+Production acceptance에서는 disabled baseline의 outbound zero와 no-replay, additive V8/V9 schema 적용, controlled Native Agent rollout, exact Docker opt-in의 failure/recovery delivery, 대표 deployment·backup lifecycle delivery와 deduplication을 검증했습니다. Acceptance 종료 뒤 현재 `HOMEOPS_NOTIFICATIONS_ENABLED=false`라 새 qualifying event는 replay 불가 `SUPPRESSED`로 끝나고 Discord outbound 및 `PENDING`/`DELIVERING` backlog는 없습니다. Webhook Secret은 설치된 상태이며 `HOMEOPS_AGENT_ROLLOUT_ENABLED=false`도 유지합니다. 두 kill switch의 현재 값은 production-accepted capability 상태와 별개입니다. Incident와 Agent producer의 deterministic lifecycle은 source 및 automated test evidence로 검증했으며, production service 장애를 인위적으로 유도하는 Discord drill은 완료 근거로 주장하지 않습니다.
 
 **목표:** 중복 alert storm 없이 유용한 운영 signal을 제공합니다.
 
 - Agent, Docker, deployment, backup-result, incident event용 Discord delivery
 - Deduplication key, cooldown, 장기 failure escalation, recovery notification, delivery-failure record
 - 문서화한 ownership matrix: Uptime Kuma는 외부 HTTP availability와 email path를 유지하고 HomeOps는 내부 운영 event를 담당
-- incident owner와 duplicate-prevention policy를 검증한 뒤에만 optional email escalation
+- Uptime Kuma email과 HomeOps Discord의 owner 및 duplicate-prevention policy를 분리하고 optional email escalation은 현재 범위에서 제외
 
-**완료 근거:** mock webhook test, retry/dedup/recovery test, ownership-matrix scenario 하나에서 duplicate alert가 없음.
+**완료 근거:** migration·outbox lease/CAS·bounded transport·retry/unknown·privacy·producer lifecycle·dedup/cooldown/recovery automated regression과 disabled/no-replay production baseline, representative Docker failure/recovery 및 deployment/backup Discord delivery, Uptime Kuma/HomeOps ownership 분리, final disable 뒤 suppressed/no-backlog acceptance.
 
 ## Phase 5: 제한된 컨테이너 제어
 
