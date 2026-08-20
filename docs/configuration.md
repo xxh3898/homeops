@@ -41,6 +41,7 @@
 | `HOMEOPS_MONITORING_SCHEDULER_DELAY` | 아니요 | 아니요 | 점검 대상 service scan delay. 기본값 `5s` |
 | `HOMEOPS_MONITORING_CLEANUP_CRON` | 아니요 | 아니요 | UTC 기준 점검 결과 cleanup cron |
 | `HOMEOPS_NOTIFICATIONS_ENABLED` | 아니요 | 아니요 | Discord notification kill switch. 기본값 `false`이며 disabled event는 replay 불가 `SUPPRESSED`로 종료 |
+| `HOMEOPS_AGENT_NOTIFICATION_FRESHNESS_CHECK_DELAY` | 아니요 | 아니요 | Persisted Agent freshness scan delay. 기본값 `5s`, 허용 범위 `1s..1m`. stale threshold는 별도 값이 아니라 `HOMEOPS_AGENT_STALE_AFTER`를 재사용 |
 | `HOMEOPS_INCIDENT_NOTIFICATION_ESCALATION_AFTER` | 아니요 | 아니요 | Open incident의 장기 failure escalation threshold. 기본값 `15m`, 허용 범위 `5m..24h` |
 | `HOMEOPS_DISCORD_WEBHOOK_URL` | Phase 4 activation | 예 | Official Discord HTTPS webhook. notifications가 `false`면 비어 있어도 시작하며 `true`면 strict URL이 없을 때 fail closed |
 | `HOMEOPS_NOTIFICATION_CONNECT_TIMEOUT` | 아니요 | 아니요 | Discord connect timeout. 기본값 `3s`, 최대 `10s` |

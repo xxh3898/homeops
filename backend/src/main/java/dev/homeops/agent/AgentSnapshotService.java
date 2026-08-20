@@ -15,11 +15,13 @@ import dev.homeops.agent.persistence.AgentActivityStore;
 import dev.homeops.agent.persistence.AgentStatusEntity;
 import dev.homeops.agent.persistence.AgentStatusRepository;
 import dev.homeops.agent.persistence.AgentStatusStore;
+import dev.homeops.agent.persistence.AgentStatusStore.AgentStatusSnapshot;
 import dev.homeops.agent.persistence.HostMetricAggregateEntity;
 import dev.homeops.agent.persistence.HostMetricAggregateRepository;
 import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
 import dev.homeops.common.AgentSnapshotRejectedException;
 import dev.homeops.common.PostgresqlTimestamp;
+import dev.homeops.notification.AgentLifecycleNotificationProducer;
 import dev.homeops.system.AmbiguousContainerIdentifierException;
 import dev.homeops.system.ContainerIdentifier;
 import dev.homeops.system.ContainerInventoryUnavailableException;
@@ -51,6 +53,7 @@ public class AgentSnapshotService {
     private final HostMetricAggregateRepository metricRepository;
     private final ProcessedAgentSnapshotStore processedSnapshotStore;
     private final AgentActivityStore agentActivityStore;
+    private final AgentLifecycleNotificationProducer notifications;
     private final Clock clock;
     private final AtomicReference<ReceivedAgentSnapshot> latest =
             new AtomicReference<>();
@@ -62,7 +65,8 @@ public class AgentSnapshotService {
             AgentStatusStore agentStatusStore,
             HostMetricAggregateRepository metricRepository,
             ProcessedAgentSnapshotStore processedSnapshotStore,
-            AgentActivityStore agentActivityStore) {
+            AgentActivityStore agentActivityStore,
+            AgentLifecycleNotificationProducer notifications) {
         this(
                 properties,
                 agentStatusRepository,
@@ -70,6 +74,7 @@ public class AgentSnapshotService {
                 metricRepository,
                 processedSnapshotStore,
                 agentActivityStore,
+                notifications,
                 Clock.systemUTC());
     }
 
@@ -80,6 +85,7 @@ public class AgentSnapshotService {
             HostMetricAggregateRepository metricRepository,
             ProcessedAgentSnapshotStore processedSnapshotStore,
             AgentActivityStore agentActivityStore,
+            AgentLifecycleNotificationProducer notifications,
             Clock clock) {
         this.properties = properties;
         this.agentStatusRepository = agentStatusRepository;
@@ -87,6 +93,7 @@ public class AgentSnapshotService {
         this.metricRepository = metricRepository;
         this.processedSnapshotStore = processedSnapshotStore;
         this.agentActivityStore = agentActivityStore;
+        this.notifications = notifications;
         this.clock = clock;
     }
 
@@ -119,17 +126,25 @@ public class AgentSnapshotService {
                     true);
         }
 
-        boolean firstConnection = agentStatusStore.insertIfAbsent(
-                canonicalRequest.agentId(),
-                canonicalRequest.snapshotId(),
-                canonicalRequest.agentVersion(),
-                canonicalRequest.capturedAt(),
-                receivedAt);
-        Optional<AgentStatusEntity> persistedStatus = firstConnection
-                ? Optional.empty()
-                : agentStatusRepository.findById(canonicalRequest.agentId());
+        Optional<AgentStatusSnapshot> persistedStatus =
+                agentStatusStore.findForUpdate(canonicalRequest.agentId());
+        boolean firstConnection = false;
+        if (persistedStatus.isEmpty()) {
+            firstConnection = agentStatusStore.insertIfAbsent(
+                    canonicalRequest.agentId(),
+                    canonicalRequest.snapshotId(),
+                    canonicalRequest.agentVersion(),
+                    canonicalRequest.capturedAt(),
+                    receivedAt);
+            if (!firstConnection) {
+                persistedStatus = Optional.of(agentStatusStore
+                        .findForUpdate(canonicalRequest.agentId())
+                        .orElseThrow(() -> new IllegalStateException(
+                                "Agent status insert race did not produce a current row")));
+            }
+        }
         boolean versionChanged = persistedStatus
-                .map(existing -> !existing.getAgentVersion().equals(canonicalRequest.agentVersion()))
+                .map(existing -> !existing.agentVersion().equals(canonicalRequest.agentVersion()))
                 .orElse(false);
         Instant bucket = canonicalRequest.capturedAt().truncatedTo(ChronoUnit.MINUTES);
         Optional<HostMetricAggregateEntity> existingAggregate = metricRepository
@@ -152,9 +167,13 @@ public class AgentSnapshotService {
                 canonicalRequest.agentVersion(),
                 canonicalRequest.capturedAt(),
                 receivedAt);
-        if (currentStatusUpdated && (firstConnection || versionChanged)) {
-            agentActivityStore.recordConnection(
-                    canonicalRequest.agentId(), canonicalRequest.agentVersion(), receivedAt, versionChanged);
+        if (currentStatusUpdated) {
+            recordCurrentStatusEvents(
+                    canonicalRequest,
+                    persistedStatus,
+                    firstConnection,
+                    versionChanged,
+                    receivedAt);
         }
         publishLatestAfterCommit(new ReceivedAgentSnapshot(canonicalRequest, receivedAt));
 
@@ -373,10 +392,8 @@ public class AgentSnapshotService {
             Instant capturedAt,
             Instant receivedAt,
             Instant now) {
-        return capturedAt == null
-                || receivedAt == null
-                || isStale(capturedAt, now)
-                || isStale(receivedAt, now);
+        return AgentFreshness.isStale(
+                capturedAt, receivedAt, now, properties.staleAfter());
     }
 
     private boolean isSnapshotStale(ReceivedAgentSnapshot received) {
@@ -392,10 +409,6 @@ public class AgentSnapshotService {
                 now);
     }
 
-    private boolean isStale(Instant timestamp, Instant now) {
-        return timestamp.isBefore(now.minus(properties.staleAfter()));
-    }
-
     private static AgentSnapshotRequest canonicalize(AgentSnapshotRequest request) {
         return new AgentSnapshotRequest(request.snapshotId(), request.agentId(), request.agentVersion(),
                 PostgresqlTimestamp.canonicalize(request.capturedAt()), request.supportsContainerLogs(),
@@ -404,6 +417,45 @@ public class AgentSnapshotService {
 
     private boolean sameDatabaseTimestamp(Instant left, Instant right) {
         return right != null && PostgresqlTimestamp.canonicalize(left).equals(PostgresqlTimestamp.canonicalize(right));
+    }
+
+    private void recordCurrentStatusEvents(
+            AgentSnapshotRequest request,
+            Optional<AgentStatusSnapshot> priorStatus,
+            boolean firstConnection,
+            boolean versionChanged,
+            Instant receivedAt) {
+        if (firstConnection) {
+            agentActivityStore.recordConnection(
+                    request.agentId(), request.agentVersion(), receivedAt, false);
+            return;
+        }
+
+        AgentStatusSnapshot prior = priorStatus.orElseThrow();
+        boolean recovered = prior.lastSnapshotId() != null
+                && prior.lastCapturedAt() != null
+                && prior.lastSeenAt() != null
+                && isSnapshotStale(
+                        prior.lastCapturedAt(), prior.lastSeenAt(), receivedAt)
+                && !isSnapshotStale(request.capturedAt(), receivedAt, receivedAt);
+        if (recovered) {
+            notifications.recordRecovered(
+                    prior.lastSnapshotId(),
+                    request.agentId(),
+                    request.agentVersion(),
+                    AgentFreshness.staleSince(
+                            prior.lastCapturedAt(), prior.lastSeenAt()),
+                    receivedAt);
+        }
+        if (versionChanged) {
+            agentActivityStore.recordConnection(
+                    request.agentId(), request.agentVersion(), receivedAt, true);
+            notifications.recordVersionChanged(
+                    request.snapshotId(),
+                    request.agentId(),
+                    request.agentVersion(),
+                    receivedAt);
+        }
     }
 
     private void publishLatestAfterCommit(ReceivedAgentSnapshot candidate) {
