@@ -27,6 +27,7 @@ public class ContainerControlBroker {
     static final int MAXIMUM_ACTIVE_REQUESTS = 1;
     static final int MAXIMUM_TOMBSTONES = 16;
     static final Duration REQUEST_TTL = Duration.ofSeconds(15);
+    static final Duration RESULT_REPORTING_GRACE = Duration.ofSeconds(15);
     static final Duration RESULT_TIMESTAMP_SKEW = Duration.ofSeconds(1);
     static final Duration TOMBSTONE_TTL = Duration.ofSeconds(30);
     static final Duration LONG_POLL = Duration.ofSeconds(2);
@@ -245,6 +246,7 @@ public class ContainerControlBroker {
             Instant now) {
         if (request.status() == null
                 || request.reasonCode() == null
+                || request.reasonCode() == ContainerControlReasonCode.RESULT_UNAVAILABLE
                 || !request.reasonCode().isValidFor(request.status())) {
             throw new ContainerControlResultRejectedException();
         }
@@ -276,7 +278,8 @@ public class ContainerControlBroker {
         Iterator<RequestEntry> iterator = requests.values().iterator();
         while (iterator.hasNext()) {
             RequestEntry entry = iterator.next();
-            if (!now.isBefore(entry.expiresAt)) {
+            if (entry.state == RequestState.PENDING
+                    && !now.isBefore(entry.expiresAt)) {
                 iterator.remove();
                 pending.remove(entry.requestId);
                 entry.result.complete(new ContainerControlResult(
@@ -284,6 +287,17 @@ public class ContainerControlBroker {
                         ContainerControlReasonCode.WORK_EXPIRED,
                         entry.expiresAt));
                 addTombstoneLocked(entry.requestId, now, TombstoneOutcome.EXPIRED);
+            } else if (entry.state == RequestState.CLAIMED
+                    && !now.isBefore(entry.resultReportingDeadline())) {
+                iterator.remove();
+                entry.result.complete(new ContainerControlResult(
+                        ContainerControlResultStatus.OUTCOME_UNKNOWN,
+                        ContainerControlReasonCode.RESULT_UNAVAILABLE,
+                        entry.expiresAt));
+                addTombstoneLocked(
+                        entry.requestId,
+                        now,
+                        TombstoneOutcome.RESULT_UNAVAILABLE);
             }
         }
         Iterator<Map.Entry<UUID, Tombstone>> iteratorTombstones =
@@ -333,6 +347,7 @@ public class ContainerControlBroker {
     private enum TombstoneOutcome {
         COMPLETED,
         EXPIRED,
+        RESULT_UNAVAILABLE,
         DENIED,
         CANCELLED
     }
@@ -365,6 +380,10 @@ public class ContainerControlBroker {
             this.createdAt = createdAt;
             this.expiresAt = expiresAt;
             this.result = result;
+        }
+
+        private Instant resultReportingDeadline() {
+            return expiresAt.plus(RESULT_REPORTING_GRACE);
         }
     }
 }

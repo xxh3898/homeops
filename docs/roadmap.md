@@ -104,7 +104,7 @@ Production acceptance에서는 disabled baseline의 outbound zero와 no-replay, 
 **목표:** 명시적으로 관리하는 container만 의도적으로 start, stop, restart할 수 있게 합니다.
 
 1. Candidate foundation은 exact `homeops.managed=true`, fresh snapshot, unique 12자리 short-ID match와 서버가 관리하는 exact project allowlist를 모두 요구하며 HomeOps/standalone/unknown project를 fail closed합니다.
-2. Bounded in-memory broker와 outbound-only Agent worker는 global active 1, TTL 15초, non-replay claimed work, metadata-only tombstone을 사용합니다. Agent는 operation 직전 live full-ID, exact label/project/service와 mount를 다시 검증하고 HomeOps, protected service, writable bind/volume과 판정 불가능 mount를 hard deny합니다.
+2. Bounded in-memory broker와 outbound-only Agent worker는 global active 1, PENDING operation TTL 15초, CLAIMED result-reporting grace 15초, non-replay claimed work, metadata-only tombstone을 사용합니다. Agent는 operation 직전 live full-ID, exact label/project/service와 mount를 다시 검증하고 HomeOps, protected service, writable bind/volume과 판정 불가능 mount를 hard deny합니다. Operation deadline 이후 grace 안의 terminal result는 수락하고, grace까지 result가 없으면 `OUTCOME_UNKNOWN`으로 끝냅니다.
 3. Agent operation은 `START|STOP|RESTART`와 fixed Docker POST/timeout만 지원합니다. Docker CLI, shell, image, volume, network, arbitrary path/query/body/timeout input은 받지 않으며 ambiguous outcome은 재실행하지 않습니다.
 4. Public slice는 CSRF, Origin check, confirmation UX, client idempotency key, rate limit, operation lock과 durable audit record를 요구합니다.
 5. HomeOps, database, unknown container는 기본 거부하며 더 강한 confirmation은 명시적 policy로만 도입합니다.

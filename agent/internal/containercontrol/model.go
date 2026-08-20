@@ -6,7 +6,10 @@ import (
 	"time"
 )
 
-const MaximumExpiryHorizon = 16 * time.Second
+const (
+	MaximumExpiryHorizon = 16 * time.Second
+	ResultReportingGrace = 15 * time.Second
+)
 
 var (
 	requestIDPattern = regexp.MustCompile(
@@ -67,6 +70,22 @@ func ValidateExpiry(expiresAt time.Time, now time.Time) error {
 		return errors.New("control request expiration is invalid")
 	}
 	return nil
+}
+
+func ResultDeliveryDeadline(expiresAt time.Time, now time.Time) (time.Time, error) {
+	now = now.UTC()
+	if expiresAt.IsZero() {
+		return time.Time{}, errors.New("control result expiration is invalid")
+	}
+	expiresAt = expiresAt.UTC()
+	if expiresAt.After(now.Add(MaximumExpiryHorizon)) {
+		return time.Time{}, errors.New("control result expiration is invalid")
+	}
+	deadline := expiresAt.Add(ResultReportingGrace)
+	if !now.Before(deadline) {
+		return time.Time{}, errors.New("control result reporting deadline has expired")
+	}
+	return deadline, nil
 }
 
 func ValidContainerID(identifier string) bool {

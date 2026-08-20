@@ -178,23 +178,124 @@ class ContainerControlBrokerTest {
     }
 
     @Test
-    void should_expireClaimedWorkWithoutRequeueAndRejectLateResult() {
+    void should_keepClaimedWorkActiveAtOperationDeadline() {
         ContainerControlRequestTicket ticket = broker.enqueue(
                 CONTAINER_ID,
                 ContainerControlOperation.STOP);
-        ContainerControlWork work = broker.claimNext().orElseThrow();
+        broker.claimNext().orElseThrow();
 
         clock.advance(Duration.ofSeconds(15));
         broker.cleanupExpired();
 
+        assertThat(ticket.result().toCompletableFuture().isDone()).isFalse();
+        assertThat(broker.activeRequestCount()).isOne();
+        assertThat(broker.claimNext()).isEmpty();
+    }
+
+    @Test
+    void should_expirePendingWorkAtOperationDeadline() {
+        ContainerControlRequestTicket ticket = broker.enqueue(
+                CONTAINER_ID,
+                ContainerControlOperation.STOP);
+
+        clock.advance(ContainerControlBroker.REQUEST_TTL);
+        broker.cleanupExpired();
+
         assertThat(ticket.result().toCompletableFuture().join())
-                .extracting(ContainerControlResult::status)
-                .isEqualTo(ContainerControlResultStatus.EXPIRED);
+                .isEqualTo(new ContainerControlResult(
+                        ContainerControlResultStatus.EXPIRED,
+                        ContainerControlReasonCode.WORK_EXPIRED,
+                        NOW.plus(ContainerControlBroker.REQUEST_TTL)));
+        assertThat(broker.activeRequestCount()).isZero();
+        assertThat(broker.claimNext()).isEmpty();
+    }
+
+    @Test
+    void should_acceptAgentResultDuringGraceAfterOperationDeadline() {
+        ContainerControlRequestTicket ticket = broker.enqueue(
+                CONTAINER_ID,
+                ContainerControlOperation.RESTART);
+        ContainerControlWork work = broker.claimNext().orElseThrow();
+
+        clock.advance(ContainerControlBroker.REQUEST_TTL.plusSeconds(5));
+        AgentControlResultRequest outcomeUnknown = new AgentControlResultRequest(
+                work.requestId(),
+                ContainerControlResultStatus.OUTCOME_UNKNOWN,
+                ContainerControlReasonCode.DOCKER_OUTCOME_UNKNOWN,
+                NOW.plus(ContainerControlBroker.REQUEST_TTL));
+        broker.complete(outcomeUnknown);
+
+        assertThat(ticket.result().toCompletableFuture().join())
+                .isEqualTo(new ContainerControlResult(
+                        ContainerControlResultStatus.OUTCOME_UNKNOWN,
+                        ContainerControlReasonCode.DOCKER_OUTCOME_UNKNOWN,
+                        NOW.plus(ContainerControlBroker.REQUEST_TTL)));
+        broker.complete(outcomeUnknown);
+        assertThat(broker.activeRequestCount()).isZero();
+        assertThat(broker.claimNext()).isEmpty();
+    }
+
+    @Test
+    void should_acceptAppliedResultDuringGraceAfterOperationDeadline() {
+        ContainerControlRequestTicket ticket = broker.enqueue(
+                CONTAINER_ID,
+                ContainerControlOperation.START);
+        ContainerControlWork work = broker.claimNext().orElseThrow();
+
+        clock.advance(ContainerControlBroker.REQUEST_TTL.plusSeconds(5));
+        broker.complete(applied(
+                work.requestId(),
+                NOW.plus(ContainerControlBroker.REQUEST_TTL)));
+
+        assertThat(ticket.result().toCompletableFuture().join())
+                .isEqualTo(new ContainerControlResult(
+                        ContainerControlResultStatus.APPLIED,
+                        ContainerControlReasonCode.APPLIED,
+                        NOW.plus(ContainerControlBroker.REQUEST_TTL)));
+        assertThat(broker.activeRequestCount()).isZero();
+    }
+
+    @Test
+    void should_terminalizeMissingClaimedResultAsUnknownAtGraceDeadline() {
+        ContainerControlRequestTicket ticket = broker.enqueue(
+                CONTAINER_ID,
+                ContainerControlOperation.START);
+        ContainerControlWork work = broker.claimNext().orElseThrow();
+
+        clock.advance(ContainerControlBroker.REQUEST_TTL
+                .plus(ContainerControlBroker.RESULT_REPORTING_GRACE));
+        broker.cleanupExpired();
+
+        assertThat(ticket.result().toCompletableFuture().join())
+                .isEqualTo(new ContainerControlResult(
+                        ContainerControlResultStatus.OUTCOME_UNKNOWN,
+                        ContainerControlReasonCode.RESULT_UNAVAILABLE,
+                        NOW.plus(ContainerControlBroker.REQUEST_TTL)));
+        assertThat(broker.activeRequestCount()).isZero();
         assertThat(broker.claimNext()).isEmpty();
         assertThatThrownBy(() -> broker.complete(applied(
                 work.requestId(),
                 NOW.plusSeconds(14))))
                 .isInstanceOf(ContainerControlRequestGoneException.class);
+    }
+
+    @Test
+    void should_rejectAgentSuppliedMissingResultReasonAndLateExecutionTimestamp() {
+        broker.enqueue(CONTAINER_ID, ContainerControlOperation.START);
+        ContainerControlWork work = broker.claimNext().orElseThrow();
+        clock.advance(ContainerControlBroker.REQUEST_TTL.plusSeconds(5));
+
+        assertThatThrownBy(() -> broker.complete(new AgentControlResultRequest(
+                work.requestId(),
+                ContainerControlResultStatus.OUTCOME_UNKNOWN,
+                ContainerControlReasonCode.RESULT_UNAVAILABLE,
+                NOW.plusSeconds(14))))
+                .isInstanceOf(ContainerControlResultRejectedException.class);
+        assertThatThrownBy(() -> broker.complete(applied(
+                work.requestId(),
+                NOW.plus(ContainerControlBroker.REQUEST_TTL)
+                        .plus(ContainerControlBroker.RESULT_TIMESTAMP_SKEW))))
+                .isInstanceOf(ContainerControlResultRejectedException.class);
     }
 
     @Test

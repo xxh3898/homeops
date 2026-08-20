@@ -481,7 +481,10 @@ func (app *App) deliverContainerControlResult(
 	defer func() {
 		*result = containercontrol.Result{}
 	}()
-	if err := containercontrol.ValidateExpiry(expiresAt, app.currentTime()); err != nil {
+	resultDeadline, err := containercontrol.ResultDeliveryDeadline(
+		expiresAt,
+		app.currentTime())
+	if err != nil {
 		return resultDeliveryCompleted
 	}
 	delay := initialControlResultRetryDelay
@@ -489,7 +492,7 @@ func (app *App) deliverContainerControlResult(
 		if ctx.Err() != nil {
 			return resultDeliveryCancelled
 		}
-		remaining := expiresAt.Sub(app.currentTime())
+		remaining := resultDeadline.Sub(app.currentTime())
 		if remaining <= 0 {
 			return resultDeliveryCompleted
 		}
@@ -516,7 +519,7 @@ func (app *App) deliverContainerControlResult(
 				return resultDeliveryCompleted
 			}
 		}
-		remaining = expiresAt.Sub(app.currentTime())
+		remaining = resultDeadline.Sub(app.currentTime())
 		if remaining <= 0 {
 			return resultDeliveryCompleted
 		}
