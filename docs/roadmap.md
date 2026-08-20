@@ -22,7 +22,7 @@
 | Phase 2 native Agent rollout | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 3 운영 이력 | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 4 알림 | IMPLEMENTED | ACTIVE | COMPLETE |
-| Phase 5 제한된 컨테이너 제어 | NOT IMPLEMENTED | INACTIVE | NOT DONE |
+| Phase 5 제한된 컨테이너 제어 | PARTIAL | INACTIVE | NOT DONE |
 
 ## Phase 1: 읽기 전용 대시보드 정확성 및 사용성
 
@@ -99,17 +99,19 @@ Production acceptance에서는 disabled baseline의 outbound zero와 no-replay, 
 
 ## Phase 5: 제한된 컨테이너 제어
 
-**상태:** Source NOT IMPLEMENTED / Production INACTIVE / Acceptance NOT DONE.
+**상태:** Source PARTIAL / Production INACTIVE / Acceptance NOT DONE. Native Agent의 exact `homeops.managed=true` projection과 default-empty server-owned Compose project allowlist, fresh latest snapshot 기반 internal control candidate 판정까지만 구현했습니다. Public mutation API/UI, Agent control protocol과 production allowlist/label activation은 아직 없습니다.
 
 **목표:** 명시적으로 관리하는 container만 의도적으로 start, stop, restart할 수 있게 합니다.
 
-1. live `homeops.managed=true` label verification과 서버가 관리하는 project allowlist를 요구합니다.
+1. Candidate foundation은 exact `homeops.managed=true`, fresh snapshot, unique 12자리 short-ID match와 서버가 관리하는 exact project allowlist를 모두 요구하며 HomeOps/standalone/unknown project를 fail closed합니다. 실제 operation은 후속 Agent protocol에서 live label/project를 다시 검증해야 합니다.
 2. 고정 작업만 추가합니다. Docker CLI, shell, image, volume, network, Compose input은 받지 않습니다.
 3. CSRF, Origin check, confirmation UX, idempotency key, rate limit, operation lock, audit record를 요구합니다.
 4. HomeOps, database, unknown container는 기본 거부하며 더 강한 confirmation은 명시적 policy로만 도입합니다.
 5. Docker request 성공을 가정하지 않고 fresh Agent snapshot으로 operation result를 검증합니다.
 
-**완료 근거:** authorization, CSRF, allowlist, duplicate request, audit, timeout, stale Agent, database-protection test.
+**현재 first-slice 근거:** Agent exact-label/authority-independence regression, bounded allowlist startup validation, stale/missing/ambiguous/unmanaged/self-project fail-closed Backend test. Docker mutation은 수행하지 않습니다.
+
+**전체 완료 근거:** authorization, CSRF, allowlist, duplicate request, audit, timeout, stale Agent, database-protection test와 별도 production acceptance가 모두 필요합니다.
 
 ## 문서 및 릴리스 원칙
 

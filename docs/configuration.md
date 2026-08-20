@@ -11,6 +11,7 @@
 | `HOMEOPS_DB_PASSWORD` | 예 | 예 | PostgreSQL 비밀번호 |
 | `HOMEOPS_ALLOWED_USERS` | 예 | 개인 정보 | 쉼표로 구분한 정확한 Tailscale login allowlist |
 | `HOMEOPS_AGENT_ID` | 예 | 아니요 | API가 기대하는 정확한 Agent identifier |
+| `HOMEOPS_CONTROL_ALLOWED_PROJECTS` | 아니요 | 비공개 metadata | 쉼표로 구분한 exact Compose project allowlist. 기본값은 empty이며 Phase 5 candidate authority를 fail closed. 최대 32개, 각 이름 최대 63자 |
 | `HOMEOPS_WEB_BIND` | production | 아니요 | loopback Web host binding |
 | `HOMEOPS_AGENT_BIND` | production | 아니요 | loopback mTLS Agent binding |
 | `HOMEOPS_TLS_DIR` | production | 민감 path | server certificate, key, Agent CA certificate가 있는 directory |
@@ -118,7 +119,7 @@ production directory에는 `smoke.origin`도 있습니다. path, query, fragment
 - `homeops.logs`
 - `homeops.notifications`
 
-`homeops.managed=true`는 이 마일스톤에서 표시용입니다. control endpoint는 없습니다. 이후 control 마일스톤에서는 live label을 다시 읽고 추가 project allowlist, operation lock, idempotency key, confirmation policy, audit record를 강제해야 합니다.
+`homeops.managed=true`만 Phase 5 control candidate opt-in으로 해석합니다. Key와 value는 case-sensitive하며 `TRUE`, `True`, `1`, `yes` 또는 공백이 포함된 값은 false입니다. Agent는 raw labels가 아니라 `managed` boolean만 snapshot에 전달하며 logs/notifications authority와 독립적으로 유지합니다. Backend candidate authority는 fresh snapshot의 unique 12자리 short-ID match, `managed=true`, nonblank exact Compose project와 `HOMEOPS_CONTROL_ALLOWED_PROJECTS` membership을 모두 요구합니다. Allowlist는 기본 empty이고 항목 주변 공백만 trim하며 empty/duplicate/invalid/oversized configuration은 startup을 fail closed합니다. `homeops`, standalone/blank/unknown project는 allowlist와 무관하게 deny합니다. 이 foundation에는 control endpoint나 Agent mutation protocol이 없으며, 후속 operation은 live label/project 재검증, operation lock, idempotency key, confirmation policy와 audit record를 별도로 구현해야 합니다.
 
 `homeops.logs=true`는 Container Logs disclosure를 위한 container별 exact opt-in입니다. Agent root capability와 fresh snapshot이 함께 있어야 하며 stale snapshot은 authority가 아닙니다. Public API/UI source가 존재해도 label이 없는 container는 `422`로 fail closed하고 실행 가능한 UI control을 표시하지 않습니다. Controlled production opt-in/revoke acceptance는 완료했지만, 이후 service opt-in도 code deployment와 분리된 security-sensitive configuration gate로서 service별 privacy review와 명시적 승인을 요구합니다. Agent와 API는 raw log를 snapshot spool, file, DB 또는 Activity에 저장하지 않습니다.
 

@@ -54,6 +54,8 @@ homeops:
     maximum-containers: ${HOMEOPS_AGENT_MAXIMUM_CONTAINERS:128}
     processed-snapshot-retention: ${HOMEOPS_AGENT_PROCESSED_SNAPSHOT_RETENTION:1d}
     processed-snapshot-cleanup-cron: ${HOMEOPS_AGENT_PROCESSED_SNAPSHOT_CLEANUP_CRON:0 47 3 * * *}
+  control:
+    allowed-projects: ${HOMEOPS_CONTROL_ALLOWED_PROJECTS:}
   metrics:
     retention: ${HOMEOPS_METRIC_RETENTION:30d}
     cleanup-cron: ${HOMEOPS_METRIC_CLEANUP_CRON:0 17 3 * * *}

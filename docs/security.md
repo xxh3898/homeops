@@ -41,6 +41,8 @@
 
 Agent는 명시적으로 구성한 Unix socket을 통해 version discovery, snapshot용 container listing/inspect/stats와 opt-in log 작업용 lightweight list, 선택 container TTY inspect, bounded logs read만 구현합니다. allowlist 구조로 decode한 뒤 raw response를 버립니다. API에 Docker proxy endpoint를 노출하지 않습니다. mTLS ingress도 bounded request, 짧은 proxy timeout, source별 작은 burst/rate limit을 강제합니다.
 
+Phase 5의 현재 source는 mutation이 아닌 candidate authority만 추가합니다. Agent는 exact `homeops.managed=true`를 boolean으로만 전달하고 Backend는 fresh latest snapshot, unique bounded short ID와 default-empty exact Compose project allowlist를 함께 요구합니다. `homeops`, standalone/blank/unknown project는 hard deny하며 denial은 stable code만 유지합니다. Full Docker ID, raw labels, image/registry와 allowlist 전체를 public API, error, log 또는 persistence에 노출하지 않습니다. Snapshot authority만으로 Docker를 변경하지 않으며 후속 protocol의 live label/project revalidation, database protection, operation lock, idempotency, audit와 confirmation 전에는 start/stop/restart가 없습니다.
+
 읽기 접근도 운영 metadata를 드러낼 수 있습니다. Agent binary와 configuration은 privileged로 다루세요. root로 실행하거나 `sudo`를 제공하지 말고, spool을 container에 mount하거나 임의 TCP Docker endpoint를 구성하지 마세요.
 
 ## 브라우저 및 PWA 통제

@@ -99,6 +99,43 @@ func TestMapListedRequiresExactNotificationOptIn(t *testing.T) {
 	}
 }
 
+func TestMapListedRequiresExactManagedOptIn(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		key   string
+		value string
+		want  bool
+	}{
+		{name: "exact true", key: "homeops.managed", value: "true", want: true},
+		{name: "uppercase key", key: "HOMEOPS.MANAGED", value: "true"},
+		{name: "mixed case key", key: "homeops.Managed", value: "true"},
+		{name: "uppercase value", key: "homeops.managed", value: "TRUE"},
+		{name: "title case value", key: "homeops.managed", value: "True"},
+		{name: "leading whitespace", key: "homeops.managed", value: " true"},
+		{name: "trailing whitespace", key: "homeops.managed", value: "true "},
+		{name: "numeric truthy", key: "homeops.managed", value: "1"},
+		{name: "word truthy", key: "homeops.managed", value: "yes"},
+		{name: "empty", key: "homeops.managed", value: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			container := mapListed(listedContainer{Labels: map[string]string{
+				test.key: test.value,
+			}})
+
+			if container.Managed != test.want {
+				t.Fatalf(
+					"Managed = %v, want %v for %q",
+					container.Managed,
+					test.want,
+					test.value)
+			}
+		})
+	}
+}
+
 func TestMapListedKeepsContainerAuthoritiesIndependent(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
