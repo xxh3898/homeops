@@ -30,17 +30,17 @@ class NotificationOutboxMigrationPostgresqlIntegrationTest {
     }
 
     @Test
-    void should_migrateFromV1ToV7AndPreserveLegacyDuplicateRows() {
+    void should_migrateFromV1ToV9AndPreserveLegacyDuplicateRows() {
         database.migrateTo("1");
         insertLegacy("legacy-duplicate", "PENDING");
         insertLegacy("legacy-duplicate", "FAILED");
 
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("7");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("9");
         assertThat(flyway.info().applied())
                 .extracting(migration -> migration.getVersion().getVersion())
-                .containsExactly("1", "2", "3", "4", "5", "6", "7");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9");
         assertThat(jdbc.queryForObject(
                 "SELECT count(*) FROM notification_event WHERE deduplication_key = 'legacy-duplicate'",
                 Integer.class)).isEqualTo(2);
@@ -55,13 +55,13 @@ class NotificationOutboxMigrationPostgresqlIntegrationTest {
     }
 
     @Test
-    void should_migrateFromV6ToV7AndBackfillAuditAndTerminalTimestamps() {
+    void should_migrateFromV6ToV9AndBackfillAuditAndTerminalTimestamps() {
         database.migrateTo("6");
         insertLegacy("legacy-sent", "SENT");
 
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("7");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("9");
         assertThat(jdbc.queryForObject("""
                 SELECT count(*) FROM notification_event
                 WHERE deduplication_key = 'legacy-sent'

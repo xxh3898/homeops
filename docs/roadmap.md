@@ -84,6 +84,8 @@ Deployment, backup, incident와 Agent 장기 event의 automatic deletion retenti
 
 **상태:** Source NOT IMPLEMENTED / Production INACTIVE / Acceptance NOT DONE.
 
+현재 source에는 dormant transactional outbox와 fail-closed service eligibility authority, deployment·backup ingestion winner, incident lifecycle, Agent freshness/version 및 Docker episode producer가 있습니다. Incident producer는 future opt-in OPEN winner와 SENT root가 있는 bounded escalation/recovery만 생성합니다. Agent producer는 persisted expected status의 stale episode와 actual current snapshot winner만 사용하고 SENT stale root에만 recovery를 연결합니다. Docker producer는 exact `homeops.notifications=true`를 전달한 fresh·strictly-newer current snapshot만 authority로 삼아 baseline, sustained failure, cooldown과 SENT-root recovery를 bounded current state에 기록합니다. Global notification activation과 production Docker opt-in/Discord acceptance가 없으므로 Phase 전체 상태는 아직 변경하지 않습니다.
+
 **목표:** 중복 alert storm 없이 유용한 운영 signal을 제공합니다.
 
 - Agent, Docker, deployment, backup-result, incident event용 Discord delivery

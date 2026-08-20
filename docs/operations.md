@@ -104,7 +104,16 @@ Flyway가 이미 database를 바꿨을 수 있으므로 image rollback은 backwa
 
 ## Uptime Kuma 및 알림
 
-Uptime Kuma를 독립 HTTP availability source로 유지하고 현재 email 동작을 보존하세요. service-ownership matrix를 구성하기 전까지 HomeOps가 duplicate health alert를 내보내면 안 됩니다. 이후 HomeOps Discord event는 Docker, Agent, deployment, backup-result ingestion, internal incident transition을 다뤄야 합니다. critical long-duration failure는 email로 escalate할 수 있지만 같은 incident에는 owner 하나와 deduplication key 하나가 필요합니다.
+| Owner | 담당 signal | Delivery |
+|---|---|---|
+| Uptime Kuma | 외부 HTTP/Tailnet reachability | 기존 email path |
+| HomeOps | 신뢰하는 reporter의 future deployment·backup lifecycle, persisted exact-origin incident 중 명시적으로 opt-in한 service의 future transition, API가 살아 있는 동안 expected native Agent의 freshness/version lifecycle, 명시적으로 opt-in한 내부 Docker container episode | 각 source producer와 Phase 4 Discord delivery가 활성화된 이후 |
+
+`monitored_service.notification_enabled`는 HomeOps Discord incident의 future eligibility만 나타냅니다. Uptime Kuma monitor/email 설정이나 Discord global kill switch를 변경하지 않습니다. 이 값을 바꾸는 것만으로 notification intent, historical/open incident replay 또는 outbound가 발생하지 않습니다. Existing service는 boolean-only ADMIN + CSRF operation으로만 이 authority를 변경하며 DB default와 legacy migration 결과는 fail-closed `false`입니다.
+
+Deployment와 backup producer는 실제 ingestion insert 또는 terminal transition winner만 typed outbox intent로 기록하며 replay나 경쟁 loser는 새 intent를 만들지 않습니다. Backup payload는 project, database type, status만 허용하고 logical location, failure, expiry와 restore metadata는 제외합니다. Incident producer는 event 시점의 persisted service authority를 확인하고 actual OPEN winner, 기본 15분 이상 지속된 DOWN observation, actual recovery winner만 고려합니다. Agent producer는 persisted expected status row의 last snapshot을 stale episode root로 사용하고 actual current snapshot update winner만 recovery/version intent를 만들며, first connection·duplicate·out-of-order snapshot은 notification을 만들지 않습니다. Docker producer는 fresh current snapshot의 exact opt-in만 사용하고 first observation/recreate/re-enable을 baseline으로 처리하며 기본 30초 sustained failure와 5분 re-alert cooldown을 적용합니다. Incident, Agent와 Docker recovery는 같은 episode의 SENT root에만 parent로 연결하고 suppressed/pending/failed/unknown/missing root에는 child를 만들지 않습니다. Global switch가 disabled이면 root와 version intent는 `SUPPRESSED`로 끝나고 enable 뒤 재생되지 않습니다. Agent freshness는 `HOMEOPS_AGENT_STALE_AFTER`를 재사용하고 checker cadence만 별도 bounded setting으로 둡니다. Optional email escalation은 같은 incident의 owner와 duplicate-prevention policy를 별도로 검증한 뒤에만 고려합니다.
+
+Native Agent는 exact `homeops.notifications=true`를 container별 `notificationsAllowed` boolean으로만 전달합니다. 이 capability는 `homeops.managed`와 `homeops.logs`에서 독립적이고 old/rollback Agent가 field를 생략하면 false입니다. Backend는 public inventory/detail에 이를 노출하지 않고 fresh current snapshot winner에서만 bounded Docker episode state와 typed outbox intent를 갱신합니다. Source 구현은 production label opt-in, Agent rollout 또는 Discord activation 권한이 아니므로 별도 production gate 없이는 적용하지 않습니다.
 
 ## 데이터 손실 및 재구성
 

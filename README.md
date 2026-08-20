@@ -65,6 +65,7 @@ Linux agent, Kubernetes, 인터넷 공개, 다중 사용자 계정, 웹 터미�
 - `GET /api/v1/activity`: 범위가 제한된 안정 cursor 제공
 - `GET /api/v1/services`, `/status`, `/incidents`
 - `POST /api/v1/services`: 관리자 인증과 CSRF로 보호
+- `PATCH /api/v1/services/{serviceId}/notification`: future HomeOps Discord incident eligibility boolean만 ADMIN + CSRF로 변경
 - `POST /api/v1/internal/agent/snapshots`: loopback mTLS ingress를 통해서만 사용 가능
 - `GET /api/v1/internal/agent/log-requests/next`, `POST /api/v1/internal/agent/log-results`: public log API가 아닌 bounded Agent work protocol foundation. 동일 loopback mTLS ingress의 exact path만 허용
 - `POST /api/v1/internal/ingestion/deployments`, `/backups`: production의 신뢰하는 reporter에서 활성화. ingestion secret이 비어 있는 새 설치에서는 fail closed

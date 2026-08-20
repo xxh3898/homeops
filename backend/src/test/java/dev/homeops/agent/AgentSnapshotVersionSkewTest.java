@@ -25,6 +25,22 @@ class AgentSnapshotVersionSkewTest {
         assertThat(request.supportsContainerLogs()).isFalse();
         assertThat(request.containers()).hasSize(1);
         assertThat(request.containers().getFirst().logsAllowed()).isFalse();
+        assertThat(request.containers().getFirst().notificationsAllowed()).isFalse();
+    }
+
+    @Test
+    void should_canonicalizeNotificationCapability_when_newApiReceivesExplicitOrNullValues()
+            throws Exception {
+        AgentSnapshotRequest enabled = mapper.readValue(
+                snapshotWithNotificationCapability("true"), AgentSnapshotRequest.class);
+        AgentSnapshotRequest disabled = mapper.readValue(
+                snapshotWithNotificationCapability("false"), AgentSnapshotRequest.class);
+        AgentSnapshotRequest nullValue = mapper.readValue(
+                snapshotWithNotificationCapability("null"), AgentSnapshotRequest.class);
+
+        assertThat(enabled.containers().getFirst().notificationsAllowed()).isTrue();
+        assertThat(disabled.containers().getFirst().notificationsAllowed()).isFalse();
+        assertThat(nullValue.containers().getFirst().notificationsAllowed()).isFalse();
     }
 
     @Test
@@ -59,9 +75,15 @@ class AgentSnapshotVersionSkewTest {
                   "capturedAt":"2026-08-18T00:00:00Z",
                   "supportsContainerLogs":true,
                   "host":{},
-                  "containers":[{"id":"0123456789abcdef","logsAllowed":true}]
+                  "containers":[{"id":"0123456789abcdef","logsAllowed":true,"notificationsAllowed":true}]
                 }
                 """;
+    }
+
+    private static String snapshotWithNotificationCapability(String value) {
+        return oldAgentSnapshot().replace(
+                "\"managed\":false",
+                "\"managed\":false,\"notificationsAllowed\":" + value);
     }
 
     private record LegacySnapshot(

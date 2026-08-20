@@ -18,6 +18,7 @@ func TestMapListedKeepsAllowlistedContainerFields(t *testing.T) {
     "com.docker.compose.project": "example",
     "homeops.managed": "true",
     "homeops.logs": "true",
+    "homeops.notifications": "true",
     "secret-looking-label": "must-not-be-forwarded"
   }
 }`
@@ -40,6 +41,9 @@ func TestMapListedKeepsAllowlistedContainerFields(t *testing.T) {
 	if !container.LogsAllowed {
 		t.Fatal("LogsAllowed = false, want true")
 	}
+	if !container.NotificationsAllowed {
+		t.Fatal("NotificationsAllowed = false, want true")
+	}
 	if len(container.Ports) != 1 ||
 		container.Ports[0].PrivatePort != 8080 ||
 		container.Ports[0].PublicPort == nil ||
@@ -52,6 +56,101 @@ func TestMapListedKeepsAllowlistedContainerFields(t *testing.T) {
 	}
 	if string(encoded) == "" || contains(string(encoded), "must-not-be-forwarded") {
 		t.Fatalf("encoded container leaked an unapproved label: %s", encoded)
+	}
+	if !contains(string(encoded), `"notificationsAllowed":true`) {
+		t.Fatalf("encoded container = %s, want bounded notification capability", encoded)
+	}
+}
+
+func TestMapListedRequiresExactNotificationOptIn(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		key   string
+		value string
+		want  bool
+	}{
+		{name: "exact true", key: "homeops.notifications", value: "true", want: true},
+		{name: "uppercase key", key: "HOMEOPS.NOTIFICATIONS", value: "true"},
+		{name: "mixed case key", key: "homeops.Notifications", value: "true"},
+		{name: "uppercase value", key: "homeops.notifications", value: "TRUE"},
+		{name: "title case value", key: "homeops.notifications", value: "True"},
+		{name: "leading whitespace", key: "homeops.notifications", value: " true"},
+		{name: "trailing whitespace", key: "homeops.notifications", value: "true "},
+		{name: "numeric truthy", key: "homeops.notifications", value: "1"},
+		{name: "word truthy", key: "homeops.notifications", value: "yes"},
+		{name: "empty", key: "homeops.notifications", value: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			container := mapListed(listedContainer{Labels: map[string]string{
+				test.key: test.value,
+			}})
+
+			if container.NotificationsAllowed != test.want {
+				t.Fatalf(
+					"NotificationsAllowed = %v, want %v for %q",
+					container.NotificationsAllowed,
+					test.want,
+					test.value)
+			}
+		})
+	}
+}
+
+func TestMapListedKeepsContainerAuthoritiesIndependent(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name                 string
+		labels               map[string]string
+		managed              bool
+		logsAllowed          bool
+		notificationsAllowed bool
+	}{
+		{name: "none", labels: map[string]string{}},
+		{
+			name:    "managed only",
+			labels:  map[string]string{"homeops.managed": "true"},
+			managed: true,
+		},
+		{
+			name:        "logs only",
+			labels:      map[string]string{"homeops.logs": "true"},
+			logsAllowed: true,
+		},
+		{
+			name:                 "notifications only",
+			labels:               map[string]string{"homeops.notifications": "true"},
+			notificationsAllowed: true,
+		},
+		{
+			name: "all",
+			labels: map[string]string{
+				"homeops.managed":       "true",
+				"homeops.logs":          "true",
+				"homeops.notifications": "true",
+			},
+			managed:              true,
+			logsAllowed:          true,
+			notificationsAllowed: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			container := mapListed(listedContainer{Labels: test.labels})
+
+			if container.Managed != test.managed ||
+				container.LogsAllowed != test.logsAllowed ||
+				container.NotificationsAllowed != test.notificationsAllowed {
+				t.Fatalf(
+					"authorities = managed:%v logs:%v notifications:%v",
+					container.Managed,
+					container.LogsAllowed,
+					container.NotificationsAllowed)
+			}
+		})
 	}
 }
 

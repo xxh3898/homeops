@@ -70,6 +70,13 @@ homeops:
     cleanup-cron: ${HOMEOPS_MONITORING_CLEANUP_CRON:0 29 3 * * *}
   notifications:
     enabled: ${HOMEOPS_NOTIFICATIONS_ENABLED:false}
+    agent:
+      freshness-check-delay: ${HOMEOPS_AGENT_NOTIFICATION_FRESHNESS_CHECK_DELAY:5s}
+    container:
+      failure-after: ${HOMEOPS_CONTAINER_NOTIFICATION_FAILURE_AFTER:30s}
+      realert-cooldown: ${HOMEOPS_CONTAINER_NOTIFICATION_REALERT_COOLDOWN:5m}
+    incident:
+      escalation-after: ${HOMEOPS_INCIDENT_NOTIFICATION_ESCALATION_AFTER:15m}
     discord-webhook-url: ${HOMEOPS_DISCORD_WEBHOOK_URL:}
     connect-timeout: ${HOMEOPS_NOTIFICATION_CONNECT_TIMEOUT:3s}
     request-timeout: ${HOMEOPS_NOTIFICATION_REQUEST_TIMEOUT:5s}

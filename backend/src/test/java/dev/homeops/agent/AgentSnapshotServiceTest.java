@@ -15,13 +15,15 @@ import dev.homeops.agent.api.AgentStatusResponse.ConnectionStatus;
 import dev.homeops.agent.config.HomeOpsAgentProperties;
 import dev.homeops.agent.logs.ContainerLogCapabilityUnavailableException;
 import dev.homeops.agent.logs.ContainerLogsNotAllowedException;
-import dev.homeops.agent.persistence.AgentStatusEntity;
 import dev.homeops.agent.persistence.AgentActivityStore;
 import dev.homeops.agent.persistence.AgentStatusRepository;
 import dev.homeops.agent.persistence.AgentStatusStore;
+import dev.homeops.agent.persistence.AgentStatusStore.AgentStatusSnapshot;
 import dev.homeops.agent.persistence.HostMetricAggregateRepository;
 import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
 import dev.homeops.common.AgentSnapshotRejectedException;
+import dev.homeops.notification.AgentLifecycleNotificationProducer;
+import dev.homeops.notification.ContainerNotificationProducer;
 import dev.homeops.system.AmbiguousContainerIdentifierException;
 import dev.homeops.system.ContainerInventoryUnavailableException;
 import dev.homeops.system.ContainerNotFoundException;
@@ -64,6 +66,12 @@ class AgentSnapshotServiceTest {
     @Mock
     private AgentActivityStore agentActivityStore;
 
+    @Mock
+    private AgentLifecycleNotificationProducer notifications;
+
+    @Mock
+    private ContainerNotificationProducer containerNotifications;
+
     private AgentSnapshotService service;
 
     @BeforeEach
@@ -82,6 +90,8 @@ class AgentSnapshotServiceTest {
                 metricRepository,
                 processedSnapshotStore,
                 agentActivityStore,
+                notifications,
+                containerNotifications,
                 Clock.fixed(NOW, ZoneOffset.UTC));
         lenient().when(processedSnapshotStore.recordIfAbsent(
                 anyString(), any(), any(), any()))
@@ -114,6 +124,10 @@ class AgentSnapshotServiceTest {
                 "local-mac", snapshotId, request.agentVersion(), request.capturedAt(), NOW);
         verify(metricRepository).save(any());
         verify(agentActivityStore).recordConnection("local-mac", request.agentVersion(), NOW, false);
+        verify(notifications, never()).recordStale(any(), anyString(), anyString(), any(), any());
+        verify(notifications, never()).recordRecovered(any(), anyString(), anyString(), any(), any());
+        verify(notifications, never()).recordVersionChanged(any(), anyString(), anyString(), any());
+        verify(containerNotifications).recordCurrentSnapshot(request);
     }
 
     @Test
@@ -136,6 +150,9 @@ class AgentSnapshotServiceTest {
         verify(agentStatusStore, never()).insertIfAbsent(anyString(), any(), anyString(), any(), any());
         verify(agentActivityStore, never()).recordConnection(anyString(), anyString(), any(),
                 org.mockito.ArgumentMatchers.anyBoolean());
+        verify(notifications, never()).recordRecovered(any(), anyString(), anyString(), any(), any());
+        verify(notifications, never()).recordVersionChanged(any(), anyString(), anyString(), any());
+        verify(containerNotifications, never()).recordCurrentSnapshot(any());
     }
 
     @Test
@@ -159,12 +176,11 @@ class AgentSnapshotServiceTest {
     void should_notRecordActivity_when_agentVersionIsUnchanged() {
         UUID snapshotId = UUID.fromString("10000000-0000-0000-0000-000000000012");
         AgentSnapshotRequest request = AgentSnapshotFixtures.snapshot(snapshotId, NOW.minusSeconds(1));
-        AgentStatusEntity status = AgentStatusEntity.create("local-mac");
-        status.recordSnapshot(UUID.randomUUID(), request.agentVersion(), NOW.minusSeconds(6), NOW.minusSeconds(5));
-        when(agentStatusStore.insertIfAbsent(anyString(), any(), anyString(), any(), any())).thenReturn(false);
+        AgentStatusSnapshot status = status(
+                request.agentVersion(), NOW.minusSeconds(6), NOW.minusSeconds(5));
         when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
                 .thenReturn(true);
-        when(agentStatusRepository.findById("local-mac")).thenReturn(Optional.of(status));
+        when(agentStatusStore.findForUpdate("local-mac")).thenReturn(Optional.of(status));
         when(metricRepository.findByAgentIdAndBucketStart(any(), any())).thenReturn(Optional.empty());
 
         service.accept(request);
@@ -174,15 +190,38 @@ class AgentSnapshotServiceTest {
     }
 
     @Test
+    void should_reReadLockedStatus_when_concurrentFirstInsertWinsElsewhere() {
+        UUID snapshotId = UUID.fromString("10000000-0000-0000-0000-000000000057");
+        AgentSnapshotRequest request = AgentSnapshotFixtures.snapshot(
+                snapshotId, NOW.minusSeconds(1));
+        AgentStatusSnapshot concurrent = status(
+                request.agentVersion(), NOW.minusSeconds(2), NOW.minusSeconds(1));
+        when(agentStatusStore.findForUpdate("local-mac"))
+                .thenReturn(Optional.empty(), Optional.of(concurrent));
+        when(agentStatusStore.insertIfAbsent(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(false);
+        when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(true);
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any()))
+                .thenReturn(Optional.empty());
+
+        service.accept(request);
+
+        verify(agentStatusStore, times(2)).findForUpdate("local-mac");
+        verify(agentActivityStore, never()).recordConnection(
+                anyString(), anyString(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(notifications, never()).recordVersionChanged(any(), anyString(), anyString(), any());
+    }
+
+    @Test
     void should_updateCurrentStatusAndRecordVersionChange_when_snapshotIsNewer() {
         Instant previousCapturedAt = NOW.minusSeconds(3);
         Instant newerCapturedAt = NOW.minusSeconds(1);
         AgentSnapshotRequest request = snapshot(
                 "10000000-0000-0000-0000-000000000026", newerCapturedAt, "v2");
-        when(agentStatusStore.insertIfAbsent(anyString(), any(), anyString(), any(), any())).thenReturn(false);
         when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
                 .thenReturn(true);
-        when(agentStatusRepository.findById("local-mac"))
+        when(agentStatusStore.findForUpdate("local-mac"))
                 .thenReturn(Optional.of(status("v1", previousCapturedAt)));
         when(metricRepository.findByAgentIdAndBucketStart(any(), any())).thenReturn(Optional.empty());
 
@@ -192,6 +231,56 @@ class AgentSnapshotServiceTest {
         verify(agentStatusStore).updateIfCapturedAtIsNotOlder(
                 "local-mac", request.snapshotId(), "v2", newerCapturedAt, NOW);
         verify(agentActivityStore).recordConnection("local-mac", "v2", NOW, true);
+        verify(notifications).recordVersionChanged(
+                request.snapshotId(), "local-mac", "v2", NOW);
+    }
+
+    @Test
+    void should_createRecoveryOnlyForFreshCurrentWinner_when_priorSnapshotWasStale() {
+        Instant priorCapturedAt = NOW.minusSeconds(40);
+        Instant priorSeenAt = NOW.minusSeconds(39);
+        UUID priorSnapshotId = UUID.fromString(
+                "10000000-0000-0000-0000-000000000053");
+        AgentSnapshotRequest request = snapshot(
+                "10000000-0000-0000-0000-000000000054", NOW.minusSeconds(1), "v1");
+        when(agentStatusStore.findForUpdate("local-mac"))
+                .thenReturn(Optional.of(status(
+                        priorSnapshotId, "v1", priorCapturedAt, priorSeenAt)));
+        when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(true);
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any())).thenReturn(Optional.empty());
+
+        service.accept(request);
+
+        verify(notifications).recordRecovered(
+                priorSnapshotId,
+                "local-mac",
+                "v1",
+                priorCapturedAt,
+                NOW);
+        verify(notifications, never()).recordVersionChanged(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void should_notCreateRecovery_when_currentWinnerIsAlreadyStaleAtAcceptance() {
+        Instant priorCapturedAt = NOW.minusSeconds(50);
+        Instant priorSeenAt = NOW.minusSeconds(49);
+        UUID priorSnapshotId = UUID.fromString(
+                "10000000-0000-0000-0000-000000000055");
+        AgentSnapshotRequest request = snapshot(
+                "10000000-0000-0000-0000-000000000056", NOW.minusSeconds(40), "v1");
+        when(agentStatusStore.findForUpdate("local-mac"))
+                .thenReturn(Optional.of(status(
+                        priorSnapshotId, "v1", priorCapturedAt, priorSeenAt)));
+        when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(true);
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any())).thenReturn(Optional.empty());
+
+        service.accept(request);
+
+        verify(notifications, never()).recordRecovered(
+                any(), anyString(), anyString(), any(), any());
+        verify(containerNotifications, never()).recordCurrentSnapshot(any());
     }
 
     @Test
@@ -202,11 +291,9 @@ class AgentSnapshotServiceTest {
                 "10000000-0000-0000-0000-000000000027", newerCapturedAt, "v2");
         AgentSnapshotRequest delayed = snapshot(
                 "10000000-0000-0000-0000-000000000028", olderCapturedAt, "v1");
-        when(agentStatusStore.insertIfAbsent(anyString(), any(), anyString(), any(), any()))
-                .thenReturn(false, false);
         when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
                 .thenReturn(true, false);
-        when(agentStatusRepository.findById("local-mac"))
+        when(agentStatusStore.findForUpdate("local-mac"))
                 .thenReturn(Optional.of(status("v1", olderCapturedAt)), Optional.of(status("v2", newerCapturedAt)));
         when(metricRepository.findByAgentIdAndBucketStart(any(), any())).thenReturn(Optional.empty());
 
@@ -218,6 +305,28 @@ class AgentSnapshotServiceTest {
         verify(metricRepository, times(2)).save(any());
         verify(agentActivityStore, times(1)).recordConnection("local-mac", "v2", NOW, true);
         verify(agentActivityStore, never()).recordConnection("local-mac", "v1", NOW, true);
+        verify(notifications, never()).recordVersionChanged(
+                delayed.snapshotId(), "local-mac", "v1", NOW);
+        verify(notifications, never()).recordRecovered(
+                any(), anyString(), anyString(), any(), any());
+        verify(containerNotifications, times(1)).recordCurrentSnapshot(newer);
+    }
+
+    @Test
+    void should_notApplyContainerAuthority_when_captureTimeEqualsPersistedCurrentStatus() {
+        Instant capturedAt = NOW.minusSeconds(1);
+        AgentSnapshotRequest request = snapshot(
+                "10000000-0000-0000-0000-000000000058", capturedAt, "v1");
+        when(agentStatusStore.findForUpdate("local-mac"))
+                .thenReturn(Optional.of(status("v1", capturedAt)));
+        when(agentStatusStore.updateIfCapturedAtIsNotOlder(
+                anyString(), any(), anyString(), any(), any())).thenReturn(true);
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any()))
+                .thenReturn(Optional.empty());
+
+        service.accept(request);
+
+        verify(containerNotifications, never()).recordCurrentSnapshot(any());
     }
 
     @Test
@@ -228,11 +337,9 @@ class AgentSnapshotServiceTest {
                 "10000000-0000-0000-0000-000000000029", newerCapturedAt, "v2");
         AgentSnapshotRequest delayed = snapshot(
                 "10000000-0000-0000-0000-000000000030", olderCapturedAt, "v3");
-        when(agentStatusStore.insertIfAbsent(anyString(), any(), anyString(), any(), any()))
-                .thenReturn(false, false);
         when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
                 .thenReturn(true, false);
-        when(agentStatusRepository.findById("local-mac"))
+        when(agentStatusStore.findForUpdate("local-mac"))
                 .thenReturn(Optional.of(status("v1", olderCapturedAt)), Optional.of(status("v2", newerCapturedAt)));
         when(metricRepository.findByAgentIdAndBucketStart(any(), any())).thenReturn(Optional.empty());
 
@@ -243,6 +350,10 @@ class AgentSnapshotServiceTest {
         verify(metricRepository, times(2)).save(any());
         verify(agentActivityStore, times(1)).recordConnection("local-mac", "v2", NOW, true);
         verify(agentActivityStore, never()).recordConnection("local-mac", "v3", NOW, true);
+        verify(notifications, never()).recordVersionChanged(
+                delayed.snapshotId(), "local-mac", "v3", NOW);
+        verify(notifications, never()).recordRecovered(
+                any(), anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -253,11 +364,9 @@ class AgentSnapshotServiceTest {
                 "10000000-0000-0000-0000-000000000031", newerCapturedAt, "v2");
         AgentSnapshotRequest delayed = snapshot(
                 "10000000-0000-0000-0000-000000000032", olderCapturedAt, "v2");
-        when(agentStatusStore.insertIfAbsent(anyString(), any(), anyString(), any(), any()))
-                .thenReturn(false, false);
         when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
                 .thenReturn(true, false);
-        when(agentStatusRepository.findById("local-mac"))
+        when(agentStatusStore.findForUpdate("local-mac"))
                 .thenReturn(Optional.of(status("v1", olderCapturedAt)), Optional.of(status("v2", newerCapturedAt)));
         when(metricRepository.findByAgentIdAndBucketStart(any(), any())).thenReturn(Optional.empty());
 
@@ -267,6 +376,10 @@ class AgentSnapshotServiceTest {
         assertThat(service.latest()).map(snapshot -> snapshot.snapshot().capturedAt()).contains(newerCapturedAt);
         verify(metricRepository, times(2)).save(any());
         verify(agentActivityStore, times(1)).recordConnection("local-mac", "v2", NOW, true);
+        verify(notifications, times(1)).recordVersionChanged(
+                newer.snapshotId(), "local-mac", "v2", NOW);
+        verify(notifications, never()).recordRecovered(
+                any(), anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -288,13 +401,11 @@ class AgentSnapshotServiceTest {
                 .thenReturn(true, true, false);
         when(processedSnapshotStore.findCapturedAt("local-mac", firstId))
                 .thenReturn(Optional.of(firstCapturedAt));
-        AgentStatusEntity firstStatus = status("0.1.0", firstCapturedAt);
-        when(agentStatusStore.insertIfAbsent(anyString(), any(), anyString(), any(), any()))
-                .thenReturn(true, false);
+        AgentStatusSnapshot firstStatus = status("0.1.0", firstCapturedAt);
         when(agentStatusStore.updateIfCapturedAtIsNotOlder(anyString(), any(), anyString(), any(), any()))
                 .thenReturn(true);
-        when(agentStatusRepository.findById("local-mac"))
-                .thenReturn(Optional.of(firstStatus));
+        when(agentStatusStore.findForUpdate("local-mac"))
+                .thenReturn(Optional.empty(), Optional.of(firstStatus));
         when(metricRepository.findByAgentIdAndBucketStart(any(), any()))
                 .thenReturn(Optional.empty());
 
@@ -306,7 +417,7 @@ class AgentSnapshotServiceTest {
         assertThat(service.containerInventory().lastUpdatedAt())
                 .isEqualTo(secondCapturedAt);
         verify(metricRepository, times(2)).save(any());
-        verify(agentStatusStore, times(2)).insertIfAbsent(anyString(), any(), anyString(), any(), any());
+        verify(agentStatusStore, times(1)).insertIfAbsent(anyString(), any(), anyString(), any(), any());
     }
 
     @Test
@@ -361,6 +472,32 @@ class AgentSnapshotServiceTest {
         assertThat(eligibility.containerId()).isEqualTo(SHORT_CONTAINER_ID);
         assertThat(detail.supportsContainerLogs()).isTrue();
         assertThat(detail.container().logsAllowed()).isTrue();
+    }
+
+    @Test
+    void should_replaceLatestNotificationCapabilityWithFalse_when_rolledBackAgentOmitsField() {
+        Instant enabledAt = NOW.minusSeconds(2);
+        accept(snapshotWithContainers(
+                "10000000-0000-0000-0000-000000000057",
+                enabledAt,
+                List.of(container(
+                        FULL_CONTAINER_ID,
+                        "example-api",
+                        enabledAt,
+                        false,
+                        true))));
+
+        assertThat(service.latest().orElseThrow().snapshot().containers().getFirst()
+                .notificationsAllowed()).isTrue();
+
+        Instant rolledBackAt = NOW.minusSeconds(1);
+        accept(snapshotWithContainers(
+                "10000000-0000-0000-0000-000000000058",
+                rolledBackAt,
+                List.of(container(FULL_CONTAINER_ID, "example-api", rolledBackAt, false))));
+
+        assertThat(service.latest().orElseThrow().snapshot().containers().getFirst()
+                .notificationsAllowed()).isFalse();
     }
 
     @Test
@@ -599,10 +736,24 @@ class AgentSnapshotServiceTest {
         verify(metricRepository, never()).save(any());
     }
 
-    private static AgentStatusEntity status(String version, Instant capturedAt) {
-        AgentStatusEntity status = AgentStatusEntity.create("local-mac");
-        status.recordSnapshot(UUID.randomUUID(), version, capturedAt, capturedAt.plusSeconds(1));
-        return status;
+    private static AgentStatusSnapshot status(String version, Instant capturedAt) {
+        return status(UUID.randomUUID(), version, capturedAt, capturedAt.plusSeconds(1));
+    }
+
+    private static AgentStatusSnapshot status(
+            String version,
+            Instant capturedAt,
+            Instant seenAt) {
+        return status(UUID.randomUUID(), version, capturedAt, seenAt);
+    }
+
+    private static AgentStatusSnapshot status(
+            UUID snapshotId,
+            String version,
+            Instant capturedAt,
+            Instant seenAt) {
+        return new AgentStatusSnapshot(
+                "local-mac", version, snapshotId, capturedAt, seenAt);
     }
 
     private static AgentSnapshotRequest snapshot(String snapshotId, Instant capturedAt, String version) {
@@ -664,6 +815,15 @@ class AgentSnapshotServiceTest {
             String name,
             Instant capturedAt,
             boolean logsAllowed) {
+        return container(identifier, name, capturedAt, logsAllowed, false);
+    }
+
+    private static AgentSnapshotRequest.ContainerSnapshot container(
+            String identifier,
+            String name,
+            Instant capturedAt,
+            boolean logsAllowed,
+            boolean notificationsAllowed) {
         AgentSnapshotRequest.ContainerSnapshot fixture = AgentSnapshotFixtures
                 .snapshot(UUID.fromString("10000000-0000-0000-0000-000000000099"), capturedAt)
                 .containers()
@@ -683,6 +843,7 @@ class AgentSnapshotServiceTest {
                 fixture.memoryLimitBytes(),
                 fixture.ports(),
                 fixture.managed(),
-                logsAllowed);
+                logsAllowed,
+                notificationsAllowed);
     }
 }

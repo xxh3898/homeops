@@ -11,6 +11,7 @@ import dev.homeops.common.DuplicateMonitoredServiceNameException;
 import dev.homeops.monitoring.api.MonitoredServiceRequest;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -60,24 +61,34 @@ class MonitoredServiceStoreTest {
     @Test
     void should_treatActiveIncidentConflictAsNormalCompetition_when_openingIncident() {
         MonitoredServiceStore store = new MonitoredServiceStore(jdbc);
-        when(jdbc.update(any(String.class), any(Object[].class))).thenReturn(0);
+        when(jdbc.query(
+                any(String.class),
+                any(org.springframework.jdbc.core.RowMapper.class),
+                any(Object[].class))).thenReturn(List.of());
 
-        boolean inserted = store.openIncident(new dev.homeops.monitoring.api.MonitoredServiceResponse(
+        java.util.Optional<java.util.UUID> inserted = store.openIncident(
+                new dev.homeops.monitoring.api.MonitoredServiceResponse(
                 java.util.UUID.randomUUID(), "HomeOps", "https://homeops.example.invalid/health", "GET", 200,
                 3_000, 30, 3, 2, "WARNING", true, true), Instant.parse("2026-08-06T12:00:00Z"));
 
-        assertThat(inserted).isFalse();
+        assertThat(inserted).isEmpty();
         ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
-        verify(jdbc).update(query.capture(), any(Object[].class));
-        assertThat(query.getValue().replaceAll("\\s+", " ")).contains("ON CONFLICT DO NOTHING");
+        verify(jdbc).query(
+                query.capture(),
+                any(org.springframework.jdbc.core.RowMapper.class),
+                any(Object[].class));
+        assertThat(query.getValue().replaceAll("\\s+", " ")).contains(
+                "ON CONFLICT DO NOTHING", "RETURNING id");
     }
 
     @Test
     void should_recordResolutionTransactionIdentity_when_resolvingIncident() {
         MonitoredServiceStore store = new MonitoredServiceStore(jdbc);
 
-        store.resolveIncident(java.util.UUID.randomUUID(), Instant.parse("2026-08-06T12:00:00Z"));
+        boolean resolved = store.resolveIncident(
+                java.util.UUID.randomUUID(), Instant.parse("2026-08-06T12:00:00Z"));
 
+        assertThat(resolved).isFalse();
         ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
         verify(jdbc).update(query.capture(), any(Object[].class));
         assertThat(query.getValue().replaceAll("\\s+", " ")).contains(

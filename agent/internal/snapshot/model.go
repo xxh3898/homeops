@@ -22,21 +22,22 @@ type Host struct {
 }
 
 type Container struct {
-	ID              string          `json:"id"`
-	Name            string          `json:"name"`
-	ComposeProject  string          `json:"composeProject,omitempty"`
-	Image           string          `json:"image"`
-	State           string          `json:"state"`
-	Health          string          `json:"health"`
-	Status          string          `json:"status,omitempty"`
-	StartedAt       *time.Time      `json:"startedAt,omitempty"`
-	RestartCount    int64           `json:"restartCount"`
-	CPUUsagePercent *float64        `json:"cpuUsagePercent,omitempty"`
-	MemoryUsage     *uint64         `json:"memoryUsageBytes,omitempty"`
-	MemoryLimit     *uint64         `json:"memoryLimitBytes,omitempty"`
-	Ports           []ContainerPort `json:"ports"`
-	Managed         bool            `json:"managed"`
-	LogsAllowed     bool            `json:"logsAllowed"`
+	ID                   string          `json:"id"`
+	Name                 string          `json:"name"`
+	ComposeProject       string          `json:"composeProject,omitempty"`
+	Image                string          `json:"image"`
+	State                string          `json:"state"`
+	Health               string          `json:"health"`
+	Status               string          `json:"status,omitempty"`
+	StartedAt            *time.Time      `json:"startedAt,omitempty"`
+	RestartCount         int64           `json:"restartCount"`
+	CPUUsagePercent      *float64        `json:"cpuUsagePercent,omitempty"`
+	MemoryUsage          *uint64         `json:"memoryUsageBytes,omitempty"`
+	MemoryLimit          *uint64         `json:"memoryLimitBytes,omitempty"`
+	Ports                []ContainerPort `json:"ports"`
+	Managed              bool            `json:"managed"`
+	LogsAllowed          bool            `json:"logsAllowed"`
+	NotificationsAllowed bool            `json:"notificationsAllowed"`
 }
 
 type ContainerPort struct {

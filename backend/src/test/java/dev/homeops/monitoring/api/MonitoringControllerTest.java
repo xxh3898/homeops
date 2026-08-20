@@ -1,8 +1,12 @@
 package dev.homeops.monitoring.api;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -10,6 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import dev.homeops.common.ApiExceptionHandler;
 import dev.homeops.common.DuplicateMonitoredServiceNameException;
+import dev.homeops.monitoring.MonitoredServiceNotFoundException;
 import dev.homeops.monitoring.SafeServiceUrlPolicy.UnsafeServiceUrlException;
 import java.util.UUID;
 import java.util.List;
@@ -41,6 +46,92 @@ class MonitoringControllerTest {
 
         mockMvc.perform(post("/api/v1/services").contentType(MediaType.APPLICATION_JSON).content(validJson()))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.id").value(id.toString()));
+    }
+
+    @Test
+    void should_rejectCreateRequest_when_notificationAuthorityIsOmitted() throws Exception {
+        mockMvc.perform(post("/api/v1/services")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validJson().replace(",\"notificationEnabled\":true", "")))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void should_createServiceWithFalseAuthority_when_requestExplicitlyDisablesNotification() throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000100");
+        when(service.create(any())).thenReturn(new MonitoredServiceResponse(id, "HomeOps",
+                "https://homeops.example.invalid/health", "GET", 200, 3000, 30, 3, 2,
+                "WARNING", true, false));
+
+        mockMvc.perform(post("/api/v1/services")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validJson().replace(
+                                "\"notificationEnabled\":true",
+                                "\"notificationEnabled\":false")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.notificationEnabled").value(false));
+
+        verify(service).create(argThat(request -> !request.notificationEnabled()));
+    }
+
+    @Test
+    void should_updateNotificationAuthority_when_requestIsBooleanOnly() throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000100");
+        when(service.updateNotificationAuthority(id, true))
+                .thenReturn(new MonitoredServiceNotificationResponse(id, true));
+
+        mockMvc.perform(patch("/api/v1/services/{serviceId}/notification", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id.toString()))
+                .andExpect(jsonPath("$.notificationEnabled").value(true))
+                .andExpect(jsonPath("$.url").doesNotExist());
+    }
+
+    @Test
+    void should_returnNotFound_when_notificationServiceDoesNotExist() throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000404");
+        when(service.updateNotificationAuthority(id, true))
+                .thenThrow(new MonitoredServiceNotFoundException());
+
+        mockMvc.perform(patch("/api/v1/services/{serviceId}/notification", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.type")
+                        .value("urn:homeops:problem:monitored-service-not-found"))
+                .andExpect(jsonPath("$.title").value("Monitored service not found"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "{}",
+            "{\"enabled\":null}",
+            "{\"enabled\":true,\"name\":\"ignored\"}"
+    })
+    void should_rejectNotificationAuthority_when_requestIsNotBooleanOnly(String body)
+            throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000100");
+
+        mockMvc.perform(patch("/api/v1/services/{serviceId}/notification", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void should_rejectNotificationAuthority_when_serviceIdIsInvalid() throws Exception {
+        mockMvc.perform(patch("/api/v1/services/not-a-uuid/notification")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(service);
     }
 
     @Test

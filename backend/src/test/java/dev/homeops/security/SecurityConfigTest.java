@@ -1,12 +1,16 @@
 package dev.homeops.security;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import dev.homeops.monitoring.api.MonitoredServiceResponse;
+import dev.homeops.monitoring.api.MonitoredServiceNotificationResponse;
 import dev.homeops.monitoring.api.MonitoringController;
 import dev.homeops.monitoring.api.MonitoringService;
 import java.util.UUID;
@@ -15,6 +19,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
 import org.springframework.security.test.context.support.WithAnonymousUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -51,6 +56,65 @@ class SecurityConfigTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(validJson()))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void should_allowNotificationAuthorityUpdate_when_adminSuppliesCsrfToken() throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000100");
+        when(service.updateNotificationAuthority(eq(id), eq(true)))
+                .thenReturn(new MonitoredServiceNotificationResponse(id, true));
+
+        mockMvc.perform(patch("/api/v1/services/{serviceId}/notification", id)
+                        .header(TailscaleIdentityFilter.IDENTITY_HEADER, "admin@example.test")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .header().string("Pragma", "no-cache"));
+    }
+
+    @Test
+    void should_rejectNotificationAuthorityUpdate_when_csrfTokenIsMissing() throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000100");
+
+        mockMvc.perform(patch("/api/v1/services/{serviceId}/notification", id)
+                        .header(TailscaleIdentityFilter.IDENTITY_HEADER, "admin@example.test")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(status().isForbidden());
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    @WithAnonymousUser
+    void should_rejectNotificationAuthorityUpdate_when_requestIsAnonymous() throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000100");
+
+        mockMvc.perform(patch("/api/v1/services/{serviceId}/notification", id)
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void should_rejectNotificationAuthorityUpdate_when_identityIsNotAllowlisted() throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000100");
+
+        mockMvc.perform(patch("/api/v1/services/{serviceId}/notification", id)
+                        .header(TailscaleIdentityFilter.IDENTITY_HEADER, "reader@example.test")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(service);
     }
 
     private static String validJson() {

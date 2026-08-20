@@ -185,16 +185,17 @@ func (client *Client) getJSON(
 
 func mapListed(item listedContainer) snapshot.Container {
 	return snapshot.Container{
-		ID:             item.ID,
-		Name:           truncate(primaryName(item.Names), 128),
-		ComposeProject: truncate(item.Labels["com.docker.compose.project"], 128),
-		Image:          truncate(item.Image, 512),
-		State:          normalizeState(item.State),
-		Health:         "UNKNOWN",
-		Status:         truncate(item.Status, 512),
-		Ports:          mapPorts(item.Ports),
-		Managed:        strings.EqualFold(item.Labels["homeops.managed"], "true"),
-		LogsAllowed:    item.Labels["homeops.logs"] == "true",
+		ID:                   item.ID,
+		Name:                 truncate(primaryName(item.Names), 128),
+		ComposeProject:       truncate(item.Labels["com.docker.compose.project"], 128),
+		Image:                truncate(item.Image, 512),
+		State:                normalizeState(item.State),
+		Health:               "UNKNOWN",
+		Status:               truncate(item.Status, 512),
+		Ports:                mapPorts(item.Ports),
+		Managed:              strings.EqualFold(item.Labels["homeops.managed"], "true"),
+		LogsAllowed:          item.Labels["homeops.logs"] == "true",
+		NotificationsAllowed: item.Labels["homeops.notifications"] == "true",
 	}
 }
 

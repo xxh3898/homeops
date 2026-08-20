@@ -1,5 +1,6 @@
 package dev.homeops.notification;
 
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
@@ -13,5 +14,12 @@ public class NotificationOutbox {
 
     public UUID enqueue(NotificationIntent intent) {
         return transactions.enqueue(intent);
+    }
+
+    Optional<NotificationEventReference> findEvent(
+            NotificationSourceType sourceType,
+            UUID sourceId,
+            String eventType) {
+        return transactions.findEvent(sourceType, sourceId, eventType);
     }
 }
