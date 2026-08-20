@@ -65,6 +65,11 @@ class ContainerActionAuditTransactions {
         }));
     }
 
+    Optional<ContainerActionAuditRecord> findByIdempotencyKey(String idempotencyKey) {
+        return required(transactions.execute(
+                transaction -> store.findByIdempotencyKey(idempotencyKey)));
+    }
+
     Optional<ContainerActionAuditRecord> find(UUID operationId) {
         return required(transactions.execute(transaction -> store.findById(operationId)));
     }

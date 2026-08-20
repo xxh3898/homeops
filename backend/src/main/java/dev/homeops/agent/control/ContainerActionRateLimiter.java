@@ -3,7 +3,6 @@ package dev.homeops.agent.control;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayDeque;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -17,7 +16,7 @@ class ContainerActionRateLimiter {
     static final Duration WINDOW = Duration.ofSeconds(60);
 
     private final Clock clock;
-    private final Map<String, ArrayDeque<Instant>> requests = new LinkedHashMap<>();
+    private final Map<String, LinkedHashMap<String, Instant>> requests = new LinkedHashMap<>();
 
     @Autowired
     ContainerActionRateLimiter() {
@@ -28,22 +27,25 @@ class ContainerActionRateLimiter {
         this.clock = clock;
     }
 
-    synchronized boolean tryAcquire(String principal) {
+    synchronized boolean tryAcquire(String principal, String idempotencyKey) {
         Instant now = clock.instant();
         Instant cutoff = now.minus(WINDOW);
         cleanup(cutoff);
-        ArrayDeque<Instant> principalRequests = requests.get(principal);
+        LinkedHashMap<String, Instant> principalRequests = requests.get(principal);
+        if (principalRequests != null && principalRequests.containsKey(idempotencyKey)) {
+            return true;
+        }
         if (principalRequests == null) {
             if (requests.size() >= MAXIMUM_PRINCIPALS) {
                 return false;
             }
-            principalRequests = new ArrayDeque<>();
+            principalRequests = new LinkedHashMap<>();
             requests.put(principal, principalRequests);
         }
         if (principalRequests.size() >= MAXIMUM_REQUESTS) {
             return false;
         }
-        principalRequests.addLast(now);
+        principalRequests.put(idempotencyKey, now);
         return true;
     }
 
@@ -53,13 +55,11 @@ class ContainerActionRateLimiter {
     }
 
     private void cleanup(Instant cutoff) {
-        Iterator<ArrayDeque<Instant>> entries = requests.values().iterator();
+        Iterator<LinkedHashMap<String, Instant>> entries = requests.values().iterator();
         while (entries.hasNext()) {
-            ArrayDeque<Instant> timestamps = entries.next();
-            while (!timestamps.isEmpty() && !timestamps.getFirst().isAfter(cutoff)) {
-                timestamps.removeFirst();
-            }
-            if (timestamps.isEmpty()) {
+            LinkedHashMap<String, Instant> keys = entries.next();
+            keys.entrySet().removeIf(entry -> !entry.getValue().isAfter(cutoff));
+            if (keys.isEmpty()) {
                 entries.remove();
             }
         }

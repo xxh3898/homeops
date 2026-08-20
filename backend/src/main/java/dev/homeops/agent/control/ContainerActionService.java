@@ -5,18 +5,19 @@ import dev.homeops.system.ContainerIdentifier;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 @Service
 public class ContainerActionService {
     static final int MAXIMUM_PRINCIPAL_LENGTH = 256;
-    static final String RATE_LIMITED = "RATE_LIMITED";
     static final String CONTROL_BUSY = "CONTROL_BUSY";
     static final String CONTROL_RESULT_UNAVAILABLE = "CONTROL_RESULT_UNAVAILABLE";
 
@@ -62,22 +63,31 @@ public class ContainerActionService {
             throw ContainerActionException.confirmationMismatch();
         }
 
-        ContainerActionReservation reservation = audit.reserve(
-                idempotencyKey.value(),
-                principal,
-                containerId,
-                operation);
+        ContainerActionAuditRecord existing = findExisting(idempotencyKey.value()).orElse(null);
+        if (existing != null) {
+            return replay(existing, principal, containerId, operation);
+        }
+
+        if (!rateLimiter.tryAcquire(principal, idempotencyKey.value())) {
+            throw ContainerActionException.rateLimited();
+        }
+
+        ContainerActionReservation reservation;
+        try {
+            reservation = audit.reserve(
+                    idempotencyKey.value(),
+                    principal,
+                    containerId,
+                    operation);
+        } catch (DataAccessException exception) {
+            throw ContainerActionException.unavailable();
+        }
         ContainerActionAuditRecord record = reservation.record();
         if (!record.matches(principal, containerId, operation)) {
             throw ContainerActionException.conflict();
         }
         if (!reservation.created()) {
             return new Submission(record, false);
-        }
-
-        if (!rateLimiter.tryAcquire(principal)) {
-            terminalize(record.operationId(), ContainerActionStatus.DENIED, RATE_LIMITED);
-            throw ContainerActionException.rateLimited();
         }
 
         ContainerControlRequestTicket ticket;
@@ -99,6 +109,25 @@ public class ContainerActionService {
                 (result, failure) -> projectResult(record.operationId(), result, failure),
                 auditExecutor);
         return new Submission(record, true);
+    }
+
+    private Optional<ContainerActionAuditRecord> findExisting(String idempotencyKey) {
+        try {
+            return audit.findByIdempotencyKey(idempotencyKey);
+        } catch (DataAccessException exception) {
+            throw ContainerActionException.unavailable();
+        }
+    }
+
+    private static Submission replay(
+            ContainerActionAuditRecord record,
+            String principal,
+            String containerId,
+            ContainerControlOperation operation) {
+        if (!record.matches(principal, containerId, operation)) {
+            throw ContainerActionException.conflict();
+        }
+        return new Submission(record, false);
     }
 
     public ContainerActionAuditRecord find(UUID operationId) {

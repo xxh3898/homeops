@@ -151,11 +151,12 @@ class ContainerActionControllerTest {
     }
 
     @Test
-    void should_mapBusyRateAndAuthorityFailuresToStablePublicStatuses() throws Exception {
+    void should_mapBusyRateAuthorityAndUnavailableFailuresToStablePublicStatuses() throws Exception {
         when(service.submit(eq(CONTAINER_ID), any(), any(), any(), eq(PRINCIPAL)))
                 .thenThrow(ContainerActionException.busy())
                 .thenThrow(ContainerActionException.rateLimited())
-                .thenThrow(ContainerActionException.denied());
+                .thenThrow(ContainerActionException.denied())
+                .thenThrow(ContainerActionException.unavailable());
 
         mockMvc.perform(validPost(validBody()))
                 .andExpect(status().isConflict())
@@ -167,6 +168,11 @@ class ContainerActionControllerTest {
         mockMvc.perform(validPost(validBody()))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.type").value("urn:homeops:problem:container-action-denied"));
+        mockMvc.perform(validPost(validBody()))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.type")
+                        .value("urn:homeops:problem:container-action-unavailable"))
+                .andExpect(content().string(not(containsString(PRINCIPAL))));
     }
 
     @Test

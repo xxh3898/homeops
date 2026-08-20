@@ -25,6 +25,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 @ExtendWith(MockitoExtension.class)
 class ContainerActionServiceTest {
@@ -52,30 +53,21 @@ class ContainerActionServiceTest {
     @Test
     void should_returnExistingOperationWithoutRateOrDispatch_when_requestIsExactReplay() {
         ContainerActionAuditRecord existing = terminal(ContainerActionStatus.APPLIED, "APPLIED");
-        when(audit.reserve(
-                IDEMPOTENCY_KEY,
-                PRINCIPAL,
-                CONTAINER_ID,
-                ContainerControlOperation.START))
-                .thenReturn(new ContainerActionReservation(existing, false));
+        when(audit.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.of(existing));
 
         ContainerActionService.Submission result = submit();
 
         assertThat(result.created()).isFalse();
         assertThat(result.record()).isEqualTo(existing);
+        verify(audit, never()).reserve(
+                anyString(), anyString(), anyString(), anyOperation());
         verifyNoInteractions(rateLimiter, broker);
     }
 
     @Test
     void should_projectExactBrokerResult_when_newRequestCompletes() {
         CompletableFuture<ContainerControlResult> result = new CompletableFuture<>();
-        when(audit.reserve(
-                IDEMPOTENCY_KEY,
-                PRINCIPAL,
-                CONTAINER_ID,
-                ContainerControlOperation.START))
-                .thenReturn(new ContainerActionReservation(requested(), true));
-        when(rateLimiter.tryAcquire(PRINCIPAL)).thenReturn(true);
+        stubNewReservation(requested());
         when(broker.enqueue(CONTAINER_ID, ContainerControlOperation.START))
                 .thenReturn(new ContainerControlRequestTicket(
                         UUID.randomUUID(), NOW.plusSeconds(15), result));
@@ -100,13 +92,7 @@ class ContainerActionServiceTest {
             ContainerControlResultStatus resultStatus,
             ContainerControlReasonCode reasonCode) {
         CompletableFuture<ContainerControlResult> result = new CompletableFuture<>();
-        when(audit.reserve(
-                IDEMPOTENCY_KEY,
-                PRINCIPAL,
-                CONTAINER_ID,
-                ContainerControlOperation.START))
-                .thenReturn(new ContainerActionReservation(requested(), true));
-        when(rateLimiter.tryAcquire(PRINCIPAL)).thenReturn(true);
+        stubNewReservation(requested());
         when(broker.enqueue(CONTAINER_ID, ContainerControlOperation.START))
                 .thenReturn(new ContainerControlRequestTicket(
                         UUID.randomUUID(), NOW.plusSeconds(15), result));
@@ -134,13 +120,7 @@ class ContainerActionServiceTest {
                 broker,
                 tasks::add,
                 Clock.fixed(NOW, ZoneOffset.UTC));
-        when(audit.reserve(
-                IDEMPOTENCY_KEY,
-                PRINCIPAL,
-                CONTAINER_ID,
-                ContainerControlOperation.START))
-                .thenReturn(new ContainerActionReservation(requested(), true));
-        when(rateLimiter.tryAcquire(PRINCIPAL)).thenReturn(true);
+        stubNewReservation(requested());
         when(broker.enqueue(CONTAINER_ID, ContainerControlOperation.START))
                 .thenReturn(new ContainerControlRequestTicket(
                         UUID.randomUUID(), NOW.plusSeconds(15), result));
@@ -162,36 +142,23 @@ class ContainerActionServiceTest {
     }
 
     @Test
-    void should_terminalizeAndRejectWithoutDispatch_when_rateLimitIsExceeded() {
-        when(audit.reserve(
-                IDEMPOTENCY_KEY,
-                PRINCIPAL,
-                CONTAINER_ID,
-                ContainerControlOperation.START))
-                .thenReturn(new ContainerActionReservation(requested(), true));
-        when(rateLimiter.tryAcquire(PRINCIPAL)).thenReturn(false);
+    void should_rejectWithoutDurableReservationOrDispatch_when_rateLimitIsExceeded() {
+        when(audit.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+        when(rateLimiter.tryAcquire(PRINCIPAL, IDEMPOTENCY_KEY)).thenReturn(false);
 
         assertThatThrownBy(this::submit)
                 .isInstanceOf(ContainerActionException.class)
                 .extracting("status")
                 .isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS);
-        verify(audit).complete(
-                OPERATION_ID,
-                ContainerActionStatus.DENIED,
-                ContainerActionService.RATE_LIMITED,
-                NOW);
+        verify(audit, never()).reserve(
+                anyString(), anyString(), anyString(), anyOperation());
+        verify(audit, never()).complete(anyUuid(), anyStatus(), anyString(), anyInstant());
         verifyNoInteractions(broker);
     }
 
     @Test
     void should_terminalizeAuthorityReasonWithoutRawError_when_brokerDenies() {
-        when(audit.reserve(
-                IDEMPOTENCY_KEY,
-                PRINCIPAL,
-                CONTAINER_ID,
-                ContainerControlOperation.START))
-                .thenReturn(new ContainerActionReservation(requested(), true));
-        when(rateLimiter.tryAcquire(PRINCIPAL)).thenReturn(true);
+        stubNewReservation(requested());
         when(broker.enqueue(CONTAINER_ID, ContainerControlOperation.START))
                 .thenThrow(new ContainerControlDeniedException(DecisionCode.STALE_SNAPSHOT));
 
@@ -209,13 +176,7 @@ class ContainerActionServiceTest {
     @Test
     void should_terminalizeClaimTimeAuthorityDenial_when_brokerFutureFails() {
         CompletableFuture<ContainerControlResult> result = new CompletableFuture<>();
-        when(audit.reserve(
-                IDEMPOTENCY_KEY,
-                PRINCIPAL,
-                CONTAINER_ID,
-                ContainerControlOperation.START))
-                .thenReturn(new ContainerActionReservation(requested(), true));
-        when(rateLimiter.tryAcquire(PRINCIPAL)).thenReturn(true);
+        stubNewReservation(requested());
         when(broker.enqueue(CONTAINER_ID, ContainerControlOperation.START))
                 .thenReturn(new ContainerControlRequestTicket(
                         UUID.randomUUID(), NOW.plusSeconds(15), result));
@@ -233,13 +194,7 @@ class ContainerActionServiceTest {
 
     @Test
     void should_terminalizeBusyWithoutRetry_when_brokerHasActiveWork() {
-        when(audit.reserve(
-                IDEMPOTENCY_KEY,
-                PRINCIPAL,
-                CONTAINER_ID,
-                ContainerControlOperation.START))
-                .thenReturn(new ContainerActionReservation(requested(), true));
-        when(rateLimiter.tryAcquire(PRINCIPAL)).thenReturn(true);
+        stubNewReservation(requested());
         when(broker.enqueue(CONTAINER_ID, ContainerControlOperation.START))
                 .thenThrow(new ContainerControlBrokerCapacityException());
 
@@ -254,29 +209,76 @@ class ContainerActionServiceTest {
                 NOW);
     }
 
+    @ParameterizedTest
+    @MethodSource("conflictingPayloads")
+    void should_rejectExistingIdempotencyConflictWithoutRateReservationOrDispatch(
+            String principal,
+            String containerId,
+            ContainerControlOperation operation) {
+        when(audit.findByIdempotencyKey(IDEMPOTENCY_KEY))
+                .thenReturn(Optional.of(requested()));
+
+        assertThatThrownBy(() -> service.submit(
+                containerId,
+                operation,
+                operation.name() + ":" + containerId,
+                ContainerActionIdempotencyKey.parse(IDEMPOTENCY_KEY),
+                principal))
+                .isInstanceOf(ContainerActionException.class)
+                .extracting("status")
+                .isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+        verify(audit, never()).reserve(
+                anyString(), anyString(), anyString(), anyOperation());
+        verifyNoInteractions(rateLimiter, broker);
+    }
+
     @Test
-    void should_rejectIdempotencyConflictWithoutRateOrDispatch() {
-        ContainerActionAuditRecord existing = new ContainerActionAuditRecord(
-                OPERATION_ID,
-                IDEMPOTENCY_KEY,
-                "different@example.test",
-                CONTAINER_ID,
-                ContainerControlOperation.START,
-                ContainerActionStatus.REQUESTED,
-                null,
-                NOW,
-                null);
+    void should_keepKeyReservationAndNeverDispatchFirstAttempt_when_auditReservationFails() {
+        ContainerActionRateLimiter keyAwareLimiter = new ContainerActionRateLimiter(
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        service = new ContainerActionService(
+                audit,
+                keyAwareLimiter,
+                broker,
+                Runnable::run,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        when(audit.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
         when(audit.reserve(
                 IDEMPOTENCY_KEY,
                 PRINCIPAL,
                 CONTAINER_ID,
                 ContainerControlOperation.START))
-                .thenReturn(new ContainerActionReservation(existing, false));
+                .thenThrow(new DataAccessResourceFailureException("private-db-detail"))
+                .thenReturn(new ContainerActionReservation(requested(), true));
+        when(broker.enqueue(CONTAINER_ID, ContainerControlOperation.START))
+                .thenReturn(new ContainerControlRequestTicket(
+                        UUID.randomUUID(), NOW.plusSeconds(15), new CompletableFuture<>()));
 
         assertThatThrownBy(this::submit)
                 .isInstanceOf(ContainerActionException.class)
+                .hasMessageNotContaining("private-db-detail")
                 .extracting("status")
-                .isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                .isEqualTo(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);
+        verifyNoInteractions(broker);
+
+        assertThat(submit().created()).isTrue();
+        for (int key = 1; key < ContainerActionRateLimiter.MAXIMUM_REQUESTS; key++) {
+            assertThat(keyAwareLimiter.tryAcquire(PRINCIPAL, "other-key-" + key)).isTrue();
+        }
+        assertThat(keyAwareLimiter.tryAcquire(PRINCIPAL, "overflow-key")).isFalse();
+        verify(broker).enqueue(CONTAINER_ID, ContainerControlOperation.START);
+    }
+
+    @Test
+    void should_failClosedWithoutRateOrDispatch_when_auditLookupFails() {
+        when(audit.findByIdempotencyKey(IDEMPOTENCY_KEY))
+                .thenThrow(new DataAccessResourceFailureException("private-db-detail"));
+
+        assertThatThrownBy(this::submit)
+                .isInstanceOf(ContainerActionException.class)
+                .hasMessageNotContaining("private-db-detail")
+                .extracting("status")
+                .isEqualTo(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);
         verifyNoInteractions(rateLimiter, broker);
     }
 
@@ -366,12 +368,43 @@ class ContainerActionServiceTest {
                 Arguments.of(ContainerControlResultStatus.EXPIRED, ContainerControlReasonCode.WORK_EXPIRED));
     }
 
+    private static Stream<Arguments> conflictingPayloads() {
+        return Stream.of(
+                Arguments.of(
+                        "different@example.test",
+                        CONTAINER_ID,
+                        ContainerControlOperation.START),
+                Arguments.of(
+                        PRINCIPAL,
+                        "abcdef012345",
+                        ContainerControlOperation.START),
+                Arguments.of(
+                        PRINCIPAL,
+                        CONTAINER_ID,
+                        ContainerControlOperation.STOP));
+    }
+
+    private void stubNewReservation(ContainerActionAuditRecord record) {
+        when(audit.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.empty());
+        when(rateLimiter.tryAcquire(PRINCIPAL, IDEMPOTENCY_KEY)).thenReturn(true);
+        when(audit.reserve(
+                IDEMPOTENCY_KEY,
+                PRINCIPAL,
+                CONTAINER_ID,
+                ContainerControlOperation.START))
+                .thenReturn(new ContainerActionReservation(record, true));
+    }
+
     private static UUID anyUuid() {
         return org.mockito.ArgumentMatchers.any(UUID.class);
     }
 
     private static ContainerActionStatus anyStatus() {
         return org.mockito.ArgumentMatchers.any(ContainerActionStatus.class);
+    }
+
+    private static ContainerControlOperation anyOperation() {
+        return org.mockito.ArgumentMatchers.any(ContainerControlOperation.class);
     }
 
     private static String anyString() {

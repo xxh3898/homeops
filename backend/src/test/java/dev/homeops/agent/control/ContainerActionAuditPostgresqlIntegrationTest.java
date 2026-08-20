@@ -1,15 +1,18 @@
 package dev.homeops.agent.control;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -19,6 +22,7 @@ import java.util.concurrent.Future;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -64,7 +68,7 @@ class ContainerActionAuditPostgresqlIntegrationTest {
         ContainerActionRateLimiter rateLimiter = mock(ContainerActionRateLimiter.class);
         ContainerControlBroker broker = mock(ContainerControlBroker.class);
         CompletableFuture<ContainerControlResult> result = new CompletableFuture<>();
-        when(rateLimiter.tryAcquire(PRINCIPAL)).thenReturn(true);
+        when(rateLimiter.tryAcquire(PRINCIPAL, IDEMPOTENCY_KEY)).thenReturn(true);
         when(broker.enqueue(CONTAINER_ID, ContainerControlOperation.RESTART))
                 .thenAnswer(invocation -> {
                     assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
@@ -103,27 +107,27 @@ class ContainerActionAuditPostgresqlIntegrationTest {
                 CONTAINER_ID)).isOne();
     }
 
-    @Test
+    @RepeatedTest(5)
     void should_createOneRowAndDispatchOneWinner_when_sameKeyRequestsRace() throws Exception {
-        ContainerActionRateLimiter rateLimiter = mock(ContainerActionRateLimiter.class);
+        ContainerActionRateLimiter rateLimiter = new ContainerActionRateLimiter(
+                Clock.fixed(NOW, ZoneOffset.UTC));
         ContainerControlBroker broker = mock(ContainerControlBroker.class);
-        when(rateLimiter.tryAcquire(PRINCIPAL)).thenReturn(true);
         when(broker.enqueue(CONTAINER_ID, ContainerControlOperation.START))
                 .thenReturn(new ContainerControlRequestTicket(
                         UUID.randomUUID(),
                         NOW.plusSeconds(15),
                         new CompletableFuture<>()));
-        ContainerActionService service = service(audit, rateLimiter, broker);
-        CountDownLatch ready = new CountDownLatch(2);
-        CountDownLatch start = new CountDownLatch(1);
+        BarrierAuditTransactions barrierAudit = barrierTransactionsAt(NOW);
+        ContainerActionService service = service(barrierAudit, rateLimiter, broker);
 
         List<ContainerActionService.Submission> submissions;
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
             List<Future<ContainerActionService.Submission>> futures = List.of(
-                    executor.submit(() -> submitWhenReleased(service, ready, start)),
-                    executor.submit(() -> submitWhenReleased(service, ready, start)));
-            assertThat(ready.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-            start.countDown();
+                    executor.submit(() -> submit(service, IDEMPOTENCY_KEY)),
+                    executor.submit(() -> submit(service, IDEMPOTENCY_KEY)));
+            boolean concurrentLookupReached = barrierAudit.awaitConcurrentLookup();
+            barrierAudit.releaseReservations();
+            assertThat(concurrentLookupReached).isTrue();
             submissions = futures.stream().map(this::futureSubmission).toList();
         }
 
@@ -135,8 +139,119 @@ class ContainerActionAuditPostgresqlIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "SELECT count(*) FROM container_action_audit",
                 Integer.class)).isOne();
-        verify(rateLimiter, times(1)).tryAcquire(PRINCIPAL);
         verify(broker, times(1)).enqueue(CONTAINER_ID, ContainerControlOperation.START);
+        for (int key = 2; key <= ContainerActionRateLimiter.MAXIMUM_REQUESTS; key++) {
+            assertThat(submit(service, idempotencyKey(key)).created()).isTrue();
+        }
+        assertThatThrownBy(() -> submit(service, idempotencyKey(6)))
+                .isInstanceOf(ContainerActionException.class)
+                .extracting("status")
+                .isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM container_action_audit",
+                Integer.class)).isEqualTo(ContainerActionRateLimiter.MAXIMUM_REQUESTS);
+        verify(broker, times(ContainerActionRateLimiter.MAXIMUM_REQUESTS))
+                .enqueue(CONTAINER_ID, ContainerControlOperation.START);
+    }
+
+    @Test
+    void should_notPersistSixthOrLaterDistinctKey_when_rateLimitIsExceeded() {
+        ContainerActionRateLimiter rateLimiter = new ContainerActionRateLimiter(
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        ContainerControlBroker broker = mock(ContainerControlBroker.class);
+        when(broker.enqueue(CONTAINER_ID, ContainerControlOperation.START))
+                .thenAnswer(invocation -> new ContainerControlRequestTicket(
+                        UUID.randomUUID(),
+                        NOW.plusSeconds(15),
+                        new CompletableFuture<>()));
+        ContainerActionService service = service(audit, rateLimiter, broker);
+
+        for (int key = 1; key <= ContainerActionRateLimiter.MAXIMUM_REQUESTS; key++) {
+            assertThat(submit(service, idempotencyKey(key)).created()).isTrue();
+        }
+        for (int key = 6; key <= 15; key++) {
+            String rejectedKey = idempotencyKey(key);
+            assertThatThrownBy(() -> submit(service, rejectedKey))
+                    .isInstanceOf(ContainerActionException.class)
+                    .extracting("status")
+                    .isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS);
+        }
+
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM container_action_audit",
+                Integer.class)).isEqualTo(ContainerActionRateLimiter.MAXIMUM_REQUESTS);
+        verify(broker, times(ContainerActionRateLimiter.MAXIMUM_REQUESTS))
+                .enqueue(CONTAINER_ID, ContainerControlOperation.START);
+    }
+
+    @Test
+    void should_allowTerminalReplayAfterFiveDistinctKeys_withoutRateOrAuditGrowth() {
+        ContainerActionRateLimiter rateLimiter = new ContainerActionRateLimiter(
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        ContainerControlBroker broker = mock(ContainerControlBroker.class);
+        when(broker.enqueue(CONTAINER_ID, ContainerControlOperation.START))
+                .thenAnswer(invocation -> new ContainerControlRequestTicket(
+                        UUID.randomUUID(),
+                        NOW.plusSeconds(15),
+                        new CompletableFuture<>()));
+        ContainerActionService service = service(audit, rateLimiter, broker);
+
+        List<ContainerActionService.Submission> created = java.util.stream.IntStream.rangeClosed(
+                        1, ContainerActionRateLimiter.MAXIMUM_REQUESTS)
+                .mapToObj(key -> submit(service, idempotencyKey(key)))
+                .toList();
+        ContainerActionAuditRecord first = created.getFirst().record();
+        assertThat(audit.complete(
+                first.operationId(),
+                ContainerActionStatus.APPLIED,
+                "APPLIED",
+                NOW.plusSeconds(1))).isTrue();
+
+        ContainerActionService.Submission replay = submit(service, idempotencyKey(1));
+
+        assertThat(replay.created()).isFalse();
+        assertThat(replay.record().operationId()).isEqualTo(first.operationId());
+        assertThat(replay.record().status()).isEqualTo(ContainerActionStatus.APPLIED);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM container_action_audit",
+                Integer.class)).isEqualTo(ContainerActionRateLimiter.MAXIMUM_REQUESTS);
+        assertThatThrownBy(() -> submit(service, idempotencyKey(6)))
+                .isInstanceOf(ContainerActionException.class)
+                .extracting("status")
+                .isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS);
+        verify(broker, times(ContainerActionRateLimiter.MAXIMUM_REQUESTS))
+                .enqueue(CONTAINER_ID, ContainerControlOperation.START);
+    }
+
+    @Test
+    void should_rejectExistingPayloadConflict_withoutRateAuditOrDispatchGrowth() {
+        ContainerActionReservation existing = audit.reserve(
+                IDEMPOTENCY_KEY,
+                PRINCIPAL,
+                CONTAINER_ID,
+                ContainerControlOperation.START);
+        ContainerActionRateLimiter rateLimiter = new ContainerActionRateLimiter(
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        ContainerControlBroker broker = mock(ContainerControlBroker.class);
+        ContainerActionService service = service(audit, rateLimiter, broker);
+
+        assertThatThrownBy(() -> service.submit(
+                CONTAINER_ID,
+                ContainerControlOperation.STOP,
+                "STOP:" + CONTAINER_ID,
+                ContainerActionIdempotencyKey.parse(IDEMPOTENCY_KEY),
+                PRINCIPAL))
+                .isInstanceOf(ContainerActionException.class)
+                .extracting("status")
+                .isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+
+        assertThat(rateLimiter.principalCount()).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM container_action_audit",
+                Integer.class)).isOne();
+        assertThat(audit.find(existing.record().operationId()).orElseThrow())
+                .isEqualTo(existing.record());
+        verifyNoInteractions(broker);
     }
 
     @Test
@@ -209,18 +324,19 @@ class ContainerActionAuditPostgresqlIntegrationTest {
                 NOW.plus(ContainerActionAuditTransactions.STALE_REQUEST_AFTER));
     }
 
-    private ContainerActionService.Submission submitWhenReleased(
+    private ContainerActionService.Submission submit(
             ContainerActionService service,
-            CountDownLatch ready,
-            CountDownLatch start) throws Exception {
-        ready.countDown();
-        assertThat(start.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            String idempotencyKey) {
         return service.submit(
                 CONTAINER_ID,
                 ContainerControlOperation.START,
                 "START:" + CONTAINER_ID,
-                ContainerActionIdempotencyKey.parse(IDEMPOTENCY_KEY),
+                ContainerActionIdempotencyKey.parse(idempotencyKey),
                 PRINCIPAL);
+    }
+
+    private static String idempotencyKey(int suffix) {
+        return "20000000-0000-4000-8000-" + String.format("%012d", suffix);
     }
 
     private ContainerActionService.Submission futureSubmission(
@@ -248,6 +364,13 @@ class ContainerActionAuditPostgresqlIntegrationTest {
                 UUID::randomUUID);
     }
 
+    private BarrierAuditTransactions barrierTransactionsAt(Instant instant) {
+        return new BarrierAuditTransactions(
+                store,
+                transactionManager,
+                Clock.fixed(instant, ZoneOffset.UTC));
+    }
+
     private static ContainerActionService service(
             ContainerActionAuditTransactions audit,
             ContainerActionRateLimiter rateLimiter,
@@ -258,5 +381,42 @@ class ContainerActionAuditPostgresqlIntegrationTest {
                 broker,
                 Runnable::run,
                 Clock.fixed(NOW, ZoneOffset.UTC));
+    }
+
+    private static final class BarrierAuditTransactions extends ContainerActionAuditTransactions {
+        private final CountDownLatch concurrentLookup = new CountDownLatch(2);
+        private final CountDownLatch reservationRelease = new CountDownLatch(1);
+
+        private BarrierAuditTransactions(
+                ContainerActionAuditStore store,
+                DataSourceTransactionManager transactionManager,
+                Clock clock) {
+            super(store, transactionManager, clock, UUID::randomUUID);
+        }
+
+        @Override
+        Optional<ContainerActionAuditRecord> findByIdempotencyKey(String idempotencyKey) {
+            Optional<ContainerActionAuditRecord> existing = super.findByIdempotencyKey(idempotencyKey);
+            if (existing.isEmpty() && IDEMPOTENCY_KEY.equals(idempotencyKey)) {
+                concurrentLookup.countDown();
+                try {
+                    if (!reservationRelease.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                        throw new AssertionError("Concurrent audit lookup release timed out");
+                    }
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError("Concurrent audit lookup was interrupted", exception);
+                }
+            }
+            return existing;
+        }
+
+        private boolean awaitConcurrentLookup() throws InterruptedException {
+            return concurrentLookup.await(5, java.util.concurrent.TimeUnit.SECONDS);
+        }
+
+        private void releaseReservations() {
+            reservationRelease.countDown();
+        }
     }
 }
