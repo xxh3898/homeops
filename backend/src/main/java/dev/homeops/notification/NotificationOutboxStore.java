@@ -67,6 +67,24 @@ class NotificationOutboxStore {
                 """, UUID.class, canonicalHash);
     }
 
+    Optional<NotificationEventReference> findEvent(
+            NotificationSourceType sourceType,
+            UUID sourceId,
+            String eventType) {
+        return jdbc.query("""
+                SELECT id, status
+                FROM notification_event
+                WHERE channel = 'DISCORD'
+                  AND canonical_deduplication_hash IS NOT NULL
+                  AND source_type = ?
+                  AND source_id = ?
+                  AND event_type = ?
+                """, (row, index) -> new NotificationEventReference(
+                row.getObject("id", UUID.class),
+                NotificationStatus.valueOf(row.getString("status"))),
+                sourceType.name(), sourceId, eventType).stream().findFirst();
+    }
+
     Optional<NotificationClaim> claimNext(
             Instant now,
             Instant leaseExpiresAt,

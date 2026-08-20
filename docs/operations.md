@@ -111,7 +111,7 @@ Flyway가 이미 database를 바꿨을 수 있으므로 image rollback은 backwa
 
 `monitored_service.notification_enabled`는 HomeOps Discord incident의 future eligibility만 나타냅니다. Uptime Kuma monitor/email 설정이나 Discord global kill switch를 변경하지 않습니다. 이 값을 바꾸는 것만으로 notification intent, historical/open incident replay 또는 outbound가 발생하지 않습니다. Existing service는 boolean-only ADMIN + CSRF operation으로만 이 authority를 변경하며 DB default와 legacy migration 결과는 fail-closed `false`입니다.
 
-Deployment와 backup producer는 실제 ingestion insert 또는 terminal transition winner만 typed outbox intent로 기록하며 replay나 경쟁 loser는 새 intent를 만들지 않습니다. Backup payload는 project, database type, status만 허용하고 logical location, failure, expiry와 restore metadata는 제외합니다. Global switch가 disabled이면 intent는 `SUPPRESSED`로 끝나고 enable 뒤 재생되지 않습니다. Docker, Agent와 incident는 별도 producer 계약으로 추가합니다. Critical 장기 failure의 optional email escalation은 같은 incident의 owner와 deduplication policy를 검증한 뒤에만 고려합니다.
+Deployment와 backup producer는 실제 ingestion insert 또는 terminal transition winner만 typed outbox intent로 기록하며 replay나 경쟁 loser는 새 intent를 만들지 않습니다. Backup payload는 project, database type, status만 허용하고 logical location, failure, expiry와 restore metadata는 제외합니다. Incident producer는 event 시점의 persisted service authority를 확인하고 actual OPEN winner, 기본 15분 이상 지속된 DOWN observation, actual recovery winner만 고려합니다. Escalation/recovery는 같은 incident의 SENT root에만 parent로 연결하고 suppressed/pending/failed/unknown/missing root에는 child를 만들지 않습니다. Global switch가 disabled이면 OPEN root는 `SUPPRESSED`로 끝나고 enable 뒤 재생되지 않습니다. Docker와 Agent는 별도 producer 계약으로 추가합니다. Optional email escalation은 같은 incident의 owner와 duplicate-prevention policy를 별도로 검증한 뒤에만 고려합니다.
 
 ## 데이터 손실 및 재구성
 
