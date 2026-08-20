@@ -42,6 +42,8 @@
 | `HOMEOPS_MONITORING_CLEANUP_CRON` | 아니요 | 아니요 | UTC 기준 점검 결과 cleanup cron |
 | `HOMEOPS_NOTIFICATIONS_ENABLED` | 아니요 | 아니요 | Discord notification kill switch. 기본값 `false`이며 disabled event는 replay 불가 `SUPPRESSED`로 종료 |
 | `HOMEOPS_AGENT_NOTIFICATION_FRESHNESS_CHECK_DELAY` | 아니요 | 아니요 | Persisted Agent freshness scan delay. 기본값 `5s`, 허용 범위 `1s..1m`. stale threshold는 별도 값이 아니라 `HOMEOPS_AGENT_STALE_AFTER`를 재사용 |
+| `HOMEOPS_CONTAINER_NOTIFICATION_FAILURE_AFTER` | 아니요 | 아니요 | Opt-in container sustained-failure threshold. 기본값 `30s`, 허용 범위 `5s..10m` |
+| `HOMEOPS_CONTAINER_NOTIFICATION_REALERT_COOLDOWN` | 아니요 | 아니요 | 같은 logical container의 새 failure episode root cooldown. 기본값 `5m`, 허용 범위 `30s..1h` |
 | `HOMEOPS_INCIDENT_NOTIFICATION_ESCALATION_AFTER` | 아니요 | 아니요 | Open incident의 장기 failure escalation threshold. 기본값 `15m`, 허용 범위 `5m..24h` |
 | `HOMEOPS_DISCORD_WEBHOOK_URL` | Phase 4 activation | 예 | Official Discord HTTPS webhook. notifications가 `false`면 비어 있어도 시작하며 `true`면 strict URL이 없을 때 fail closed |
 | `HOMEOPS_NOTIFICATION_CONNECT_TIMEOUT` | 아니요 | 아니요 | Discord connect timeout. 기본값 `3s`, 최대 `10s` |
@@ -118,7 +120,7 @@ production directory에는 `smoke.origin`도 있습니다. path, query, fragment
 
 `homeops.logs=true`는 Container Logs disclosure를 위한 container별 exact opt-in입니다. Agent root capability와 fresh snapshot이 함께 있어야 하며 stale snapshot은 authority가 아닙니다. Public API/UI source가 존재해도 label이 없는 container는 `422`로 fail closed하고 실행 가능한 UI control을 표시하지 않습니다. Controlled production opt-in/revoke acceptance는 완료했지만, 이후 service opt-in도 code deployment와 분리된 security-sensitive configuration gate로서 service별 privacy review와 명시적 승인을 요구합니다. Agent와 API는 raw log를 snapshot spool, file, DB 또는 Activity에 저장하지 않습니다.
 
-`homeops.notifications=true`는 future Docker notification을 위한 별도 exact opt-in입니다. Key와 value는 case-sensitive하며 `TRUE`, `True`, `1`, `yes` 또는 공백이 포함된 값은 opt-in이 아닙니다. Agent는 이 label을 `notificationsAllowed` boolean으로만 snapshot에 전달하고, `homeops.managed` 및 `homeops.logs` authority와 독립적으로 해석합니다. Old Agent 또는 rollback Agent가 field를 보내지 않으면 API는 false로 해석합니다. 현재는 capability propagation만 있고 Docker episode persistence, notification producer, Discord outbound는 없습니다.
+`homeops.notifications=true`는 Docker notification을 위한 별도 exact opt-in입니다. Key와 value는 case-sensitive하며 `TRUE`, `True`, `1`, `yes` 또는 공백이 포함된 값은 opt-in이 아닙니다. Agent는 이 label을 `notificationsAllowed` boolean으로만 snapshot에 전달하고, `homeops.managed` 및 `homeops.logs` authority와 독립적으로 해석합니다. Old Agent 또는 rollback Agent가 field를 보내지 않으면 API는 false로 해석합니다. Backend는 fresh current snapshot winner에서만 baseline과 sustained failure episode를 갱신하며 first observation, recreate, opt-in 재활성화 또는 missing container를 historical alert/recovery로 소급하지 않습니다. Global notification switch가 disabled인 동안 qualifying root는 replay 불가 `SUPPRESSED`이며 Discord outbound는 없습니다.
 
 ## GitHub repository 구성
 
@@ -154,5 +156,5 @@ GitHub Actions는 workflow의 scoped package access에 `GITHUB_TOKEN`을 자동 
 - production `.env`와 TLS material은 mode를 제한하고 source checkout 밖에 둡니다.
 - Compose label, GitHub variable, command argument, log, issue body, deployment state에 secret 값을 넣지 마세요.
 - private deployment metadata를 repository/environment Variable, step summary, public log, issue body에 기록하지 마세요.
-- Discord outbox foundation에는 deployment, backup과 incident lifecycle source producer가 연결되어 있습니다. Incident는 explicit service authority가 있는 future OPEN winner만 root를 만들고, escalation/recovery는 SENT root에만 연결됩니다. `HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 생성된 root intent가 replay 불가 `SUPPRESSED`로 끝나며 child, webhook requirement와 outbound가 없습니다. Phase 4 activation 승인 전에는 webhook을 설치하거나 switch를 켜지 마세요. Webhook URL/token은 Git, DB, `app_setting`, log, error response 또는 Activity에 기록하지 않습니다.
+- Discord outbox foundation에는 deployment, backup, incident, Agent lifecycle과 Docker episode producer가 연결되어 있습니다. Incident는 explicit service authority가 있는 future OPEN winner만 root를 만들고, incident·Agent·Docker recovery는 각 SENT root에만 연결됩니다. `HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 생성된 root intent가 replay 불가 `SUPPRESSED`로 끝나며 child, webhook requirement와 outbound가 없습니다. Phase 4 activation 승인 전에는 webhook을 설치하거나 switch를 켜지 마세요. Webhook URL/token은 Git, DB, `app_setting`, log, error response 또는 Activity에 기록하지 않습니다.
 - credential 값이 Git history나 workflow log에 나타나면 rotate하세요. 보이는 줄을 지우는 것만으로는 충분하지 않습니다.

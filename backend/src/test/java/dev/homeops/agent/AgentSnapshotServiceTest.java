@@ -23,6 +23,7 @@ import dev.homeops.agent.persistence.HostMetricAggregateRepository;
 import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
 import dev.homeops.common.AgentSnapshotRejectedException;
 import dev.homeops.notification.AgentLifecycleNotificationProducer;
+import dev.homeops.notification.ContainerNotificationProducer;
 import dev.homeops.system.AmbiguousContainerIdentifierException;
 import dev.homeops.system.ContainerInventoryUnavailableException;
 import dev.homeops.system.ContainerNotFoundException;
@@ -68,6 +69,9 @@ class AgentSnapshotServiceTest {
     @Mock
     private AgentLifecycleNotificationProducer notifications;
 
+    @Mock
+    private ContainerNotificationProducer containerNotifications;
+
     private AgentSnapshotService service;
 
     @BeforeEach
@@ -87,6 +91,7 @@ class AgentSnapshotServiceTest {
                 processedSnapshotStore,
                 agentActivityStore,
                 notifications,
+                containerNotifications,
                 Clock.fixed(NOW, ZoneOffset.UTC));
         lenient().when(processedSnapshotStore.recordIfAbsent(
                 anyString(), any(), any(), any()))
@@ -122,6 +127,7 @@ class AgentSnapshotServiceTest {
         verify(notifications, never()).recordStale(any(), anyString(), anyString(), any(), any());
         verify(notifications, never()).recordRecovered(any(), anyString(), anyString(), any(), any());
         verify(notifications, never()).recordVersionChanged(any(), anyString(), anyString(), any());
+        verify(containerNotifications).recordCurrentSnapshot(request);
     }
 
     @Test
@@ -146,6 +152,7 @@ class AgentSnapshotServiceTest {
                 org.mockito.ArgumentMatchers.anyBoolean());
         verify(notifications, never()).recordRecovered(any(), anyString(), anyString(), any(), any());
         verify(notifications, never()).recordVersionChanged(any(), anyString(), anyString(), any());
+        verify(containerNotifications, never()).recordCurrentSnapshot(any());
     }
 
     @Test
@@ -273,6 +280,7 @@ class AgentSnapshotServiceTest {
 
         verify(notifications, never()).recordRecovered(
                 any(), anyString(), anyString(), any(), any());
+        verify(containerNotifications, never()).recordCurrentSnapshot(any());
     }
 
     @Test
@@ -301,6 +309,24 @@ class AgentSnapshotServiceTest {
                 delayed.snapshotId(), "local-mac", "v1", NOW);
         verify(notifications, never()).recordRecovered(
                 any(), anyString(), anyString(), any(), any());
+        verify(containerNotifications, times(1)).recordCurrentSnapshot(newer);
+    }
+
+    @Test
+    void should_notApplyContainerAuthority_when_captureTimeEqualsPersistedCurrentStatus() {
+        Instant capturedAt = NOW.minusSeconds(1);
+        AgentSnapshotRequest request = snapshot(
+                "10000000-0000-0000-0000-000000000058", capturedAt, "v1");
+        when(agentStatusStore.findForUpdate("local-mac"))
+                .thenReturn(Optional.of(status("v1", capturedAt)));
+        when(agentStatusStore.updateIfCapturedAtIsNotOlder(
+                anyString(), any(), anyString(), any(), any())).thenReturn(true);
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any()))
+                .thenReturn(Optional.empty());
+
+        service.accept(request);
+
+        verify(containerNotifications, never()).recordCurrentSnapshot(any());
     }
 
     @Test

@@ -333,7 +333,8 @@ class AgentLifecycleNotificationPostgresqlIntegrationTest {
                 repository,
                 processedSnapshots,
                 activities,
-                producer(enabled, payloadMaximumBytes));
+                producer(enabled, payloadMaximumBytes),
+                mock(ContainerNotificationProducer.class));
     }
 
     private AgentLifecycleNotificationProducer producer(

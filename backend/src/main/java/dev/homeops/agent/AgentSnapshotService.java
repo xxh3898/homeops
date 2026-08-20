@@ -22,6 +22,7 @@ import dev.homeops.agent.persistence.ProcessedAgentSnapshotStore;
 import dev.homeops.common.AgentSnapshotRejectedException;
 import dev.homeops.common.PostgresqlTimestamp;
 import dev.homeops.notification.AgentLifecycleNotificationProducer;
+import dev.homeops.notification.ContainerNotificationProducer;
 import dev.homeops.system.AmbiguousContainerIdentifierException;
 import dev.homeops.system.ContainerIdentifier;
 import dev.homeops.system.ContainerInventoryUnavailableException;
@@ -54,6 +55,7 @@ public class AgentSnapshotService {
     private final ProcessedAgentSnapshotStore processedSnapshotStore;
     private final AgentActivityStore agentActivityStore;
     private final AgentLifecycleNotificationProducer notifications;
+    private final ContainerNotificationProducer containerNotifications;
     private final Clock clock;
     private final AtomicReference<ReceivedAgentSnapshot> latest =
             new AtomicReference<>();
@@ -66,7 +68,8 @@ public class AgentSnapshotService {
             HostMetricAggregateRepository metricRepository,
             ProcessedAgentSnapshotStore processedSnapshotStore,
             AgentActivityStore agentActivityStore,
-            AgentLifecycleNotificationProducer notifications) {
+            AgentLifecycleNotificationProducer notifications,
+            ContainerNotificationProducer containerNotifications) {
         this(
                 properties,
                 agentStatusRepository,
@@ -75,6 +78,7 @@ public class AgentSnapshotService {
                 processedSnapshotStore,
                 agentActivityStore,
                 notifications,
+                containerNotifications,
                 Clock.systemUTC());
     }
 
@@ -86,6 +90,7 @@ public class AgentSnapshotService {
             ProcessedAgentSnapshotStore processedSnapshotStore,
             AgentActivityStore agentActivityStore,
             AgentLifecycleNotificationProducer notifications,
+            ContainerNotificationProducer containerNotifications,
             Clock clock) {
         this.properties = properties;
         this.agentStatusRepository = agentStatusRepository;
@@ -94,6 +99,7 @@ public class AgentSnapshotService {
         this.processedSnapshotStore = processedSnapshotStore;
         this.agentActivityStore = agentActivityStore;
         this.notifications = notifications;
+        this.containerNotifications = containerNotifications;
         this.clock = clock;
     }
 
@@ -167,6 +173,16 @@ public class AgentSnapshotService {
                 canonicalRequest.agentVersion(),
                 canonicalRequest.capturedAt(),
                 receivedAt);
+        boolean strictlyNewerCurrentSnapshot = firstConnection || persistedStatus
+                .map(existing -> existing.lastCapturedAt() == null
+                        || canonicalRequest.capturedAt().isAfter(existing.lastCapturedAt()))
+                .orElse(true);
+        if (currentStatusUpdated
+                && strictlyNewerCurrentSnapshot
+                && !isSnapshotStale(
+                canonicalRequest.capturedAt(), receivedAt, receivedAt)) {
+            containerNotifications.recordCurrentSnapshot(canonicalRequest);
+        }
         if (currentStatusUpdated) {
             recordCurrentStatusEvents(
                     canonicalRequest,
