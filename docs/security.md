@@ -23,16 +23,16 @@
 | API 취약점 | 중간 | 높음 | same-origin, Spring Security, validation, no-store, 최소 endpoint, dependency scanning | 알려지지 않은 framework 또는 application defect 가능 |
 | API outbound egress 악용 | 낮음/중간 | 중간/높음 | API 전용 `egress` bridge, 정확한 HTTPS origin allowlist, 일반 request endpoint 없음 | Docker network name은 방향을 강제하지 않으므로 침해된 API process는 outbound connection을 시작할 수 있음 |
 | Web container outbound 악용 | 낮음/중간 | 중간 | loopback 전용 host publish, static-file/Nginx proxy 전용 Web image, 일반 outbound 기능 없음 | Docker Desktop host-published port에는 non-internal `ingress` bridge가 필요하므로 Docker가 outbound 차단을 제공하지 않음. 더 강한 격리에는 host firewall, proxy, edge network policy 필요 |
-| CSRF | 현재 낮음 | 향후 높음 | SameSite session, CSRF token contract, 현 마일스톤 mutation API 없음 | 이후 control endpoint에는 명시적 CSRF 및 Origin test 필요 |
+| CSRF | 낮음/중간 | 높음 | SameSite session, CSRF token, control POST의 exact HTTPS Origin/Host/proxy guard | 침해된 허용 ADMIN browser session 또는 host account는 별도 경계가 필요 |
 | XSS | 낮음/중간 | 높음 | React text escaping, 제한적 CSP, log message의 plain-text rendering, `dangerouslySetInnerHTML` 미사용 | 승인된 log 자체에 공격적인 text나 운영 metadata가 포함될 수 있음 |
 | container log의 secret | 중간 | 높음 | fresh capability와 exact opt-in, bounded tail, Agent/API 이중 redaction, no-store와 ephemeral UI, payload 미저장 | regex redaction은 모든 민감값 제거를 보장하지 않으며 service 자체가 예상 밖 형식으로 secret을 log에 남길 수 있음 |
-| container/image name injection | 현재 낮음 | control에서는 매우 높음 | 값은 표시 전용, shell interpolation 또는 control endpoint 없음 | 이후 control은 live ID와 고정 SDK call만 사용해야 함 |
+| container/image name injection | 낮음 | 높음 | public control은 exact 12자리 ID와 fixed operation만 허용하고 name/image는 입력받지 않으며 Agent는 live full ID를 재검증한 고정 Docker API만 사용 | 침해된 Agent 또는 Docker authority 자체는 별도 host 경계에 속함 |
 | app network의 악성 container | 낮음 | 높음 | 전용 internal network, HomeOps service만 연결 | 침해된 Web container가 API에 접근할 수 있어 proxy hardening이 중요 |
 | PostgreSQL credential 유출 | 낮음 | 높음 | private `.env`, internal DB port, 전용 role/database | host account 침해 뒤 volume과 history가 노출됨 |
 | backup path 공개 | 낮음 | 중간 | bounded relative logical identifier만 허용하고 absolute·traversal·invalid identifier는 fail closed | 운영자가 선택한 logical identifier 자체에는 민감한 이름을 넣지 않아야 함 |
 | 위조 deploy request | 낮음 | 매우 높음 | Tailscale OIDC, 별도 CI key, forced command grammar, 정확한 SHA/digest, stdin의 GHCR token | 침해된 GitHub production secret이 승인된 package name을 배포할 수 있음 |
 | 위조 history ingestion | 낮음 | 높음 | bounded body·timestamp HMAC-SHA-256, fail-closed secret configuration, event key idempotency 및 state transition | 전용 ingestion secret을 가진 caller는 rotate 전까지 false history를 제출할 수 있음 |
-| 반복 restart API | public API 없음 | 향후 높음 | internal work global 1, TTL, at-most-once operation; public enqueue 제외 | public 구현 전 client idempotency, rate limit, durable audit, CSRF/Origin, confirmation 필요 |
+| 반복 restart API | 낮음/중간 | 높음 | canonical idempotency, new-key principal rate limit, global active 1, durable audit, CSRF/Origin, exact confirmation | production allowlist/managed opt-in과 UI가 활성화되기 전 별도 acceptance 필요 |
 | HomeOps outage | 중간 | 중간 | Kuma 독립 유지, stale UI, health check | HomeOps가 다운되면 스스로 alert할 수 없음 |
 | 전체 Mac outage | 중간 | 높음 | optional external heartbeat | 같은 host의 component는 전체 power/network loss를 보고할 수 없음 |
 | Discord webhook 유출 또는 arbitrary outbound | 낮음/중간 | 높음 | Secret은 environment에만 유지, official HTTPS host/path allowlist, no redirect/query/userinfo/custom port, disabled-by-default kill switch | API process 또는 host account 침해 시 in-memory credential과 outbound capability가 노출될 수 있음 |
@@ -41,7 +41,7 @@
 
 Agent는 명시적으로 구성한 Unix socket을 통해 version discovery, snapshot용 container listing/inspect/stats, opt-in log 작업용 lightweight list/TTY inspect/bounded logs read와 dormant control용 lightweight list/selected inspect/fixed POST만 구현합니다. allowlist 구조로 decode한 뒤 raw response를 버립니다. API에 Docker proxy endpoint를 노출하지 않습니다. mTLS ingress도 bounded request, 짧은 proxy timeout, source별 작은 burst/rate limit을 강제합니다.
 
-Phase 5 source는 exact `homeops.managed=true`, fresh latest snapshot, unique bounded short ID와 default-empty exact Compose project allowlist를 함께 요구한 뒤에만 internal control work를 생성할 수 있습니다. Public enqueue는 없습니다. Agent는 operation 직전에 current Docker list/inspect에서 unique full ID, exact label/project, nonblank service와 mount protection을 다시 확인합니다. `homeops`, protected database/cache service 이름, writable bind/volume와 판정 불가능 mount는 hard deny합니다. Work는 fixed operation과 expiry 외 command/path/query/body를 받지 않으며 Docker operation은 최대 한 번입니다. Result delivery만 memory에서 재시도하고 ambiguous post-send outcome은 자동 재실행하지 않습니다. Full Docker ID, raw labels/mount source/error body, image/registry와 allowlist 전체를 public API, result, error, log 또는 persistence에 노출하지 않습니다. Durable audit, client idempotency, rate limit, CSRF/Origin과 confirmation 전에는 browser control을 열지 않습니다.
+Phase 5 source는 exact `homeops.managed=true`, fresh latest snapshot, unique bounded short ID와 default-empty exact Compose project allowlist를 함께 요구한 뒤에만 control work를 생성할 수 있습니다. Public POST는 ADMIN + CSRF + exact HTTPS Origin/Host/proxy, fixed operation·confirmation과 canonical UUID idempotency key를 요구하고, durable reservation commit 후에만 bounded broker를 호출합니다. New-key principal rate limit과 global active 1을 적용하며 polling은 bounded audit projection만 노출합니다. Agent는 operation 직전에 current Docker list/inspect에서 unique full ID, exact label/project, nonblank service와 mount protection을 다시 확인합니다. `homeops`, protected database/cache service 이름, writable bind/volume와 판정 불가능 mount는 hard deny합니다. Work는 fixed operation과 expiry 외 command/path/query/body를 받지 않으며 Docker operation은 최대 한 번입니다. Result delivery만 memory에서 재시도하고 ambiguous post-send outcome은 자동 재실행하지 않습니다. Full Docker ID, principal, confirmation, raw labels/mount source/error body, image/registry와 allowlist 전체를 public response, result, error 또는 log에 노출하지 않으며 audit에도 image/raw failure/private metadata를 저장하지 않습니다.
 
 읽기 접근도 운영 metadata를 드러낼 수 있습니다. Agent binary와 configuration은 privileged로 다루세요. root로 실행하거나 `sudo`를 제공하지 말고, spool을 container에 mount하거나 임의 TCP Docker endpoint를 구성하지 마세요.
 
@@ -52,7 +52,7 @@ Phase 5 source는 exact `homeops.managed=true`, fresh latest snapshot, unique bo
 - Activity는 deployment, backup, incident와 Agent event의 bounded allowlist context만 노출하며 visibility-snapshot cursor를 사용하는 no-store pagination을 제공합니다.
 - Workbox는 API GET request에 `NetworkOnly`를 사용하며 상태 변경 method는 cache하지 않습니다.
 - Container Logs는 explicit user action에만 요청하고 UI memory에만 잠시 보관합니다. route, tail 또는 disclosure authority가 바뀌면 표시 payload를 제거합니다.
-- offline data를 current로 표시하지 않으며 현 마일스톤에는 control button이 없습니다.
+- offline data를 current로 표시하지 않으며 현 마일스톤에는 control button이 없습니다. Public control API source가 존재해도 production allowlist/label과 UI activation은 별도 gate입니다.
 - PWA shell은 offline으로 load할 수 있지만 운영 data에는 network와 tailnet이 필요합니다.
 - Nginx는 제한적인 CSP, frame denial, no-sniff, referrer, permission header를 설정합니다.
 
