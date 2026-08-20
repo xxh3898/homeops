@@ -263,6 +263,26 @@ assert_nginx_location_contains \
 assert_nginx_location_contains \
   "${NGINX_CONFIG}" "/api/v1/internal/agent/log-results" \
   'proxy_set_header X-HomeOps-Agent-Verified $ssl_client_verify;'
+assert_contains "${NGINX_CONFIG}" 'location = /api/v1/internal/agent/control-requests/next {'
+assert_contains "${NGINX_CONFIG}" 'location = /api/v1/internal/agent/control-results {'
+assert_nginx_location_contains \
+  "${NGINX_CONFIG}" "/api/v1/internal/agent/control-requests/next" \
+  'limit_except GET { deny all; }'
+assert_nginx_location_contains \
+  "${NGINX_CONFIG}" "/api/v1/internal/agent/control-requests/next" \
+  'proxy_read_timeout 5s;'
+assert_nginx_location_contains \
+  "${NGINX_CONFIG}" "/api/v1/internal/agent/control-requests/next" \
+  'proxy_set_header X-HomeOps-Agent-Verified $ssl_client_verify;'
+assert_nginx_location_contains \
+  "${NGINX_CONFIG}" "/api/v1/internal/agent/control-results" \
+  'limit_except POST { deny all; }'
+assert_nginx_location_contains \
+  "${NGINX_CONFIG}" "/api/v1/internal/agent/control-results" \
+  'client_max_body_size 4k;'
+assert_nginx_location_contains \
+  "${NGINX_CONFIG}" "/api/v1/internal/agent/control-results" \
+  'proxy_set_header X-HomeOps-Agent-Verified $ssl_client_verify;'
 assert_absent "${NGINX_CONFIG}" 'location /api/v1/internal/agent/'
 
 printf 'Deployment contract checks passed\n'

@@ -99,17 +99,18 @@ Production acceptance에서는 disabled baseline의 outbound zero와 no-replay, 
 
 ## Phase 5: 제한된 컨테이너 제어
 
-**상태:** Source PARTIAL / Production INACTIVE / Acceptance NOT DONE. Native Agent의 exact `homeops.managed=true` projection과 default-empty server-owned Compose project allowlist, fresh latest snapshot 기반 internal control candidate 판정까지만 구현했습니다. Public mutation API/UI, Agent control protocol과 production allowlist/label activation은 아직 없습니다.
+**상태:** Source PARTIAL / Production INACTIVE / Acceptance NOT DONE. Exact managed/project candidate authority와 public enqueue가 없는 bounded Agent outbound control protocol foundation까지 구현했습니다. Public mutation API/UI, durable audit/client idempotency와 production Agent rollout·allowlist/label activation은 아직 없습니다.
 
 **목표:** 명시적으로 관리하는 container만 의도적으로 start, stop, restart할 수 있게 합니다.
 
-1. Candidate foundation은 exact `homeops.managed=true`, fresh snapshot, unique 12자리 short-ID match와 서버가 관리하는 exact project allowlist를 모두 요구하며 HomeOps/standalone/unknown project를 fail closed합니다. 실제 operation은 후속 Agent protocol에서 live label/project를 다시 검증해야 합니다.
-2. 고정 작업만 추가합니다. Docker CLI, shell, image, volume, network, Compose input은 받지 않습니다.
-3. CSRF, Origin check, confirmation UX, idempotency key, rate limit, operation lock, audit record를 요구합니다.
-4. HomeOps, database, unknown container는 기본 거부하며 더 강한 confirmation은 명시적 policy로만 도입합니다.
-5. Docker request 성공을 가정하지 않고 fresh Agent snapshot으로 operation result를 검증합니다.
+1. Candidate foundation은 exact `homeops.managed=true`, fresh snapshot, unique 12자리 short-ID match와 서버가 관리하는 exact project allowlist를 모두 요구하며 HomeOps/standalone/unknown project를 fail closed합니다.
+2. Bounded in-memory broker와 outbound-only Agent worker는 global active 1, TTL 15초, non-replay claimed work, metadata-only tombstone을 사용합니다. Agent는 operation 직전 live full-ID, exact label/project/service와 mount를 다시 검증하고 HomeOps, protected service, writable bind/volume과 판정 불가능 mount를 hard deny합니다.
+3. Agent operation은 `START|STOP|RESTART`와 fixed Docker POST/timeout만 지원합니다. Docker CLI, shell, image, volume, network, arbitrary path/query/body/timeout input은 받지 않으며 ambiguous outcome은 재실행하지 않습니다.
+4. Public slice는 CSRF, Origin check, confirmation UX, client idempotency key, rate limit, operation lock과 durable audit record를 요구합니다.
+5. HomeOps, database, unknown container는 기본 거부하며 더 강한 confirmation은 명시적 policy로만 도입합니다.
+6. Docker request 성공을 가정하지 않고 fresh Agent snapshot으로 operation result를 검증합니다.
 
-**현재 first-slice 근거:** Agent exact-label/authority-independence regression, bounded allowlist startup validation, stale/missing/ambiguous/unmanaged/self-project fail-closed Backend test. Docker mutation은 수행하지 않습니다.
+**현재 source 근거:** Agent exact-label/authority-independence와 bounded allowlist/candidate test, control broker concurrency·expiry·duplicate-result test, exact mTLS route, strict wire decode, live protected target/mount revalidation, fixed Docker HTTP와 ambiguous no-retry regression. Public enqueue와 production mutation은 없습니다.
 
 **전체 완료 근거:** authorization, CSRF, allowlist, duplicate request, audit, timeout, stale Agent, database-protection test와 별도 production acceptance가 모두 필요합니다.
 
