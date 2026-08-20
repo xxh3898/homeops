@@ -117,6 +117,8 @@ Deployment와 backup producer는 실제 ingestion insert 또는 terminal transit
 
 Native Agent는 exact `homeops.notifications=true`를 container별 `notificationsAllowed` boolean으로만 전달합니다. 이 capability는 `homeops.managed`와 `homeops.logs`에서 독립적이고 old/rollback Agent가 field를 생략하면 false입니다. Backend는 public inventory/detail에 이를 노출하지 않고 fresh current snapshot winner에서만 bounded Docker episode state와 typed outbox intent를 갱신합니다. Source와 production acceptance 완료는 future service label opt-in, Agent rollout 또는 Discord enable 권한이 아니므로 이후 변경도 별도 production gate를 요구합니다.
 
+Phase 5 control authority foundation은 Source PARTIAL / Production INACTIVE / Acceptance NOT DONE입니다. `HOMEOPS_CONTROL_ALLOWED_PROJECTS`는 기본 empty이며 exact `homeops.managed=true`, fresh snapshot, unique short-ID match와 exact allowlisted non-HomeOps project가 모두 있어야 internal candidate가 됩니다. 현재 public control API/UI, Agent control work protocol, Docker mutation, DB audit record와 production allowlist/label은 없습니다. Agent source 변경의 artifact publication과 rollout, application release, allowlist/label activation 및 production acceptance는 각각 별도 gate로 취급하고 이 foundation merge를 운영 권한으로 해석하지 마세요.
+
 ## 데이터 손실 및 재구성
 
 HomeOps database 자동 backup은 없습니다. PostgreSQL volume을 잃으면 host metric history, session, incident, deployment/backup metadata, notification, audit event, database setting을 잃습니다. service는 다음으로 재구성할 수 있습니다.

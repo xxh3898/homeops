@@ -193,7 +193,7 @@ func mapListed(item listedContainer) snapshot.Container {
 		Health:               "UNKNOWN",
 		Status:               truncate(item.Status, 512),
 		Ports:                mapPorts(item.Ports),
-		Managed:              strings.EqualFold(item.Labels["homeops.managed"], "true"),
+		Managed:              item.Labels["homeops.managed"] == "true",
 		LogsAllowed:          item.Labels["homeops.logs"] == "true",
 		NotificationsAllowed: item.Labels["homeops.notifications"] == "true",
 	}
