@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ApiError } from './api/client'
+import { ApiError, CONTAINER_ACTION_ORIGIN_REJECTED_PROBLEM_TYPE } from './api/client'
 import { createHomeOpsQueryClient } from './queryClient'
 
 describe('HomeOps QueryClient', () => {
@@ -49,6 +49,28 @@ describe('HomeOps QueryClient', () => {
 
     expect(onAuthorizationError).not.toHaveBeenCalled()
     expect(queryClient.getQueryData(['system-summary'])).toEqual(cachedSummary)
+  })
+
+  it('keeps an authenticated control-policy 403 local without clearing cached data', async () => {
+    const onAuthorizationError = vi.fn()
+    const queryClient = createHomeOpsQueryClient(onAuthorizationError)
+    const cachedContainer = { state: 'RUNNING' }
+    const error = new ApiError(
+      403,
+      'HomeOps rejected the container action origin.',
+      CONTAINER_ACTION_ORIGIN_REJECTED_PROBLEM_TYPE,
+    )
+    queryClient.setQueryData(['container', '0123456789ab'], cachedContainer)
+    const mutation = queryClient.getMutationCache().build(queryClient, {
+      mutationFn: () => Promise.reject(error),
+      retry: false,
+    })
+
+    await expect(mutation.execute(undefined)).rejects.toBe(error)
+
+    expect(onAuthorizationError).not.toHaveBeenCalled()
+    expect(queryClient.getQueryData(['container', '0123456789ab']))
+      .toEqual(cachedContainer)
   })
 
   it.each([401, 403])('blocks access and clears cached data after mutation status %s', async (status) => {

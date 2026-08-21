@@ -15,11 +15,14 @@ import { containerActionStatuses, containerControlOperations } from './types'
 export const API_REQUEST_TIMEOUT_MS = 8_000
 export const API_CONNECTION_ERROR_MESSAGE =
   'HomeOps could not be reached. Check Tailscale and confirm the Mac mini is online.'
+export const CONTAINER_ACTION_ORIGIN_REJECTED_PROBLEM_TYPE =
+  'urn:homeops:problem:container-action-origin-rejected'
 
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    public readonly problemType: string | null = null,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -41,7 +44,15 @@ export class ApiContractError extends Error {
 }
 
 export function isAuthorizationError(error: unknown): error is ApiError {
-  return error instanceof ApiError && (error.status === 401 || error.status === 403)
+  return error instanceof ApiError
+    && (error.status === 401
+      || (error.status === 403 && !isContainerActionOriginRejectedError(error)))
+}
+
+export function isContainerActionOriginRejectedError(error: unknown): error is ApiError {
+  return error instanceof ApiError
+    && error.status === 403
+    && error.problemType === CONTAINER_ACTION_ORIGIN_REJECTED_PROBLEM_TYPE
 }
 
 export function isConnectionError(error: unknown): error is ApiConnectionError {
@@ -169,7 +180,18 @@ async function requestJson<T>(
   }
 
   if (!response.ok) {
-    throw new ApiError(response.status, messageForStatus(response.status))
+    const problemType = await readKnownProblemType(response)
+    if (callerSignal?.aborted) {
+      throw callerAbortReason(callerSignal)
+    }
+    if (timedOut()) {
+      throw new ApiConnectionError()
+    }
+    throw new ApiError(
+      response.status,
+      messageForStatus(response.status, problemType),
+      problemType,
+    )
   }
 
   try {
@@ -192,7 +214,32 @@ function callerAbortReason(signal: AbortSignal) {
   return signal.reason ?? new DOMException('The operation was aborted.', 'AbortError')
 }
 
-function messageForStatus(status: number) {
+async function readKnownProblemType(response: Response) {
+  if (response.status !== 403) {
+    return null
+  }
+  const contentType = response.headers.get('Content-Type')
+    ?.split(';', 1)[0]
+    .trim()
+    .toLowerCase()
+  if (contentType !== 'application/problem+json' && contentType !== 'application/json') {
+    return null
+  }
+  try {
+    const body = await response.json() as unknown
+    return isRecord(body)
+      && body.type === CONTAINER_ACTION_ORIGIN_REJECTED_PROBLEM_TYPE
+      ? CONTAINER_ACTION_ORIGIN_REJECTED_PROBLEM_TYPE
+      : null
+  } catch {
+    return null
+  }
+}
+
+function messageForStatus(status: number, problemType: string | null) {
+  if (problemType === CONTAINER_ACTION_ORIGIN_REJECTED_PROBLEM_TYPE) {
+    return 'HomeOps rejected the container action origin.'
+  }
   if (status === 401 || status === 403) {
     return 'Tailscale identity is not authorized for HomeOps.'
   }

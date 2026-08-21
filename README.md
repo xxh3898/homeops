@@ -64,7 +64,7 @@ Linux agent, Kubernetes, 인터넷 공개, 다중 사용자 계정, 웹 터미�
 - `GET /api/v1/containers`: Agent freshness metadata와 읽기 전용 인벤토리 제공
 - `GET /api/v1/containers/{id}`: 최신 Agent snapshot 안의 12자리 bounded identifier 하나에 대한 freshness-aware 읽기 전용 detail 제공
 - `GET /api/v1/containers/{id}/logs`: fresh Agent capability와 container별 exact opt-in이 있을 때만 `50`, `100`, `200` line으로 제한한 redacted one-shot tail 제공
-- `POST /api/v1/containers/{id}/actions`: ADMIN session, CSRF, exact HTTPS Origin/Host, canonical idempotency key와 명시적 confirmation으로 보호하는 bounded `START|STOP|RESTART` 예약
+- `POST /api/v1/containers/{id}/actions`: ADMIN session, CSRF, server-owned canonical public HTTPS Origin, canonical idempotency key와 명시적 confirmation으로 보호하는 bounded `START|STOP|RESTART` 예약
 - `GET /api/v1/container-actions/{operationId}`: durable control audit의 bounded status projection 제공
 - `GET /api/v1/activity`: 범위가 제한된 안정 cursor 제공
 - `GET /api/v1/services`, `/status`, `/incidents`
