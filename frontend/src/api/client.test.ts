@@ -2,17 +2,26 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   API_REQUEST_TIMEOUT_MS,
   ApiConnectionError,
+  ApiContractError,
   ApiError,
+  getContainerAction,
   getContainerDetail,
   getContainerLogs,
   getMetricHistory,
+  getSessionCsrfToken,
   getSystemSummary,
+  isAmbiguousContainerActionSubmissionError,
   isAuthorizationError,
   isConnectionError,
   isContainerDetailTerminalError,
   shouldRetryContainerDetailQuery,
   shouldRetryQuery,
+  submitContainerAction,
 } from './client'
+
+const CONTAINER_ID = '0123456789ab'
+const OPERATION_ID = '10000000-0000-4000-8000-000000000001'
+const IDEMPOTENCY_KEY = '20000000-0000-4000-8000-000000000002'
 
 describe('HomeOps API client', () => {
   afterEach(() => {
@@ -110,6 +119,116 @@ describe('HomeOps API client', () => {
         signal: expect.any(AbortSignal),
       }),
     )
+  })
+
+  it('accepts only the fixed X-XSRF-TOKEN session contract', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        principal: 'private-principal',
+        csrfHeader: 'X-XSRF-TOKEN',
+        csrfToken: 'bounded-csrf-token',
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        principal: 'private-principal',
+        csrfHeader: 'X-Arbitrary-Header',
+        csrfToken: 'bounded-csrf-token',
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getSessionCsrfToken()).resolves.toBe('bounded-csrf-token')
+    await expect(getSessionCsrfToken()).rejects.toEqual(
+      new ApiContractError('HomeOps returned an invalid session security contract.'),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/v1/session',
+      expect.objectContaining({
+        method: 'GET',
+        cache: 'no-store',
+        credentials: 'same-origin',
+      }),
+    )
+  })
+
+  it('submits only the fixed action route, headers, and exact confirmation body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(actionResponse(), 202))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(submitContainerAction(
+      CONTAINER_ID,
+      'START',
+      IDEMPOTENCY_KEY,
+      'bounded-csrf-token',
+    )).resolves.toEqual(actionResponse())
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/v1/containers/${CONTAINER_ID}/actions`,
+      expect.objectContaining({
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal: expect.any(AbortSignal),
+        body: JSON.stringify({ operation: 'START', confirmation: `START:${CONTAINER_ID}` }),
+      }),
+    )
+    expect(init.headers).toEqual({
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'Idempotency-Key': IDEMPOTENCY_KEY,
+      'X-XSRF-TOKEN': 'bounded-csrf-token',
+    })
+    expect(init.headers).not.toHaveProperty('Origin')
+    expect(init.headers).not.toHaveProperty('Host')
+    expect(init.headers).not.toHaveProperty('X-Forwarded-Proto')
+  })
+
+  it('accepts 200 terminal and rejects mismatched success semantics as ambiguous', async () => {
+    const terminal = actionResponse({
+      status: 'APPLIED',
+      reasonCode: 'APPLIED',
+      completedAt: '2026-08-21T00:00:01Z',
+    })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(terminal, 200))
+      .mockResolvedValueOnce(jsonResponse(actionResponse(), 200))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(submitContainerAction(
+      CONTAINER_ID,
+      'START',
+      IDEMPOTENCY_KEY,
+      'bounded-csrf-token',
+    )).resolves.toEqual(terminal)
+    await expect(submitContainerAction(
+      CONTAINER_ID,
+      'START',
+      IDEMPOTENCY_KEY,
+      'bounded-csrf-token',
+    )).rejects.toBeInstanceOf(ApiContractError)
+  })
+
+  it('polls only the fixed public operation resource and validates its identifier', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(actionResponse()))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getContainerAction(OPERATION_ID)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/v1/container-actions/${OPERATION_ID}`,
+      expect.objectContaining({ method: 'GET', cache: 'no-store' }),
+    )
+    await expect(getContainerAction('../private')).rejects.toBeInstanceOf(ApiContractError)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('classifies only ambiguous submission outcomes for same-key recovery', () => {
+    expect(isAmbiguousContainerActionSubmissionError(new ApiConnectionError())).toBe(true)
+    expect(isAmbiguousContainerActionSubmissionError(new ApiContractError())).toBe(true)
+    expect(isAmbiguousContainerActionSubmissionError(new ApiError(408, 'timeout'))).toBe(true)
+    expect(isAmbiguousContainerActionSubmissionError(new ApiError(503, 'unavailable'))).toBe(true)
+    expect(isAmbiguousContainerActionSubmissionError(new ApiError(422, 'denied'))).toBe(false)
+    expect(isAmbiguousContainerActionSubmissionError(new ApiError(429, 'limited'))).toBe(false)
   })
 
   it('converts fetch failures to safe reachability errors', async () => {
@@ -244,4 +363,24 @@ function abortAwareFetch() {
       signal.addEventListener('abort', () => reject(signal.reason), { once: true })
     }),
   )
+}
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function actionResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    operationId: OPERATION_ID,
+    containerId: CONTAINER_ID,
+    operation: 'START',
+    status: 'REQUESTED',
+    reasonCode: null,
+    requestedAt: '2026-08-21T00:00:00Z',
+    completedAt: null,
+    ...overrides,
+  }
 }

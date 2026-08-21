@@ -52,7 +52,8 @@ Phase 5 source는 exact `homeops.managed=true`, fresh latest snapshot, unique bo
 - Activity는 deployment, backup, incident와 Agent event의 bounded allowlist context만 노출하며 visibility-snapshot cursor를 사용하는 no-store pagination을 제공합니다.
 - Workbox는 API GET request에 `NetworkOnly`를 사용하며 상태 변경 method는 cache하지 않습니다.
 - Container Logs는 explicit user action에만 요청하고 UI memory에만 잠시 보관합니다. route, tail 또는 disclosure authority가 바뀌면 표시 payload를 제거합니다.
-- offline data를 current로 표시하지 않으며 현 마일스톤에는 control button이 없습니다. Public control API source가 존재해도 production allowlist/label과 UI activation은 별도 gate입니다.
+- Container Detail control UI는 stale/offline/refetch-error/unmanaged 또는 unsupported state에서 action을 fail closed하고 Backend·Agent의 live authority를 대체하지 않습니다. 별도 confirmation 뒤에만 fixed mutation을 보내며 자동 POST retry를 하지 않습니다. Ambiguous submission은 component memory의 같은 idempotency key로만 explicit retry하고 route/unmount 뒤 background replay 또는 durable browser storage를 사용하지 않습니다.
+- Production V10 migration, Agent rollout, allowlist/managed-label activation과 실제 control acceptance는 source UI와 분리된 gate입니다.
 - PWA shell은 offline으로 load할 수 있지만 운영 data에는 network와 tailnet이 필요합니다.
 - Nginx는 제한적인 CSP, frame denial, no-sniff, referrer, permission header를 설정합니다.
 

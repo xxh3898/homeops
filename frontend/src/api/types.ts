@@ -102,6 +102,32 @@ export interface ContainerLogLine {
   message: string
 }
 
+export const containerControlOperations = ['START', 'STOP', 'RESTART'] as const
+
+export type ContainerControlOperation = (typeof containerControlOperations)[number]
+
+export const containerActionStatuses = [
+  'REQUESTED',
+  'APPLIED',
+  'NOOP',
+  'DENIED',
+  'FAILED',
+  'OUTCOME_UNKNOWN',
+  'EXPIRED',
+] as const
+
+export type ContainerActionStatus = (typeof containerActionStatuses)[number]
+
+export interface ContainerActionResponse {
+  operationId: string
+  containerId: string
+  operation: ContainerControlOperation
+  status: ContainerActionStatus
+  reasonCode: string | null
+  requestedAt: string
+  completedAt: string | null
+}
+
 export interface ActivityEvent {
   id: string
   type: 'DEPLOYMENT' | 'BACKUP' | 'INCIDENT' | 'AGENT'
