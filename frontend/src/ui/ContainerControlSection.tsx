@@ -1,6 +1,14 @@
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query'
 import { AlertTriangle, Play, RefreshCw, RotateCw, ShieldCheck, Square } from 'lucide-react'
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+} from 'react'
 import {
   ApiError,
   getContainerAction,
@@ -52,7 +60,7 @@ type ControlState =
   | {
       kind: 'terminal'
       response: ContainerActionResponse
-      snapshotAtCompletion: string
+      snapshotBarrierAtTerminal: string
       freshSnapshotObserved: boolean
     }
   | { kind: 'error'; message: string }
@@ -107,12 +115,17 @@ export function ContainerControlSection({
   const invokingControlRef = useRef<HTMLButtonElement | null>(null)
   const cancelButtonRef = useRef<HTMLButtonElement | null>(null)
   const previousContainerIdRef = useRef(container.id)
+  const latestSnapshotUpdatedAtRef = useRef(snapshotUpdatedAt)
   const decision = controlDecision(container, stale, online)
   const operationActive = state.kind === 'submitting'
     || state.kind === 'submission-unknown'
     || state.kind === 'requested'
     || (state.kind === 'terminal' && !state.freshSnapshotObserved)
   const controlsBusy = confirmation !== null || operationActive
+
+  useLayoutEffect(() => {
+    latestSnapshotUpdatedAtRef.current = snapshotUpdatedAt
+  }, [snapshotUpdatedAt])
 
   const submission = useMutation({
     mutationKey: ['container-action-submit', container.id],
@@ -188,7 +201,7 @@ export function ContainerControlSection({
   useEffect(() => {
     if (state.kind === 'terminal'
         && !state.freshSnapshotObserved
-        && newerSnapshot(snapshotUpdatedAt, state.snapshotAtCompletion)) {
+        && newerSnapshot(snapshotUpdatedAt, state.snapshotBarrierAtTerminal)) {
       setState({ ...state, freshSnapshotObserved: true })
     }
   }, [snapshotUpdatedAt, state])
@@ -444,7 +457,7 @@ export function ContainerControlSection({
     setState({
       kind: 'terminal',
       response,
-      snapshotAtCompletion: snapshotUpdatedAt,
+      snapshotBarrierAtTerminal: latestSnapshotUpdatedAtRef.current,
       freshSnapshotObserved: false,
     })
     void queryClient.invalidateQueries({ queryKey: ['container', container.id], exact: true })

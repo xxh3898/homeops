@@ -13,6 +13,9 @@ const CONTAINER_ID = '0123456789ab'
 const SECOND_ID = 'abcdefabcdef'
 const OPERATION_ID = '10000000-0000-4000-8000-000000000001'
 const IDEMPOTENCY_KEY = '20000000-0000-4000-8000-000000000002'
+const SNAPSHOT_S0 = '2026-08-21T00:00:00Z'
+const SNAPSHOT_S1 = '2026-08-21T00:00:05Z'
+const SNAPSHOT_S2 = '2026-08-21T00:00:10Z'
 
 const mocks = vi.hoisted(() => ({
   getSessionCsrfToken: vi.fn(),
@@ -214,8 +217,95 @@ describe('ContainerControlSection', () => {
     expect(actionButton('Stop')).toBeDisabled()
     expect(screen.getByText(/Waiting for a newer Agent snapshot/)).toBeInTheDocument()
 
-    view.rerenderProps({ snapshotUpdatedAt: '2026-08-21T00:00:05Z' })
+    view.rerenderProps({ snapshotUpdatedAt: SNAPSHOT_S1 })
     expect(actionButton('Stop')).toBeEnabled()
+  })
+
+  it('requires a snapshot newer than the polling terminal barrier when a detail refresh arrived first', async () => {
+    vi.useFakeTimers()
+    mocks.submitContainerAction.mockResolvedValue(actionResponse())
+    mocks.getContainerAction.mockResolvedValue(actionResponse({
+      status: 'APPLIED',
+      reasonCode: 'APPLIED',
+      completedAt: '2026-08-21T00:00:06Z',
+    }))
+    const view = renderSection({ snapshotUpdatedAt: SNAPSHOT_S0 })
+
+    fireEvent.click(actionButton('Stop'))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }))
+    await flushMicrotasks()
+    expect(screen.getByRole('region', { name: 'Current container action' })).toHaveTextContent('REQUESTED')
+
+    view.rerenderProps({ snapshotUpdatedAt: SNAPSHOT_S1 })
+    await act(() => vi.advanceTimersByTimeAsync(CONTAINER_ACTION_POLL_INTERVAL_MS))
+    await flushMicrotasks()
+
+    expect(screen.getByRole('region', { name: 'Last container action' })).toHaveTextContent('APPLIED')
+    expect(actionButton('Stop')).toBeDisabled()
+    expect(screen.getByText(/Waiting for a newer Agent snapshot/)).toBeInTheDocument()
+
+    view.rerenderProps({ snapshotUpdatedAt: SNAPSHOT_S1 })
+    expect(actionButton('Stop')).toBeDisabled()
+
+    view.rerenderProps({ snapshotUpdatedAt: SNAPSHOT_S2 })
+    expect(actionButton('Stop')).toBeEnabled()
+    expect(mocks.submitContainerAction).toHaveBeenCalledOnce()
+  })
+
+  it('keeps OUTCOME_UNKNOWN locked past a pre-terminal snapshot without automatic mutation retry', async () => {
+    vi.useFakeTimers()
+    mocks.submitContainerAction.mockResolvedValue(actionResponse())
+    mocks.getContainerAction.mockResolvedValue(actionResponse({
+      status: 'OUTCOME_UNKNOWN',
+      reasonCode: 'DOCKER_OUTCOME_UNKNOWN',
+      completedAt: '2026-08-21T00:00:06Z',
+    }))
+    const view = renderSection({ snapshotUpdatedAt: SNAPSHOT_S0 })
+
+    fireEvent.click(actionButton('Stop'))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }))
+    await flushMicrotasks()
+    view.rerenderProps({ snapshotUpdatedAt: SNAPSHOT_S1 })
+
+    await act(() => vi.advanceTimersByTimeAsync(CONTAINER_ACTION_POLL_INTERVAL_MS))
+    await flushMicrotasks()
+
+    expect(screen.getByText(/operation outcome is uncertain/i)).toBeInTheDocument()
+    expect(actionButton('Stop')).toBeDisabled()
+    expect(screen.getByText(/Waiting for a newer Agent snapshot/)).toBeInTheDocument()
+    expect(mocks.submitContainerAction).toHaveBeenCalledOnce()
+
+    view.rerenderProps({ snapshotUpdatedAt: SNAPSHOT_S2 })
+    expect(actionButton('Stop')).toBeEnabled()
+    expect(mocks.submitContainerAction).toHaveBeenCalledOnce()
+  })
+
+  it('requires a snapshot newer than the POST 200 terminal barrier when a detail refresh arrived first', async () => {
+    const pending = deferred<ContainerActionResponse>()
+    mocks.submitContainerAction.mockReturnValue(pending.promise)
+    const view = renderSection({ snapshotUpdatedAt: SNAPSHOT_S0 })
+
+    await openAndConfirm('Stop')
+    await waitFor(() => expect(mocks.submitContainerAction).toHaveBeenCalledOnce())
+    view.rerenderProps({ snapshotUpdatedAt: SNAPSHOT_S1 })
+
+    await act(async () => {
+      pending.resolve(actionResponse({
+        status: 'APPLIED',
+        reasonCode: 'APPLIED',
+        completedAt: '2026-08-21T00:00:06Z',
+      }))
+      await pending.promise
+    })
+
+    expect(await screen.findByRole('region', { name: 'Last container action' })).toHaveTextContent('APPLIED')
+    expect(actionButton('Stop')).toBeDisabled()
+    expect(screen.getByText(/Waiting for a newer Agent snapshot/)).toBeInTheDocument()
+    expect(mocks.getContainerAction).not.toHaveBeenCalled()
+
+    view.rerenderProps({ snapshotUpdatedAt: SNAPSHOT_S2 })
+    expect(actionButton('Stop')).toBeEnabled()
+    expect(mocks.submitContainerAction).toHaveBeenCalledOnce()
   })
 
   it('does not poll when the initial response is already terminal', async () => {
@@ -358,7 +448,7 @@ function renderSection(overrides: Partial<Props> = {}) {
   })
   let props: Props = {
     container: container(),
-    snapshotUpdatedAt: '2026-08-21T00:00:00Z',
+    snapshotUpdatedAt: SNAPSHOT_S0,
     stale: false,
     online: true,
     visible: true,
