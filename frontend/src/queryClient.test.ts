@@ -50,4 +50,21 @@ describe('HomeOps QueryClient', () => {
     expect(onAuthorizationError).not.toHaveBeenCalled()
     expect(queryClient.getQueryData(['system-summary'])).toEqual(cachedSummary)
   })
+
+  it.each([401, 403])('blocks access and clears cached data after mutation status %s', async (status) => {
+    const onAuthorizationError = vi.fn()
+    const queryClient = createHomeOpsQueryClient(onAuthorizationError)
+    const error = new ApiError(status, 'access denied')
+    queryClient.setQueryData(['container', '0123456789ab'], { state: 'RUNNING' })
+    const mutation = queryClient.getMutationCache().build(queryClient, {
+      mutationFn: () => Promise.reject(error),
+      retry: false,
+    })
+
+    await expect(mutation.execute(undefined)).rejects.toBe(error)
+
+    expect(onAuthorizationError).toHaveBeenCalledOnce()
+    expect(onAuthorizationError).toHaveBeenCalledWith(error)
+    expect(queryClient.getQueryData(['container', '0123456789ab'])).toBeUndefined()
+  })
 })

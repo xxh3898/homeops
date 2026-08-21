@@ -22,7 +22,7 @@
 | Phase 2 native Agent rollout | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 3 운영 이력 | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 4 알림 | IMPLEMENTED | ACTIVE | COMPLETE |
-| Phase 5 제한된 컨테이너 제어 | PARTIAL | INACTIVE | NOT DONE |
+| Phase 5 제한된 컨테이너 제어 | IMPLEMENTED | INACTIVE | NOT DONE |
 
 ## Phase 1: 읽기 전용 대시보드 정확성 및 사용성
 
@@ -99,7 +99,7 @@ Production acceptance에서는 disabled baseline의 outbound zero와 no-replay, 
 
 ## Phase 5: 제한된 컨테이너 제어
 
-**상태:** Source PARTIAL / Production INACTIVE / Acceptance NOT DONE. Exact managed/project candidate authority, bounded Agent outbound control protocol과 ADMIN 전용 public mutation/polling API의 durable audit·client idempotency foundation까지 구현했습니다. 사용자 UI와 production Agent rollout·allowlist/label activation은 아직 없습니다.
+**상태:** Source IMPLEMENTED / Production INACTIVE / Acceptance NOT DONE. Exact managed/project candidate authority, bounded Agent outbound control protocol, ADMIN 전용 public mutation/polling API의 durable audit·client idempotency와 Container Detail mobile control UI까지 구현했습니다. Production V10 migration, Agent rollout, allowlist·managed-label activation과 실제 Docker control acceptance는 아직 수행하지 않았습니다.
 
 **목표:** 명시적으로 관리하는 container만 의도적으로 start, stop, restart할 수 있게 합니다.
 
@@ -109,8 +109,10 @@ Production acceptance에서는 disabled baseline의 outbound zero와 no-replay, 
 4. Public API는 ADMIN session, CSRF, exact HTTPS Origin/Host, exact confirmation과 canonical idempotency key를 요구합니다. Existing durable replay/conflict를 먼저 판정하고 genuinely new key에 principal+key rate limit을 적용한 뒤 V10 durable audit reservation을 commit합니다. Durable winner만 broker enqueue로 이어지며 global operation lock, async result CAS와 stale `REQUESTED` reconciliation을 적용합니다.
 5. HomeOps, database, unknown container는 기본 거부하며 더 강한 confirmation은 명시적 policy로만 도입합니다.
 6. Docker request 성공을 가정하지 않고 fresh Agent snapshot으로 operation result를 검증합니다.
+7. Container Detail UI는 latest snapshot을 이용해 보수적인 candidate action만 표시하고 Backend와 Agent의 live authorization을 최종 authority로 유지합니다. 별도 confirmation 뒤에만 mutation을 보내며 자동 POST retry를 하지 않습니다.
+8. Ambiguous submission은 같은 in-memory idempotency key로만 explicit retry할 수 있고, `REQUESTED` operation은 반환된 public operation ID에 대한 visibility/online-aware bounded GET polling으로만 확인합니다.
 
-**현재 source 근거:** Agent exact-label/authority-independence와 bounded allowlist/candidate test, control broker concurrency·expiry·duplicate-result test, exact mTLS route, strict wire decode, live protected target/mount revalidation, fixed Docker HTTP와 ambiguous no-retry regression. Public API에는 strict DTO, same-origin/CSRF security, commit-before-dispatch idempotency, bounded audit projection/reconciliation과 PostgreSQL concurrency/migration regression이 있습니다. Public UI와 production mutation은 없습니다.
+**현재 source 근거:** Agent exact-label/authority-independence와 bounded allowlist/candidate test, control broker concurrency·expiry·duplicate-result test, exact mTLS route, strict wire decode, live protected target/mount revalidation, fixed Docker HTTP와 ambiguous no-retry regression. Public API에는 strict DTO, same-origin/CSRF security, commit-before-dispatch idempotency, bounded audit projection/reconciliation과 PostgreSQL concurrency/migration regression이 있습니다. Container Detail UI에는 conservative action matrix, accessible confirmation, one-key ambiguous retry, GET-only bounded polling과 terminal-state regression이 있으며 production mutation은 없습니다.
 
 **전체 완료 근거:** authorization, CSRF, allowlist, duplicate request, audit, timeout, stale Agent, database-protection test와 별도 production acceptance가 모두 필요합니다.
 

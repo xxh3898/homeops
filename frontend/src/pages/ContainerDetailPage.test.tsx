@@ -46,7 +46,9 @@ describe('ContainerDetailPage', () => {
     expect(screen.getByText('13080 → 8080/tcp')).toBeInTheDocument()
     expect(screen.getByText('example/homeops-api:sha')).toHaveClass('break-words')
     expect(screen.getByText('Read-only inventory')).toBeInTheDocument()
-    expect(screen.getByText('Container controls are not available in this read-only phase.')).toBeInTheDocument()
+    expect(screen.getByText(/managed label is one candidate signal/)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Container control' })).toBeInTheDocument()
+    expect(screen.getByText(/exact managed inventory label is not reported/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Back to Containers' }))
       .toHaveAttribute('href', '/containers')
     expect(screen.getByRole('link', { name: 'Back to Containers' })).toHaveClass('min-h-11')
@@ -129,16 +131,24 @@ describe('ContainerDetailPage', () => {
 
   it('keeps cached detail stale when background inventory request is unavailable', async () => {
     mocks.getContainerDetail
-      .mockResolvedValueOnce(containerDetail())
+      .mockResolvedValueOnce(containerDetail({
+        container: {
+          ...containerDetail().container,
+          composeProject: 'safe-project',
+          managed: true,
+        },
+      }))
       .mockRejectedValue(new ApiError(503, 'inventory unavailable'))
     const { queryClient } = renderPage()
 
     expect(await screen.findByRole('heading', { name: 'homeops-api' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled()
     await queryClient.refetchQueries({ queryKey: ['container', FIRST_ID] })
 
     expect(await screen.findByText(
       'Container inventory is temporarily unavailable. Showing the last successfully reported snapshot.',
     )).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled()
     expect(screen.getByRole('heading', { name: 'homeops-api' })).toBeInTheDocument()
     expect(mocks.getContainerDetail).toHaveBeenCalledTimes(3)
   })
