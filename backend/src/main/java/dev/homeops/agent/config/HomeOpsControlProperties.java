@@ -16,6 +16,7 @@ public final class HomeOpsControlProperties {
     private static final int MAXIMUM_ALLOWLIST_CHARACTERS = 2_048;
     private static final int MAXIMUM_PROJECTS = 32;
     private static final int MAXIMUM_PUBLIC_ORIGIN_CHARACTERS = 512;
+    private static final int HTTPS_DEFAULT_PORT = 443;
     private static final Pattern PROJECT_NAME =
             Pattern.compile("^[a-z0-9][a-z0-9_-]{0,62}$");
     private static final Pattern PUBLIC_ORIGIN =
@@ -121,6 +122,9 @@ public final class HomeOpsControlProperties {
         int port = matcher.group(2) == null ? -1 : Integer.parseInt(matcher.group(2));
         if (port > 65_535) {
             throw invalidPublicOrigin();
+        }
+        if (port == HTTPS_DEFAULT_PORT) {
+            port = -1;
         }
         return new OriginAuthority(host.toLowerCase(Locale.ROOT), port);
     }

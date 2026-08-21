@@ -38,6 +38,19 @@ class ContainerControlOriginGuardTest {
         assertThatCode(() -> guard.requireSameOrigin(request)).doesNotThrowAnyException();
     }
 
+    @Test
+    void should_acceptOriginWithoutPort_when_configuredHttpsPortIsDefault() {
+        ContainerControlOriginGuard defaultPortGuard = new ContainerControlOriginGuard(
+                new HomeOpsControlProperties("", "https://homeops.example.test:443"));
+        MockHttpServletRequest request = request(
+                "https://homeops.example.test",
+                "homeops.example.test",
+                "https");
+
+        assertThatCode(() -> defaultPortGuard.requireSameOrigin(request))
+                .doesNotThrowAnyException();
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
         "null",

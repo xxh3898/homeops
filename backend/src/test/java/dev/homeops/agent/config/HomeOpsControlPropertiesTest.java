@@ -54,6 +54,37 @@ class HomeOpsControlPropertiesTest {
     }
 
     @Test
+    void should_matchCanonicalOrigin_when_httpsDefaultPortIsExplicitOrOmitted() {
+        HomeOpsControlProperties explicitDefaultPort = new HomeOpsControlProperties(
+                "",
+                "https://homeops.example.test:443");
+        HomeOpsControlProperties omittedDefaultPort = new HomeOpsControlProperties(
+                "",
+                "https://homeops.example.test");
+
+        assertThat(explicitDefaultPort.matchesPublicOrigin(
+                "https://homeops.example.test")).isTrue();
+        assertThat(explicitDefaultPort.matchesPublicOrigin(
+                "https://homeops.example.test:443")).isTrue();
+        assertThat(omittedDefaultPort.matchesPublicOrigin(
+                "https://homeops.example.test")).isTrue();
+    }
+
+    @Test
+    void should_preserveExactPort_when_httpsPortIsNonDefault() {
+        HomeOpsControlProperties properties = new HomeOpsControlProperties(
+                "",
+                "https://homeops.example.test:8443");
+
+        assertThat(properties.matchesPublicOrigin(
+                "https://homeops.example.test:8443")).isTrue();
+        assertThat(properties.matchesPublicOrigin(
+                "https://homeops.example.test")).isFalse();
+        assertThat(properties.matchesPublicOrigin(
+                "https://homeops.example.test:9443")).isFalse();
+    }
+
+    @Test
     void should_failStartupWithoutExposingValue_when_configurationIsInvalid() {
         String privateProjectMarker = "PrivateProject";
         contextRunner.withPropertyValues(
