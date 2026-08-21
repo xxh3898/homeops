@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/xxh3898/homeops/agent/internal/config"
+	"github.com/xxh3898/homeops/agent/internal/containercontrol"
 	"github.com/xxh3898/homeops/agent/internal/containerlog"
 	"github.com/xxh3898/homeops/agent/internal/snapshot"
 	spoolpkg "github.com/xxh3898/homeops/agent/internal/spool"
@@ -200,6 +201,48 @@ func TestExecuteContainerLogWorkRedactsBeforeResultTransport(t *testing.T) {
 		result.Lines[0].Message != "token=[REDACTED]" ||
 		!result.RedactionApplied || !result.CollectedAt.Equal(now) {
 		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestExecuteContainerControlWorkInvokesFixedExecutorOnce(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	executor := &recordingControlExecutor{outcome: containercontrol.Outcome{
+		Status:     containercontrol.StatusApplied,
+		ReasonCode: containercontrol.ReasonApplied,
+	}}
+	application := &App{
+		config:          config.Config{MaxContainers: 128},
+		controlExecutor: executor,
+		now:             func() time.Time { return now },
+	}
+	work := validControlWork(now.Add(15 * time.Second))
+
+	result := application.executeContainerControlWork(context.Background(), work)
+
+	if executor.calls != 1 || result.Status != containercontrol.StatusApplied ||
+		result.Reason != containercontrol.ReasonApplied ||
+		result.RequestID != work.RequestID || !result.Finished.Equal(now) {
+		t.Fatalf("executor/result = %d/%#v", executor.calls, result)
+	}
+}
+
+func TestExecuteContainerControlWorkRejectsExpiryBeforeDockerExecutor(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	executor := &recordingControlExecutor{}
+	application := &App{
+		config:          config.Config{MaxContainers: 128},
+		controlExecutor: executor,
+		now:             func() time.Time { return now },
+	}
+	work := validControlWork(now)
+
+	result := application.executeContainerControlWork(context.Background(), work)
+
+	if result.Status != containercontrol.StatusExpired ||
+		result.Reason != containercontrol.ReasonWorkExpired || executor.calls != 0 {
+		t.Fatalf("result/calls = %#v/%d", result, executor.calls)
 	}
 }
 
@@ -391,6 +434,160 @@ func TestDeliverContainerLogResultStopsImmediatelyOnCancellation(t *testing.T) {
 	assertResultReleased(t, result)
 }
 
+func TestDeliverContainerControlResultRetriesTransportOnlyAndReleasesPayload(t *testing.T) {
+	t.Parallel()
+	clock := &mutableTime{value: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)}
+	controlTransport := &recordingControlTransport{
+		sendErrors: []error{errors.New("network unavailable"), nil},
+	}
+	application := controlRetryTestApp(clock, controlTransport)
+	result := successfulControlResult(clock.value)
+
+	delivery := application.deliverContainerControlResult(
+		context.Background(),
+		&result,
+		clock.value.Add(15*time.Second))
+
+	if delivery != resultDeliveryCompleted || controlTransport.sendCalls != 2 {
+		t.Fatalf("delivery/calls = %d/%d", delivery, controlTransport.sendCalls)
+	}
+	assertControlResultReleased(t, result)
+}
+
+func TestDeliverContainerControlResultAcceptsResultAfterOperationExpiry(t *testing.T) {
+	t.Parallel()
+	clock := &mutableTime{value: time.Date(2026, 8, 20, 12, 0, 1, 0, time.UTC)}
+	controlTransport := &recordingControlTransport{}
+	application := controlRetryTestApp(clock, controlTransport)
+	result := successfulControlResult(clock.value.Add(-time.Second))
+
+	delivery := application.deliverContainerControlResult(
+		context.Background(),
+		&result,
+		clock.value.Add(-time.Second))
+
+	if delivery != resultDeliveryCompleted || controlTransport.sendCalls != 1 {
+		t.Fatalf("delivery/calls = %d/%d", delivery, controlTransport.sendCalls)
+	}
+	assertControlResultReleased(t, result)
+}
+
+func TestDeliverContainerControlResultRetriesKnownTransientStatuses(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{408, 429, 500, 503} {
+		status := status
+		t.Run(fmt.Sprintf("status-%d", status), func(t *testing.T) {
+			t.Parallel()
+			clock := &mutableTime{value: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)}
+			controlTransport := &recordingControlTransport{
+				sendErrors: []error{transport.StatusError{StatusCode: status}, nil},
+			}
+			application := controlRetryTestApp(clock, controlTransport)
+			result := successfulControlResult(clock.value)
+
+			delivery := application.deliverContainerControlResult(
+				context.Background(),
+				&result,
+				clock.value.Add(15*time.Second))
+
+			if delivery != resultDeliveryCompleted || controlTransport.sendCalls != 2 {
+				t.Fatalf("delivery/calls = %d/%d", delivery, controlTransport.sendCalls)
+			}
+			assertControlResultReleased(t, result)
+		})
+	}
+}
+
+func TestDeliverContainerControlResultDoesNotRetryGoneOrTerminalFailure(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{400, 410, 422} {
+		status := status
+		t.Run(fmt.Sprintf("status-%d", status), func(t *testing.T) {
+			t.Parallel()
+			clock := &mutableTime{value: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)}
+			controlTransport := &recordingControlTransport{
+				sendError: transport.StatusError{StatusCode: status},
+			}
+			application := controlRetryTestApp(clock, controlTransport)
+			result := successfulControlResult(clock.value)
+
+			delivery := application.deliverContainerControlResult(
+				context.Background(),
+				&result,
+				clock.value.Add(15*time.Second))
+
+			if delivery != resultDeliveryCompleted || controlTransport.sendCalls != 1 {
+				t.Fatalf("delivery/calls = %d/%d", delivery, controlTransport.sendCalls)
+			}
+			assertControlResultReleased(t, result)
+		})
+	}
+}
+
+func TestDeliverContainerControlResultTreatsOldAPIAsUnsupported(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{404, 405} {
+		status := status
+		t.Run(fmt.Sprintf("status-%d", status), func(t *testing.T) {
+			t.Parallel()
+			clock := &mutableTime{value: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)}
+			controlTransport := &recordingControlTransport{
+				sendError: transport.StatusError{StatusCode: status},
+			}
+			application := controlRetryTestApp(clock, controlTransport)
+			result := successfulControlResult(clock.value)
+
+			delivery := application.deliverContainerControlResult(
+				context.Background(),
+				&result,
+				clock.value.Add(15*time.Second))
+
+			if delivery != resultDeliveryUnsupported || controlTransport.sendCalls != 1 {
+				t.Fatalf("delivery/calls = %d/%d", delivery, controlTransport.sendCalls)
+			}
+			assertControlResultReleased(t, result)
+		})
+	}
+}
+
+func TestDeliverContainerControlResultStopsAtReportingDeadlineWithoutPersistence(t *testing.T) {
+	t.Parallel()
+	clock := &mutableTime{value: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)}
+	controlTransport := &recordingControlTransport{sendError: errors.New("network unavailable")}
+	application := controlRetryTestApp(clock, controlTransport)
+	result := successfulControlResult(clock.value)
+	expiresAt := clock.value.Add(
+		-containercontrol.ResultReportingGrace + 250*time.Millisecond)
+
+	delivery := application.deliverContainerControlResult(
+		context.Background(),
+		&result,
+		expiresAt)
+
+	if delivery != resultDeliveryCompleted || controlTransport.sendCalls != 2 {
+		t.Fatalf("delivery/calls = %d/%d", delivery, controlTransport.sendCalls)
+	}
+	assertControlResultReleased(t, result)
+}
+
+func TestDeliverContainerControlResultDropsPayloadAfterReportingGrace(t *testing.T) {
+	t.Parallel()
+	clock := &mutableTime{value: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)}
+	controlTransport := &recordingControlTransport{}
+	application := controlRetryTestApp(clock, controlTransport)
+	result := successfulControlResult(clock.value.Add(-containercontrol.ResultReportingGrace))
+
+	delivery := application.deliverContainerControlResult(
+		context.Background(),
+		&result,
+		clock.value.Add(-containercontrol.ResultReportingGrace))
+
+	if delivery != resultDeliveryCompleted || controlTransport.sendCalls != 0 {
+		t.Fatalf("delivery/calls = %d/%d", delivery, controlTransport.sendCalls)
+	}
+	assertControlResultReleased(t, result)
+}
+
 func TestRunKeepsSnapshotLoopAliveWhenOldAPIReturns404(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Millisecond)
@@ -465,6 +662,103 @@ func TestRunKeepsSnapshotLoopAliveWhenOldResultAPIReturns404(t *testing.T) {
 	}
 	if logTransport.sendCalls != 1 {
 		t.Fatalf("result send calls = %d, want 1", logTransport.sendCalls)
+	}
+}
+
+func TestRunKeepsSnapshotAndLogLoopsAliveWhenOldControlAPIReturns404(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Millisecond)
+	defer cancel()
+	snapshotTransport := &recordingTransport{}
+	logTransport := &recordingLogTransport{}
+	controlTransport := &recordingControlTransport{
+		nextError: transport.StatusError{StatusCode: 404},
+	}
+	application := &App{
+		config: config.Config{
+			AgentID:       "local-mac",
+			Interval:      5 * time.Millisecond,
+			MaxContainers: 128,
+		},
+		version:          "1111111111111111111111111111111111111111",
+		host:             &recordingHostCollector{},
+		docker:           &recordingDockerCollector{},
+		transport:        snapshotTransport,
+		logReader:        &recordingLogReader{},
+		logTransport:     logTransport,
+		controlExecutor:  &recordingControlExecutor{},
+		controlTransport: controlTransport,
+		spool:            &recordingSpool{},
+		logger:           discardLogger(),
+	}
+
+	if err := application.Run(ctx); err != nil {
+		t.Fatalf("Run returned an error: %v", err)
+	}
+	if snapshotTransport.sendCalls < 2 || logTransport.nextCalls < 1 {
+		t.Fatalf("snapshot/log calls = %d/%d", snapshotTransport.sendCalls, logTransport.nextCalls)
+	}
+	if controlTransport.nextCalls != 1 {
+		t.Fatalf("control poll calls = %d, want 1 bounded old-API attempt", controlTransport.nextCalls)
+	}
+}
+
+func TestControlResultDeliveryRetryNeverReexecutesDockerOperation(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	executor := &recordingControlExecutor{outcome: containercontrol.Outcome{
+		Status:     containercontrol.StatusApplied,
+		ReasonCode: containercontrol.ReasonApplied,
+	}}
+	controlTransport := &recordingControlTransport{
+		sendErrors: []error{errors.New("network unavailable"), nil},
+	}
+	clock := &mutableTime{value: now}
+	application := controlRetryTestApp(clock, controlTransport)
+	application.config.MaxContainers = 128
+	application.controlExecutor = executor
+	work := validControlWork(now.Add(15 * time.Second))
+
+	result := application.executeContainerControlWork(context.Background(), work)
+	delivery := application.deliverContainerControlResult(
+		context.Background(), &result, work.ExpiresAt)
+
+	if delivery != resultDeliveryCompleted || executor.calls != 1 || controlTransport.sendCalls != 2 {
+		t.Fatalf("delivery/executor/send = %d/%d/%d",
+			delivery, executor.calls, controlTransport.sendCalls)
+	}
+}
+
+func TestPostSendUnknownResultIsDeliveredWithinGraceWithoutReexecution(t *testing.T) {
+	t.Parallel()
+	clock := &mutableTime{value: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)}
+	expiresAt := clock.value.Add(250 * time.Millisecond)
+	executor := &recordingControlExecutor{
+		outcome: containercontrol.Outcome{
+			Status:     containercontrol.StatusOutcomeUnknown,
+			ReasonCode: containercontrol.ReasonDockerOutcomeUnknown,
+		},
+		onCall: func() {
+			clock.value = expiresAt.Add(50 * time.Millisecond)
+		},
+	}
+	controlTransport := &recordingControlTransport{}
+	application := controlRetryTestApp(clock, controlTransport)
+	application.config.MaxContainers = 128
+	application.controlExecutor = executor
+	work := validControlWork(expiresAt)
+
+	result := application.executeContainerControlWork(context.Background(), work)
+	delivery := application.deliverContainerControlResult(
+		context.Background(), &result, work.ExpiresAt)
+
+	if delivery != resultDeliveryCompleted || executor.calls != 1 ||
+		controlTransport.sendCalls != 1 ||
+		controlTransport.lastResult.Status != containercontrol.StatusOutcomeUnknown ||
+		controlTransport.lastResult.Reason != containercontrol.ReasonDockerOutcomeUnknown {
+		t.Fatalf("delivery/executor/send/result = %d/%d/%d/%#v",
+			delivery, executor.calls, controlTransport.sendCalls,
+			controlTransport.lastResult)
 	}
 }
 
@@ -549,6 +843,60 @@ type recordingLogTransport struct {
 	sendErrors []error
 }
 
+type recordingControlExecutor struct {
+	outcome containercontrol.Outcome
+	calls   int
+	onCall  func()
+}
+
+func (executor *recordingControlExecutor) ControlContainer(
+	context.Context,
+	string,
+	string,
+	containercontrol.Operation,
+	int,
+	time.Time,
+) containercontrol.Outcome {
+	executor.calls++
+	if executor.onCall != nil {
+		executor.onCall()
+	}
+	return executor.outcome
+}
+
+type recordingControlTransport struct {
+	nextCalls  int
+	nextError  error
+	nextWork   *containercontrol.Work
+	sendCalls  int
+	sendError  error
+	sendErrors []error
+	lastResult containercontrol.Result
+}
+
+func (controlTransport *recordingControlTransport) NextContainerControlWork(
+	context.Context,
+) (*containercontrol.Work, error) {
+	controlTransport.nextCalls++
+	work := controlTransport.nextWork
+	controlTransport.nextWork = nil
+	return work, controlTransport.nextError
+}
+
+func (controlTransport *recordingControlTransport) SendContainerControlResult(
+	_ context.Context,
+	result containercontrol.Result,
+) error {
+	controlTransport.sendCalls++
+	controlTransport.lastResult = result
+	if len(controlTransport.sendErrors) > 0 {
+		err := controlTransport.sendErrors[0]
+		controlTransport.sendErrors = controlTransport.sendErrors[1:]
+		return err
+	}
+	return controlTransport.sendError
+}
+
 func (logTransport *recordingLogTransport) NextContainerLogWork(
 	context.Context,
 ) (*containerlog.Work, error) {
@@ -613,6 +961,50 @@ func retryTestApp(
 			clock.value = clock.value.Add(delay)
 			return true
 		},
+	}
+}
+
+func controlRetryTestApp(
+	clock *mutableTime,
+	controlTransport *recordingControlTransport,
+) *App {
+	return &App{
+		controlTransport: controlTransport,
+		now:              func() time.Time { return clock.value },
+		wait: func(ctx context.Context, delay time.Duration) bool {
+			if ctx.Err() != nil {
+				return false
+			}
+			clock.value = clock.value.Add(delay)
+			return true
+		},
+	}
+}
+
+func validControlWork(expiresAt time.Time) containercontrol.Work {
+	return containercontrol.Work{
+		RequestID:      "10000000-0000-4000-8000-000000000001",
+		ContainerID:    "0123456789ab",
+		ComposeProject: "example",
+		Operation:      containercontrol.OperationStart,
+		ExpiresAt:      expiresAt,
+	}
+}
+
+func successfulControlResult(finishedAt time.Time) containercontrol.Result {
+	return containercontrol.Result{
+		RequestID: "10000000-0000-4000-8000-000000000001",
+		Status:    containercontrol.StatusApplied,
+		Reason:    containercontrol.ReasonApplied,
+		Finished:  finishedAt,
+	}
+}
+
+func assertControlResultReleased(t *testing.T, result containercontrol.Result) {
+	t.Helper()
+	if result.RequestID != "" || result.Status != "" ||
+		result.Reason != "" || !result.Finished.IsZero() {
+		t.Fatalf("control result payload reference was retained: %#v", result)
 	}
 }
 

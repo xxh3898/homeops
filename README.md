@@ -6,9 +6,11 @@ HomeOps는 Docker Desktop을 실행하는 Apple Silicon Mac용 모바일 우선 
 
 ## 상태
 
-HomeOps는 정식 출시 전 소프트웨어입니다. 현재 production에서는 읽기 전용 호스트 메트릭과 컨테이너 인벤토리, HMAC 인증 배포·백업 결과 수집, 허용 목록 기반 HTTP 서비스 점검과 인시던트 이력, 페이지네이션을 적용한 모바일 활동 타임라인이 활성화되어 있습니다. 새 설치에서 secret 또는 정확한 origin 허용 목록이 비어 있으면 해당 입력은 계속 fail closed합니다.
+HomeOps는 정식 출시 전 소프트웨어입니다. 현재 production에서는 읽기 전용 호스트 메트릭과 컨테이너 인벤토리, HMAC 인증 배포·백업 결과 수집, 허용 목록 기반 HTTP 서비스 점검과 인시던트 이력, 페이지네이션을 적용한 모바일 활동 타임라인, opt-in Discord 알림 capability가 활성화되어 있습니다. 새 설치에서 secret 또는 정확한 origin 허용 목록이 비어 있으면 해당 입력은 계속 fail closed합니다.
 
-읽기 전용 Phase 1은 Source IMPLEMENTED / Production ACTIVE / Acceptance COMPLETE입니다. CPU, memory, disk의 bounded metric history, latest Agent snapshot 기반 Container Detail, explicit opt-in과 이중 redaction을 적용한 bounded Container Logs API/UI가 production에서 검증됐습니다. Container Logs는 controlled opt-in, one-shot retrieval, mobile 표시와 revoke 뒤 fail-closed/payload 제거 acceptance까지 완료했습니다. 알림과 제한된 컨테이너 제어는 후속 마일스톤입니다. 라벨 허용 목록, 작업 잠금, 멱등성, 감사 제어가 완성되기 전까지 컨테이너 시작·중지·재시작은 의도적으로 제외합니다.
+읽기 전용 Phase 1은 Source IMPLEMENTED / Production ACTIVE / Acceptance COMPLETE입니다. CPU, memory, disk의 bounded metric history, latest Agent snapshot 기반 Container Detail, explicit opt-in과 이중 redaction을 적용한 bounded Container Logs API/UI가 production에서 검증됐습니다. Container Logs는 controlled opt-in, one-shot retrieval, mobile 표시와 revoke 뒤 fail-closed/payload 제거 acceptance까지 완료했습니다.
+
+알림 Phase 4도 Source IMPLEMENTED / Production ACTIVE / Acceptance COMPLETE입니다. Transactional outbox, bounded Discord delivery, producer deduplication·cooldown·recovery와 explicit service/container eligibility가 production에서 검증됐습니다. Acceptance 종료 뒤 현재 `HOMEOPS_NOTIFICATIONS_ENABLED=false`로 outbound를 닫아 두었고 webhook Secret은 설치된 상태입니다. 이는 검증된 capability를 미완료로 되돌리거나 historical event를 재생한다는 뜻이 아닙니다. 제한된 컨테이너 제어 Phase 5는 Source IMPLEMENTED / Production INACTIVE / Acceptance NOT DONE입니다. Source에는 fixed Agent protocol, ADMIN 전용 public enqueue/polling API, durable audit·client idempotency·CSRF/Origin·confirmation 경계와 Container Detail의 mobile control UI가 있습니다. Production V10 migration, Agent rollout, allowlist·managed-label activation과 실제 Docker control acceptance는 아직 수행하지 않았습니다.
 
 macOS Agent는 production에서 운영 중입니다. 변경 불가능한 GHCR artifact, 제한된 전용 SSH key, `current`/`previous` rollback과 fresh snapshot proof를 사용하며 live rollback·roll-forward acceptance도 완료했습니다. `main`의 full validation과 application release는 유지하지만 persistent Agent artifact는 Agent release-affecting path가 바뀔 때만 발행됩니다. 현재 `HOMEOPS_AGENT_ROLLOUT_ENABLED=false`는 검증된 capability를 미완료로 돌리는 값이 아니라 자동 CI rollout을 닫아 둔 operational kill switch입니다. 향후 마일스톤을 지원되는 동작으로 보기 전에 [구현 로드맵](docs/roadmap.md)을 확인하세요.
 
@@ -62,16 +64,19 @@ Linux agent, Kubernetes, 인터넷 공개, 다중 사용자 계정, 웹 터미�
 - `GET /api/v1/containers`: Agent freshness metadata와 읽기 전용 인벤토리 제공
 - `GET /api/v1/containers/{id}`: 최신 Agent snapshot 안의 12자리 bounded identifier 하나에 대한 freshness-aware 읽기 전용 detail 제공
 - `GET /api/v1/containers/{id}/logs`: fresh Agent capability와 container별 exact opt-in이 있을 때만 `50`, `100`, `200` line으로 제한한 redacted one-shot tail 제공
+- `POST /api/v1/containers/{id}/actions`: ADMIN session, CSRF, exact HTTPS Origin/Host, canonical idempotency key와 명시적 confirmation으로 보호하는 bounded `START|STOP|RESTART` 예약
+- `GET /api/v1/container-actions/{operationId}`: durable control audit의 bounded status projection 제공
 - `GET /api/v1/activity`: 범위가 제한된 안정 cursor 제공
 - `GET /api/v1/services`, `/status`, `/incidents`
 - `POST /api/v1/services`: 관리자 인증과 CSRF로 보호
 - `PATCH /api/v1/services/{serviceId}/notification`: future HomeOps Discord incident eligibility boolean만 ADMIN + CSRF로 변경
 - `POST /api/v1/internal/agent/snapshots`: loopback mTLS ingress를 통해서만 사용 가능
 - `GET /api/v1/internal/agent/log-requests/next`, `POST /api/v1/internal/agent/log-results`: public log API가 아닌 bounded Agent work protocol foundation. 동일 loopback mTLS ingress의 exact path만 허용
+- `GET /api/v1/internal/agent/control-requests/next`, `POST /api/v1/internal/agent/control-results`: public API가 예약한 fixed `START|STOP|RESTART` work를 처리하는 Agent protocol foundation. 동일 loopback mTLS ingress에서만 동작하며 production activation 대상이 아님
 - `POST /api/v1/internal/ingestion/deployments`, `/backups`: production의 신뢰하는 reporter에서 활성화. ingestion secret이 비어 있는 새 설치에서는 fail closed
 - `GET /actuator/health/readiness`
 
-이 마일스톤에는 컨테이너 변경, 임의 명령, live/follow log stream, log 저장·검색·내보내기, 알림 전송, 일반 네트워크 요청 endpoint가 없습니다.
+Container Detail의 control UI는 fresh latest snapshot을 바탕으로 보수적인 candidate action만 제시하며 Backend와 Agent의 live authorization을 대체하지 않습니다. Mutation은 자동 재시도하지 않고, 전송 결과가 모호할 때만 사용자가 같은 in-memory idempotency key로 명시적으로 재시도할 수 있습니다. 임의 명령, live/follow log stream, log 저장·검색·내보내기, 일반 네트워크 요청 endpoint는 없습니다. Public control API는 fixed operation과 12자리 ID만 받아 durable reservation을 commit한 뒤 기존 bounded broker로 전달하며, Agent는 fixed Docker POST만 수행하고 generic command/path/query/body를 받지 않습니다. Discord 알림은 typed allowlist, explicit opt-in과 global kill switch 안에서만 동작하며 arbitrary webhook이나 optional email escalation은 제공하지 않습니다.
 
 ## 데이터 손실 정책
 

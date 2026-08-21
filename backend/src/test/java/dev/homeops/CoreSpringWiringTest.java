@@ -4,8 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import dev.homeops.agent.AgentSnapshotService;
+import dev.homeops.agent.ContainerControlAuthority;
 import dev.homeops.agent.ProcessedAgentSnapshotRetentionJob;
 import dev.homeops.agent.config.HomeOpsAgentProperties;
+import dev.homeops.agent.config.HomeOpsControlProperties;
+import dev.homeops.agent.control.ContainerControlBroker;
 import dev.homeops.agent.logs.ContainerLogBroker;
 import dev.homeops.agent.logs.ContainerLogQueryService;
 import dev.homeops.agent.logs.ContainerLogRedactor;
@@ -43,6 +46,9 @@ class CoreSpringWiringTest {
                     HomeOpsMetricProperties.class,
                     () -> new HomeOpsMetricProperties(Duration.ofDays(30)));
             context.registerBean(
+                    HomeOpsControlProperties.class,
+                    () -> new HomeOpsControlProperties(""));
+            context.registerBean(
                     AgentStatusRepository.class,
                     () -> mock(AgentStatusRepository.class));
             context.registerBean(
@@ -68,6 +74,8 @@ class CoreSpringWiringTest {
                     () -> mock(JdbcTemplate.class));
             context.register(
                     AgentSnapshotService.class,
+                    ContainerControlAuthority.class,
+                    ContainerControlBroker.class,
                     ContainerLogRedactor.class,
                     ContainerLogBroker.class,
                     ContainerLogQueryService.class,
@@ -79,6 +87,8 @@ class CoreSpringWiringTest {
             context.refresh();
 
             assertThat(context.getBean(AgentSnapshotService.class)).isNotNull();
+            assertThat(context.getBean(ContainerControlAuthority.class)).isNotNull();
+            assertThat(context.getBean(ContainerControlBroker.class)).isNotNull();
             assertThat(context.getBean(ContainerLogBroker.class)).isNotNull();
             assertThat(context.getBean(ContainerLogQueryService.class)).isNotNull();
             assertThat(context.getBean(ProcessedAgentSnapshotRetentionJob.class))

@@ -11,6 +11,7 @@
 | `HOMEOPS_DB_PASSWORD` | 예 | 예 | PostgreSQL 비밀번호 |
 | `HOMEOPS_ALLOWED_USERS` | 예 | 개인 정보 | 쉼표로 구분한 정확한 Tailscale login allowlist |
 | `HOMEOPS_AGENT_ID` | 예 | 아니요 | API가 기대하는 정확한 Agent identifier |
+| `HOMEOPS_CONTROL_ALLOWED_PROJECTS` | 아니요 | 비공개 metadata | 쉼표로 구분한 exact Compose project allowlist. 기본값은 empty이며 Phase 5 candidate authority를 fail closed. 최대 32개, 각 이름 최대 63자 |
 | `HOMEOPS_WEB_BIND` | production | 아니요 | loopback Web host binding |
 | `HOMEOPS_AGENT_BIND` | production | 아니요 | loopback mTLS Agent binding |
 | `HOMEOPS_TLS_DIR` | production | 민감 path | server certificate, key, Agent CA certificate가 있는 directory |
@@ -45,7 +46,7 @@
 | `HOMEOPS_CONTAINER_NOTIFICATION_FAILURE_AFTER` | 아니요 | 아니요 | Opt-in container sustained-failure threshold. 기본값 `30s`, 허용 범위 `5s..10m` |
 | `HOMEOPS_CONTAINER_NOTIFICATION_REALERT_COOLDOWN` | 아니요 | 아니요 | 같은 logical container의 새 failure episode root cooldown. 기본값 `5m`, 허용 범위 `30s..1h` |
 | `HOMEOPS_INCIDENT_NOTIFICATION_ESCALATION_AFTER` | 아니요 | 아니요 | Open incident의 장기 failure escalation threshold. 기본값 `15m`, 허용 범위 `5m..24h` |
-| `HOMEOPS_DISCORD_WEBHOOK_URL` | Phase 4 activation | 예 | Official Discord HTTPS webhook. notifications가 `false`면 비어 있어도 시작하며 `true`면 strict URL이 없을 때 fail closed |
+| `HOMEOPS_DISCORD_WEBHOOK_URL` | Discord delivery enable 시 | 예 | Official Discord HTTPS webhook. notifications가 `false`면 비어 있어도 시작하며 `true`면 strict URL이 없을 때 fail closed |
 | `HOMEOPS_NOTIFICATION_CONNECT_TIMEOUT` | 아니요 | 아니요 | Discord connect timeout. 기본값 `3s`, 최대 `10s` |
 | `HOMEOPS_NOTIFICATION_REQUEST_TIMEOUT` | 아니요 | 아니요 | Discord request timeout. 기본값 `5s`, 최대 `15s` |
 | `HOMEOPS_NOTIFICATION_LEASE_DURATION` | 아니요 | 아니요 | Outbox claim lease. request timeout보다 길어야 하며 기본값 `30s` |
@@ -59,6 +60,8 @@
 | `HOMEOPS_NOTIFICATION_SENT_RETENTION` | 아니요 | 아니요 | `SENT`/`SUPPRESSED` outbox retention. 기본값 `30d` |
 | `HOMEOPS_NOTIFICATION_FAILED_RETENTION` | 아니요 | 아니요 | `FAILED`/`DELIVERY_UNKNOWN` retention. 기본값 `90d` |
 | `HOMEOPS_NOTIFICATION_CLEANUP_CRON` | 아니요 | 아니요 | Notification terminal row cleanup UTC cron. 기본값 `0 41 3 * * *` |
+
+Production acceptance 종료 현재 webhook Secret은 값 비노출 상태로 설치되어 있고 `HOMEOPS_NOTIFICATIONS_ENABLED=false`입니다. Secret 존재만으로 notification이 활성화되지 않으며, disabled 상태의 qualifying intent는 replay 불가 `SUPPRESSED`로 끝납니다. 이후 switch enable 또는 Secret 변경은 별도 production gate입니다.
 
 `HOMEOPS_AUTH_MODE=DEV`는 Spring `dev` profile에서만 허용됩니다. production 환경에서는 절대 설정하지 마세요.
 
@@ -116,7 +119,7 @@ production directory에는 `smoke.origin`도 있습니다. path, query, fragment
 - `homeops.logs`
 - `homeops.notifications`
 
-`homeops.managed=true`는 이 마일스톤에서 표시용입니다. control endpoint는 없습니다. 이후 control 마일스톤에서는 live label을 다시 읽고 추가 project allowlist, operation lock, idempotency key, confirmation policy, audit record를 강제해야 합니다.
+`homeops.managed=true`만 Phase 5 control candidate opt-in으로 해석합니다. Key와 value는 case-sensitive하며 `TRUE`, `True`, `1`, `yes` 또는 공백이 포함된 값은 false입니다. Agent는 raw labels가 아니라 `managed` boolean만 snapshot에 전달하며 logs/notifications authority와 독립적으로 유지합니다. Backend candidate authority는 fresh snapshot의 unique 12자리 short-ID match, `managed=true`, nonblank exact Compose project와 `HOMEOPS_CONTROL_ALLOWED_PROJECTS` membership을 모두 요구합니다. Allowlist는 기본 empty이고 항목 주변 공백만 trim하며 empty/duplicate/invalid/oversized configuration은 startup을 fail closed합니다. `homeops`, standalone/blank/unknown project는 allowlist와 무관하게 deny합니다. Dormant Agent protocol도 operation 직전에 live exact label/project와 Compose service/mount를 다시 확인하고 protected service, writable bind/volume 또는 판정 불가능 mount를 deny합니다. Public ADMIN API, V10 durable audit와 Container Detail control UI source는 구현됐지만 UI gating은 advisory이며 Backend와 Agent가 final authority입니다. Production V10 migration·allowlist/label 설정·Agent rollout·control drill은 각각 별도 승인 대상입니다.
 
 `homeops.logs=true`는 Container Logs disclosure를 위한 container별 exact opt-in입니다. Agent root capability와 fresh snapshot이 함께 있어야 하며 stale snapshot은 authority가 아닙니다. Public API/UI source가 존재해도 label이 없는 container는 `422`로 fail closed하고 실행 가능한 UI control을 표시하지 않습니다. Controlled production opt-in/revoke acceptance는 완료했지만, 이후 service opt-in도 code deployment와 분리된 security-sensitive configuration gate로서 service별 privacy review와 명시적 승인을 요구합니다. Agent와 API는 raw log를 snapshot spool, file, DB 또는 Activity에 저장하지 않습니다.
 
@@ -156,5 +159,5 @@ GitHub Actions는 workflow의 scoped package access에 `GITHUB_TOKEN`을 자동 
 - production `.env`와 TLS material은 mode를 제한하고 source checkout 밖에 둡니다.
 - Compose label, GitHub variable, command argument, log, issue body, deployment state에 secret 값을 넣지 마세요.
 - private deployment metadata를 repository/environment Variable, step summary, public log, issue body에 기록하지 마세요.
-- Discord outbox foundation에는 deployment, backup, incident, Agent lifecycle과 Docker episode producer가 연결되어 있습니다. Incident는 explicit service authority가 있는 future OPEN winner만 root를 만들고, incident·Agent·Docker recovery는 각 SENT root에만 연결됩니다. `HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 생성된 root intent가 replay 불가 `SUPPRESSED`로 끝나며 child, webhook requirement와 outbound가 없습니다. Phase 4 activation 승인 전에는 webhook을 설치하거나 switch를 켜지 마세요. Webhook URL/token은 Git, DB, `app_setting`, log, error response 또는 Activity에 기록하지 않습니다.
+- Discord outbox에는 deployment, backup, incident, Agent lifecycle과 Docker episode producer가 연결되어 있습니다. Incident는 explicit service authority가 있는 future OPEN winner만 root를 만들고, incident·Agent·Docker recovery는 각 SENT root에만 연결됩니다. `HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 생성된 root intent가 replay 불가 `SUPPRESSED`로 끝나며 child와 outbound가 없습니다. Production acceptance용 webhook Secret 설치와 controlled enable/disable은 완료됐으며 현재 switch는 다시 `false`입니다. 이후 enable 또는 Secret rotate는 별도 승인을 요구합니다. Webhook URL/token은 Git, DB, `app_setting`, log, error response 또는 Activity에 기록하지 않습니다.
 - credential 값이 Git history나 workflow log에 나타나면 rotate하세요. 보이는 줄을 지우는 것만으로는 충분하지 않습니다.

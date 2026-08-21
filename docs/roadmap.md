@@ -21,8 +21,8 @@
 | Phase 1 읽기 전용 대시보드 | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 2 native Agent rollout | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 3 운영 이력 | IMPLEMENTED | ACTIVE | COMPLETE |
-| Phase 4 알림 | NOT IMPLEMENTED | INACTIVE | NOT DONE |
-| Phase 5 제한된 컨테이너 제어 | NOT IMPLEMENTED | INACTIVE | NOT DONE |
+| Phase 4 알림 | IMPLEMENTED | ACTIVE | COMPLETE |
+| Phase 5 제한된 컨테이너 제어 | IMPLEMENTED | INACTIVE | NOT DONE |
 
 ## Phase 1: 읽기 전용 대시보드 정확성 및 사용성
 
@@ -82,32 +82,39 @@ Deployment, backup, incident와 Agent 장기 event의 automatic deletion retenti
 
 ## Phase 4: 알림
 
-**상태:** Source NOT IMPLEMENTED / Production INACTIVE / Acceptance NOT DONE.
+**상태:** Source IMPLEMENTED / Production ACTIVE / Acceptance COMPLETE.
 
-현재 source에는 dormant transactional outbox와 fail-closed service eligibility authority, deployment·backup ingestion winner, incident lifecycle, Agent freshness/version 및 Docker episode producer가 있습니다. Incident producer는 future opt-in OPEN winner와 SENT root가 있는 bounded escalation/recovery만 생성합니다. Agent producer는 persisted expected status의 stale episode와 actual current snapshot winner만 사용하고 SENT stale root에만 recovery를 연결합니다. Docker producer는 exact `homeops.notifications=true`를 전달한 fresh·strictly-newer current snapshot만 authority로 삼아 baseline, sustained failure, cooldown과 SENT-root recovery를 bounded current state에 기록합니다. Global notification activation과 production Docker opt-in/Discord acceptance가 없으므로 Phase 전체 상태는 아직 변경하지 않습니다.
+Transactional outbox와 bounded Discord worker, fail-closed service eligibility authority, deployment·backup ingestion winner, incident lifecycle, Agent freshness/version 및 Docker episode producer가 구현되어 있습니다. Incident producer는 future opt-in OPEN winner와 SENT root가 있는 bounded escalation/recovery만 생성합니다. Agent producer는 persisted expected status의 stale episode와 actual current snapshot winner만 사용하고 SENT stale root에만 recovery를 연결합니다. Docker producer는 exact `homeops.notifications=true`를 전달한 fresh·strictly-newer current snapshot만 authority로 삼아 baseline, sustained failure, cooldown과 SENT-root recovery를 bounded current state에 기록합니다.
+
+Production acceptance에서는 disabled baseline의 outbound zero와 no-replay, additive V8/V9 schema 적용, controlled Native Agent rollout, exact Docker opt-in의 failure/recovery delivery, 대표 deployment·backup lifecycle delivery와 deduplication을 검증했습니다. Acceptance 종료 뒤 현재 `HOMEOPS_NOTIFICATIONS_ENABLED=false`라 새 qualifying event는 replay 불가 `SUPPRESSED`로 끝나고 Discord outbound 및 `PENDING`/`DELIVERING` backlog는 없습니다. Webhook Secret은 설치된 상태이며 `HOMEOPS_AGENT_ROLLOUT_ENABLED=false`도 유지합니다. 두 kill switch의 현재 값은 production-accepted capability 상태와 별개입니다. Incident와 Agent producer의 deterministic lifecycle은 source 및 automated test evidence로 검증했으며, production service 장애를 인위적으로 유도하는 Discord drill은 완료 근거로 주장하지 않습니다.
 
 **목표:** 중복 alert storm 없이 유용한 운영 signal을 제공합니다.
 
 - Agent, Docker, deployment, backup-result, incident event용 Discord delivery
 - Deduplication key, cooldown, 장기 failure escalation, recovery notification, delivery-failure record
 - 문서화한 ownership matrix: Uptime Kuma는 외부 HTTP availability와 email path를 유지하고 HomeOps는 내부 운영 event를 담당
-- incident owner와 duplicate-prevention policy를 검증한 뒤에만 optional email escalation
+- Uptime Kuma email과 HomeOps Discord의 owner 및 duplicate-prevention policy를 분리하고 optional email escalation은 현재 범위에서 제외
 
-**완료 근거:** mock webhook test, retry/dedup/recovery test, ownership-matrix scenario 하나에서 duplicate alert가 없음.
+**완료 근거:** migration·outbox lease/CAS·bounded transport·retry/unknown·privacy·producer lifecycle·dedup/cooldown/recovery automated regression과 disabled/no-replay production baseline, representative Docker failure/recovery 및 deployment/backup Discord delivery, Uptime Kuma/HomeOps ownership 분리, final disable 뒤 suppressed/no-backlog acceptance.
 
 ## Phase 5: 제한된 컨테이너 제어
 
-**상태:** Source NOT IMPLEMENTED / Production INACTIVE / Acceptance NOT DONE.
+**상태:** Source IMPLEMENTED / Production INACTIVE / Acceptance NOT DONE. Exact managed/project candidate authority, bounded Agent outbound control protocol, ADMIN 전용 public mutation/polling API의 durable audit·client idempotency와 Container Detail mobile control UI까지 구현했습니다. Production V10 migration, Agent rollout, allowlist·managed-label activation과 실제 Docker control acceptance는 아직 수행하지 않았습니다.
 
 **목표:** 명시적으로 관리하는 container만 의도적으로 start, stop, restart할 수 있게 합니다.
 
-1. live `homeops.managed=true` label verification과 서버가 관리하는 project allowlist를 요구합니다.
-2. 고정 작업만 추가합니다. Docker CLI, shell, image, volume, network, Compose input은 받지 않습니다.
-3. CSRF, Origin check, confirmation UX, idempotency key, rate limit, operation lock, audit record를 요구합니다.
-4. HomeOps, database, unknown container는 기본 거부하며 더 강한 confirmation은 명시적 policy로만 도입합니다.
-5. Docker request 성공을 가정하지 않고 fresh Agent snapshot으로 operation result를 검증합니다.
+1. Candidate foundation은 exact `homeops.managed=true`, fresh snapshot, unique 12자리 short-ID match와 서버가 관리하는 exact project allowlist를 모두 요구하며 HomeOps/standalone/unknown project를 fail closed합니다.
+2. Bounded in-memory broker와 outbound-only Agent worker는 global active 1, PENDING operation TTL 15초, CLAIMED result-reporting grace 15초, non-replay claimed work, metadata-only tombstone을 사용합니다. Agent는 operation 직전 live full-ID, exact label/project/service와 mount를 다시 검증하고 HomeOps, protected service, writable bind/volume과 판정 불가능 mount를 hard deny합니다. Operation deadline 이후 grace 안의 terminal result는 수락하고, grace까지 result가 없으면 `OUTCOME_UNKNOWN`으로 끝냅니다.
+3. Agent operation은 `START|STOP|RESTART`와 fixed Docker POST/timeout만 지원합니다. Docker CLI, shell, image, volume, network, arbitrary path/query/body/timeout input은 받지 않으며 ambiguous outcome은 재실행하지 않습니다.
+4. Public API는 ADMIN session, CSRF, exact HTTPS Origin/Host, exact confirmation과 canonical idempotency key를 요구합니다. Existing durable replay/conflict를 먼저 판정하고 genuinely new key에 principal+key rate limit을 적용한 뒤 V10 durable audit reservation을 commit합니다. Durable winner만 broker enqueue로 이어지며 global operation lock, async result CAS와 stale `REQUESTED` reconciliation을 적용합니다.
+5. HomeOps, database, unknown container는 기본 거부하며 더 강한 confirmation은 명시적 policy로만 도입합니다.
+6. Docker request 성공을 가정하지 않고 fresh Agent snapshot으로 operation result를 검증합니다.
+7. Container Detail UI는 latest snapshot을 이용해 보수적인 candidate action만 표시하고 Backend와 Agent의 live authorization을 최종 authority로 유지합니다. 별도 confirmation 뒤에만 mutation을 보내며 자동 POST retry를 하지 않습니다.
+8. Ambiguous submission은 같은 in-memory idempotency key로만 explicit retry할 수 있고, `REQUESTED` operation은 반환된 public operation ID에 대한 visibility/online-aware bounded GET polling으로만 확인합니다.
 
-**완료 근거:** authorization, CSRF, allowlist, duplicate request, audit, timeout, stale Agent, database-protection test.
+**현재 source 근거:** Agent exact-label/authority-independence와 bounded allowlist/candidate test, control broker concurrency·expiry·duplicate-result test, exact mTLS route, strict wire decode, live protected target/mount revalidation, fixed Docker HTTP와 ambiguous no-retry regression. Public API에는 strict DTO, same-origin/CSRF security, commit-before-dispatch idempotency, bounded audit projection/reconciliation과 PostgreSQL concurrency/migration regression이 있습니다. Container Detail UI에는 conservative action matrix, accessible confirmation, one-key ambiguous retry, GET-only bounded polling과 terminal-state regression이 있으며 production mutation은 없습니다.
+
+**전체 완료 근거:** authorization, CSRF, allowlist, duplicate request, audit, timeout, stale Agent, database-protection test와 별도 production acceptance가 모두 필요합니다.
 
 ## 문서 및 릴리스 원칙
 

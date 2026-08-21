@@ -13,6 +13,7 @@ import {
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { usePageVisible } from '../hooks/usePageVisible'
 import { Card } from '../ui/Card'
+import { ContainerControlSection } from '../ui/ContainerControlSection'
 import { ContainerLogsSection } from '../ui/ContainerLogsSection'
 import { StatusBadge } from '../ui/StatusBadge'
 import { formatBytes, formatContainerCpu, formatTimestamp } from '../utils/format'
@@ -165,9 +166,17 @@ export function ContainerDetailPage() {
           {detail.container.managed ? 'Managed inventory label present' : 'Read-only inventory'}
         </p>
         <p className="mt-2 text-sm text-slate-400">
-          Container controls are not available in this read-only phase.
+          The managed label is one candidate signal. Backend and Agent policy remain authoritative.
         </p>
       </Card>
+
+      <ContainerControlSection
+        container={detail.container}
+        snapshotUpdatedAt={detail.lastUpdatedAt}
+        stale={effectivelyStale}
+        online={online}
+        visible={visible}
+      />
 
       <ContainerLogsSection
         containerId={detail.container.id}
