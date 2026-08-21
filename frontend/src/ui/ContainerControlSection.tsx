@@ -14,6 +14,7 @@ import {
   getContainerAction,
   getSessionCsrfToken,
   isAmbiguousContainerActionSubmissionError,
+  isContainerActionOriginRejectedError,
   isConnectionError,
   shouldRetryQuery,
   submitContainerAction,
@@ -825,6 +826,9 @@ function preSubmissionErrorMessage(error: unknown) {
 }
 
 function submissionErrorMessage(error: unknown) {
+  if (isContainerActionOriginRejectedError(error)) {
+    return 'HomeOps rejected the control request origin. No container action was submitted.'
+  }
   if (error instanceof ApiError) {
     switch (error.status) {
       case 400:

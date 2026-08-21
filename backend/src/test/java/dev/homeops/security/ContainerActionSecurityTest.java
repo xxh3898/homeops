@@ -10,15 +10,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import dev.homeops.agent.control.ContainerActionAuditRecord;
+import dev.homeops.agent.control.ContainerActionException;
 import dev.homeops.agent.control.ContainerActionService;
 import dev.homeops.agent.control.ContainerActionStatus;
 import dev.homeops.agent.control.ContainerControlOperation;
 import dev.homeops.agent.control.api.ContainerActionController;
+import dev.homeops.agent.config.HomeOpsControlProperties;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -28,9 +31,11 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 
 @WebMvcTest(controllers = ContainerActionController.class, properties = {
         "homeops.security.mode=TAILSCALE",
-        "homeops.security.allowed-users=admin@example.test"
+        "homeops.security.allowed-users=admin@example.test",
+        "homeops.control.public-origin=https://homeops.example.test:8443"
 })
 @Import({SecurityConfig.class, ContainerControlOriginGuard.class})
+@EnableConfigurationProperties(HomeOpsControlProperties.class)
 class ContainerActionSecurityTest {
     private static final UUID OPERATION_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
     private static final String IDEMPOTENCY_KEY = "20000000-0000-4000-8000-000000000001";
@@ -81,20 +86,34 @@ class ContainerActionSecurityTest {
                 .andExpect(status().isForbidden());
         mockMvc.perform(basePost()
                         .header(TailscaleIdentityFilter.IDENTITY_HEADER, "admin@example.test")
-                        .header(HttpHeaders.ORIGIN, "https://other.example.test")
+                        .header(HttpHeaders.ORIGIN, "https://other.example.test:8443")
                         .header(HttpHeaders.HOST, "homeops.example.test")
+                        .header("X-Forwarded-Host", "homeops.example.test:8443")
                         .header(ContainerControlOriginGuard.FORWARDED_PROTO_HEADER, "https")
                         .with(csrf()))
                 .andExpect(status().isForbidden());
         mockMvc.perform(basePost()
                         .header(TailscaleIdentityFilter.IDENTITY_HEADER, "admin@example.test")
-                        .header(HttpHeaders.ORIGIN, "https://homeops.example.test")
+                        .header(HttpHeaders.ORIGIN, "https://homeops.example.test:8443")
                         .header(HttpHeaders.HOST, "homeops.example.test")
                         .header(ContainerControlOriginGuard.FORWARDED_PROTO_HEADER, "http")
                         .with(csrf()))
                 .andExpect(status().isForbidden());
 
         verifyNoInteractions(service);
+    }
+
+    @Test
+    void should_reachConfirmationValidationAfterAdminCsrfAndCanonicalOrigin() throws Exception {
+        when(service.submit(any(), any(), any(), any(), any()))
+                .thenThrow(ContainerActionException.confirmationMismatch());
+
+        mockMvc.perform(validPost()
+                        .content("""
+                                {"operation":"START","confirmation":"STOP:0123456789ab"}
+                                """)
+                        .with(csrf()))
+                .andExpect(status().isUnprocessableEntity());
     }
 
     @Test
@@ -119,7 +138,7 @@ class ContainerActionSecurityTest {
     private static MockHttpServletRequestBuilder validPost() {
         return basePost()
                 .header(TailscaleIdentityFilter.IDENTITY_HEADER, "admin@example.test")
-                .header(HttpHeaders.ORIGIN, "https://homeops.example.test")
+                .header(HttpHeaders.ORIGIN, "https://homeops.example.test:8443")
                 .header(HttpHeaders.HOST, "homeops.example.test")
                 .header(ContainerControlOriginGuard.FORWARDED_PROTO_HEADER, "https");
     }

@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import dev.homeops.agent.control.ContainerActionAuditRecord;
+import dev.homeops.agent.config.HomeOpsControlProperties;
 import dev.homeops.agent.control.ContainerActionException;
 import dev.homeops.agent.control.ContainerActionIdempotencyKey;
 import dev.homeops.agent.control.ContainerActionService;
@@ -49,7 +50,9 @@ class ContainerActionControllerTest {
         mockMvc = MockMvcBuilders.standaloneSetup(
                         new ContainerActionController(
                                 service,
-                                new ContainerControlOriginGuard()))
+                                new ContainerControlOriginGuard(new HomeOpsControlProperties(
+                                        "",
+                                        "https://homeops.example.test:8443"))))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .build();
     }
@@ -183,7 +186,7 @@ class ContainerActionControllerTest {
 
         mockMvc.perform(post("/api/v1/containers/{containerId}/actions", "invalid-id")
                         .principal(() -> PRINCIPAL)
-                        .header(HttpHeaders.ORIGIN, "https://homeops.example.test")
+                        .header(HttpHeaders.ORIGIN, "https://homeops.example.test:8443")
                         .header(HttpHeaders.HOST, "homeops.example.test")
                         .header(ContainerControlOriginGuard.FORWARDED_PROTO_HEADER, "https")
                         .header(ContainerActionController.IDEMPOTENCY_HEADER, IDEMPOTENCY_KEY)
@@ -206,7 +209,7 @@ class ContainerActionControllerTest {
     private static MockHttpServletRequestBuilder basePost(String content) {
         return post("/api/v1/containers/{containerId}/actions", CONTAINER_ID)
                 .principal(() -> PRINCIPAL)
-                .header(HttpHeaders.ORIGIN, "https://homeops.example.test")
+                .header(HttpHeaders.ORIGIN, "https://homeops.example.test:8443")
                 .header(HttpHeaders.HOST, "homeops.example.test")
                 .header(ContainerControlOriginGuard.FORWARDED_PROTO_HEADER, "https")
                 .contentType(MediaType.APPLICATION_JSON)

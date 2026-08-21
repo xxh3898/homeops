@@ -1,7 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiConnectionError, ApiError } from '../api/client'
+import {
+  ApiConnectionError,
+  ApiError,
+  CONTAINER_ACTION_ORIGIN_REJECTED_PROBLEM_TYPE,
+} from '../api/client'
 import type { ContainerActionResponse, ContainerView } from '../api/types'
 import {
   CONTAINER_ACTION_POLL_INTERVAL_MS,
@@ -185,6 +189,21 @@ describe('ContainerControlSection', () => {
 
     expect(await screen.findByText(new RegExp(message))).toBeInTheDocument()
     expect(screen.queryByText('private server detail')).not.toBeInTheDocument()
+    expect(mocks.submitContainerAction).toHaveBeenCalledOnce()
+  })
+
+  it('shows an origin-policy 403 locally without reporting a Tailscale authorization failure', async () => {
+    mocks.submitContainerAction.mockRejectedValue(new ApiError(
+      403,
+      'HomeOps rejected the container action origin.',
+      CONTAINER_ACTION_ORIGIN_REJECTED_PROBLEM_TYPE,
+    ))
+    renderSection()
+
+    await confirm('Stop')
+
+    expect(await screen.findByText(/rejected the control request origin/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Tailscale identity/i)).not.toBeInTheDocument()
     expect(mocks.submitContainerAction).toHaveBeenCalledOnce()
   })
 

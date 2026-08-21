@@ -47,7 +47,7 @@ class CoreSpringWiringTest {
                     () -> new HomeOpsMetricProperties(Duration.ofDays(30)));
             context.registerBean(
                     HomeOpsControlProperties.class,
-                    () -> new HomeOpsControlProperties(""));
+                    () -> new HomeOpsControlProperties("", ""));
             context.registerBean(
                     AgentStatusRepository.class,
                     () -> mock(AgentStatusRepository.class));
