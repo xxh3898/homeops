@@ -3,6 +3,7 @@ package dev.homeops.security;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import dev.homeops.agent.config.HomeOpsControlProperties;
 import dev.homeops.agent.control.ContainerActionException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -12,13 +13,26 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.mock.web.MockHttpServletRequest;
 
 class ContainerControlOriginGuardTest {
-    private final ContainerControlOriginGuard guard = new ContainerControlOriginGuard();
+    private static final String PUBLIC_ORIGIN = "https://homeops.example.test:8443";
+
+    private final ContainerControlOriginGuard guard = new ContainerControlOriginGuard(
+            new HomeOpsControlProperties("", PUBLIC_ORIGIN));
 
     @Test
     void should_acceptExactHttpsOrigin_when_hostAndForwardedProtoMatch() {
         MockHttpServletRequest request = request(
-                "https://homeops.example.test:8443",
+                PUBLIC_ORIGIN,
                 "homeops.example.test:8443",
+                "https");
+
+        assertThatCode(() -> guard.requireSameOrigin(request)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void should_acceptPublicOriginWithExplicitPort_when_proxyHostOmitsPort() {
+        MockHttpServletRequest request = request(
+                PUBLIC_ORIGIN,
+                "homeops.example.test",
                 "https");
 
         assertThatCode(() -> guard.requireSameOrigin(request)).doesNotThrowAnyException();
@@ -34,7 +48,8 @@ class ContainerControlOriginGuardTest {
         "https://homeops.example.test/path",
         "https://homeops.example.test?query=1",
         "https://homeops.example.test#fragment",
-        "https://other.example.test"
+        "https://other.example.test",
+        "https://homeops.example.test:9443"
     })
     void should_rejectUnsafeOriginShape_when_originIsNotExact(String origin) {
         MockHttpServletRequest request = request(
@@ -52,14 +67,13 @@ class ContainerControlOriginGuardTest {
     void should_rejectMissingDuplicateAndNonHttpsProxyHeaders() {
         List<MockHttpServletRequest> requests = List.of(
                 request(null, "homeops.example.test", "https"),
-                request("https://homeops.example.test", null, "https"),
-                request("https://homeops.example.test", "homeops.example.test", null),
-                request("https://homeops.example.test", "homeops.example.test", "http"));
+                request(PUBLIC_ORIGIN, "homeops.example.test", null),
+                request(PUBLIC_ORIGIN, "homeops.example.test", "http"));
         MockHttpServletRequest duplicateOrigin = request(
-                "https://homeops.example.test",
+                PUBLIC_ORIGIN,
                 "homeops.example.test",
                 "https");
-        duplicateOrigin.addHeader(HttpHeaders.ORIGIN, "https://homeops.example.test");
+        duplicateOrigin.addHeader(HttpHeaders.ORIGIN, PUBLIC_ORIGIN);
         requests = new java.util.ArrayList<>(requests);
         requests.add(duplicateOrigin);
 
@@ -67,6 +81,30 @@ class ContainerControlOriginGuardTest {
             assertThatThrownBy(() -> guard.requireSameOrigin(request))
                     .isInstanceOf(ContainerActionException.class);
         }
+    }
+
+    @Test
+    void should_failClosed_when_publicOriginIsNotConfigured() {
+        ContainerControlOriginGuard disabledGuard = new ContainerControlOriginGuard(
+                new HomeOpsControlProperties("", ""));
+
+        assertThatThrownBy(() -> disabledGuard.requireSameOrigin(request(
+                PUBLIC_ORIGIN,
+                "homeops.example.test",
+                "https")))
+                .isInstanceOf(ContainerActionException.class);
+    }
+
+    @Test
+    void should_rejectWrongOrigin_even_when_forwardedHostSpoofsConfiguredAuthority() {
+        MockHttpServletRequest request = request(
+                "https://other.example.test:8443",
+                "homeops.example.test",
+                "https");
+        request.addHeader("X-Forwarded-Host", "homeops.example.test:8443");
+
+        assertThatThrownBy(() -> guard.requireSameOrigin(request))
+                .isInstanceOf(ContainerActionException.class);
     }
 
     private static MockHttpServletRequest request(

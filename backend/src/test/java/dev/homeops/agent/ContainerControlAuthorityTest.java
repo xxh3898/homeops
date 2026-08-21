@@ -183,7 +183,7 @@ class ContainerControlAuthorityTest {
                         Duration.ofMinutes(1),
                         128,
                         Duration.ofDays(1)),
-                new HomeOpsControlProperties(allowedProjects),
+                new HomeOpsControlProperties(allowedProjects, ""),
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
 

@@ -4,6 +4,7 @@ import {
   ApiConnectionError,
   ApiContractError,
   ApiError,
+  CONTAINER_ACTION_ORIGIN_REJECTED_PROBLEM_TYPE,
   getContainerAction,
   getContainerDetail,
   getContainerLogs,
@@ -310,6 +311,39 @@ describe('HomeOps API client', () => {
     await expect(getSystemSummary()).rejects.toEqual(
       new ApiError(401, 'Tailscale identity is not authorized for HomeOps.'),
     )
+  })
+
+  it('does not classify a typed container action origin rejection as an authorization failure', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      type: 'urn:homeops:problem:container-action-origin-rejected',
+      title: 'Container action origin rejected',
+      status: 403,
+      detail: 'private server detail',
+    }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/problem+json' },
+    })))
+
+    let rejected: unknown
+    try {
+      await submitContainerAction(
+        CONTAINER_ID,
+        'START',
+        IDEMPOTENCY_KEY,
+        'bounded-csrf-token',
+      )
+    } catch (error) {
+      rejected = error
+    }
+
+    expect(rejected).toBeInstanceOf(ApiError)
+    expect(isAuthorizationError(rejected)).toBe(false)
+    expect(rejected).toEqual(new ApiError(
+      403,
+      'HomeOps rejected the container action origin.',
+      CONTAINER_ACTION_ORIGIN_REJECTED_PROBLEM_TYPE,
+    ))
+    expect((rejected as Error).message).not.toContain('private server detail')
   })
 
   it.each([401, 403])('recognizes status %s as an authorization error', (status) => {
