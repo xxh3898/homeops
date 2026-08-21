@@ -34,7 +34,7 @@ class ContainerNotificationMigrationPostgresqlIntegrationTest {
     }
 
     @Test
-    void should_migrateFromV8ToV9WithoutRewritingExistingDomainRows() {
+    void should_migrateFromV8ToCurrentWithoutRewritingExistingDomainRows() {
         database.migrateTo("8");
         UUID snapshotId = UUID.randomUUID();
         AgentStatusStore previousApplicationStore = new AgentStatusStore(jdbc);
@@ -55,7 +55,7 @@ class ContainerNotificationMigrationPostgresqlIntegrationTest {
 
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("9");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("10");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM agent_status", Integer.class))
                 .isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM notification_event", Integer.class))

@@ -3,6 +3,7 @@ package dev.homeops.common;
 import dev.homeops.activity.InvalidActivityCursorException;
 import dev.homeops.agent.control.ContainerControlRequestGoneException;
 import dev.homeops.agent.control.ContainerControlResultRejectedException;
+import dev.homeops.agent.control.ContainerActionException;
 import dev.homeops.agent.logs.ContainerLogBrokerCapacityException;
 import dev.homeops.agent.logs.ContainerLogCapabilityUnavailableException;
 import dev.homeops.agent.logs.ContainerLogRequestConflictException;
@@ -31,6 +32,16 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+
+    @ExceptionHandler(ContainerActionException.class)
+    ProblemDetail handleContainerAction(ContainerActionException exception) {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                exception.status(),
+                exception.publicDetail());
+        detail.setType(exception.type());
+        detail.setTitle(exception.title());
+        return detail;
+    }
 
     @ExceptionHandler(AgentSnapshotRejectedException.class)
     ProblemDetail handleRejectedSnapshot(
