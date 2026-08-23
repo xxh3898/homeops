@@ -8,7 +8,12 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.regex.Pattern;
 
-record ActivityCursor(Instant snapshotAt, String visibilitySnapshot, Instant occurredAt, String sortKey) {
+record ActivityCursor(
+        Instant snapshotAt,
+        String visibilitySnapshot,
+        Instant occurredAt,
+        String sortKey,
+        ActivityTypeFilter scope) {
     private static final String SEPARATOR = "\n";
     private static final int MAXIMUM_ENCODED_LENGTH = 4096;
     private static final int MAXIMUM_VISIBILITY_SNAPSHOT_LENGTH = 2048;
@@ -24,21 +29,23 @@ record ActivityCursor(Instant snapshotAt, String visibilitySnapshot, Instant occ
         }
         try {
             String value = new String(Base64.getUrlDecoder().decode(encoded), StandardCharsets.UTF_8);
-            String[] parts = value.split(SEPARATOR, 4);
-            if (parts.length != 4 || parts[1].length() > MAXIMUM_VISIBILITY_SNAPSHOT_LENGTH
+            String[] parts = value.split(SEPARATOR, -1);
+            if ((parts.length != 4 && parts.length != 5)
+                    || parts[1].length() > MAXIMUM_VISIBILITY_SNAPSHOT_LENGTH
                     || !isValidVisibilitySnapshot(parts[1])
                     || !isValidSortKey(parts[3])) {
                 throw new InvalidActivityCursorException();
             }
             return new ActivityCursor(parsePostgresqlTimestamp(parts[0]), parts[1], parsePostgresqlTimestamp(parts[2]),
-                    parts[3]);
+                    parts[3], parts.length == 4 ? ActivityTypeFilter.ALL : parseScope(parts[4]));
         } catch (IllegalArgumentException | DateTimeException exception) {
             throw new InvalidActivityCursorException();
         }
     }
 
     String encode() {
-        String value = snapshotAt + SEPARATOR + visibilitySnapshot + SEPARATOR + occurredAt + SEPARATOR + sortKey;
+        String value = snapshotAt + SEPARATOR + visibilitySnapshot + SEPARATOR + occurredAt + SEPARATOR + sortKey
+                + SEPARATOR + scope;
         return Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
@@ -70,6 +77,14 @@ record ActivityCursor(Instant snapshotAt, String visibilitySnapshot, Instant occ
 
     private static boolean isValidSortKey(String sortKey) {
         return SORT_KEY_PATTERN.matcher(sortKey).matches();
+    }
+
+    private static ActivityTypeFilter parseScope(String value) {
+        try {
+            return ActivityTypeFilter.valueOf(value);
+        } catch (IllegalArgumentException exception) {
+            throw new InvalidActivityCursorException();
+        }
     }
 
     private static BigInteger parseXid(String value) {

@@ -1,6 +1,7 @@
 package dev.homeops.common;
 
 import dev.homeops.activity.InvalidActivityCursorException;
+import dev.homeops.activity.InvalidActivityTypeException;
 import dev.homeops.agent.control.ContainerControlRequestGoneException;
 import dev.homeops.agent.control.ContainerControlResultRejectedException;
 import dev.homeops.agent.control.ContainerActionException;
@@ -262,6 +263,15 @@ public class ApiExceptionHandler {
                 HttpStatus.BAD_REQUEST, exception.getMessage());
         detail.setType(URI.create("urn:homeops:problem:invalid-activity-cursor"));
         detail.setTitle("Invalid activity cursor");
+        return detail;
+    }
+
+    @ExceptionHandler(InvalidActivityTypeException.class)
+    ProblemDetail handleInvalidActivityType(InvalidActivityTypeException exception) {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST, exception.getMessage());
+        detail.setType(URI.create("urn:homeops:problem:invalid-activity-type"));
+        detail.setTitle("Invalid activity type");
         return detail;
     }
 }

@@ -56,7 +56,8 @@ class ActivityStorePostgresqlIntegrationTest {
         insertAction(uuid(107), "START", "EXPIRED", NOW.minusSeconds(6));
 
         Map<String, ActivityEventResponse> byStatus = new LinkedHashMap<>();
-        service.page(null, 100).items().forEach(event -> byStatus.put(event.status(), event));
+        service.page(null, ActivityTypeFilter.ALL, 100).items()
+                .forEach(event -> byStatus.put(event.status(), event));
 
         assertThat(byStatus).hasSize(7);
         assertThat(byStatus.values()).allSatisfy(event -> {
@@ -85,9 +86,9 @@ class ActivityStorePostgresqlIntegrationTest {
         insertAction(uuid(201), "START", "APPLIED", NOW);
         insertAction(uuid(202), "STOP", "APPLIED", NOW.minusSeconds(1));
 
-        ActivityPageResponse first = service.page(null, 1);
+        ActivityPageResponse first = service.page(null, ActivityTypeFilter.ALL, 1);
         insertAction(uuid(203), "RESTART", "APPLIED", NOW.plusSeconds(60));
-        ActivityPageResponse second = service.page(first.nextCursor(), 1);
+        ActivityPageResponse second = service.page(first.nextCursor(), ActivityTypeFilter.ALL, 1);
 
         assertThat(first.items()).extracting(ActivityEventResponse::id)
                 .containsExactly(uuid(201).toString());
@@ -109,7 +110,7 @@ class ActivityStorePostgresqlIntegrationTest {
         List<ActivityEventResponse> events = new ArrayList<>();
         String cursor = null;
         do {
-            ActivityPageResponse page = service.page(cursor, 2);
+            ActivityPageResponse page = service.page(cursor, ActivityTypeFilter.ALL, 2);
             events.addAll(page.items());
             cursor = page.nextCursor();
         } while (cursor != null);
@@ -122,6 +123,64 @@ class ActivityStorePostgresqlIntegrationTest {
                         "AGENT:" + uuid(304),
                         "CONTAINER_ACTION:" + uuid(305));
         assertThat(events).extracting(event -> event.type() + ":" + event.id())
+                .doesNotHaveDuplicates();
+    }
+
+    @Test
+    void should_filterEachPublicTypeAndIncludeIncidentOpenAndRecovery() {
+        insertDeployment(uuid(401));
+        insertBackup(uuid(402));
+        insertResolvedIncident(uuid(403));
+        insertAgent(uuid(404));
+        insertAction(uuid(405), "START", "APPLIED", NOW);
+
+        assertThat(service.page(null, ActivityTypeFilter.DEPLOYMENT, 100).items())
+                .extracting(ActivityEventResponse::type).containsOnly(Type.DEPLOYMENT);
+        assertThat(service.page(null, ActivityTypeFilter.BACKUP, 100).items())
+                .extracting(ActivityEventResponse::type).containsOnly(Type.BACKUP);
+        assertThat(service.page(null, ActivityTypeFilter.AGENT, 100).items())
+                .extracting(ActivityEventResponse::type).containsOnly(Type.AGENT);
+        assertThat(service.page(null, ActivityTypeFilter.CONTAINER_ACTION, 100).items())
+                .extracting(ActivityEventResponse::type).containsOnly(Type.CONTAINER_ACTION);
+        assertThat(service.page(null, ActivityTypeFilter.INCIDENT, 100).items())
+                .extracting(ActivityEventResponse::status).containsExactlyInAnyOrder("OPEN", "RESOLVED");
+    }
+
+    @Test
+    void should_keepFilteredSnapshotStableAcrossMatchingAndNonmatchingInserts() {
+        insertAction(uuid(501), "START", "APPLIED", NOW);
+        insertAction(uuid(502), "STOP", "APPLIED", NOW.minusSeconds(1));
+
+        ActivityPageResponse first = service.page(null, ActivityTypeFilter.CONTAINER_ACTION, 1);
+        insertDeployment(uuid(503));
+        insertAction(uuid(504), "RESTART", "APPLIED", NOW.plusSeconds(60));
+        ActivityPageResponse second = service.page(
+                first.nextCursor(), ActivityTypeFilter.CONTAINER_ACTION, 1);
+
+        assertThat(first.items()).extracting(ActivityEventResponse::id)
+                .containsExactly(uuid(501).toString());
+        assertThat(second.items()).extracting(ActivityEventResponse::id)
+                .containsExactly(uuid(502).toString());
+        assertThat(second.items()).extracting(ActivityEventResponse::id)
+                .doesNotContain(uuid(503).toString(), uuid(504).toString());
+    }
+
+    @Test
+    void should_pageFilteredSameTimestampRowsWithoutDuplicatesOrSkips() {
+        insertAction(uuid(601), "START", "APPLIED", NOW);
+        insertAction(uuid(602), "STOP", "APPLIED", NOW);
+        insertAction(uuid(603), "RESTART", "APPLIED", NOW);
+
+        List<ActivityEventResponse> events = new ArrayList<>();
+        String cursor = null;
+        do {
+            ActivityPageResponse page = service.page(cursor, ActivityTypeFilter.CONTAINER_ACTION, 1);
+            events.addAll(page.items());
+            cursor = page.nextCursor();
+        } while (cursor != null);
+
+        assertThat(events).extracting(ActivityEventResponse::id)
+                .containsExactlyInAnyOrder(uuid(601).toString(), uuid(602).toString(), uuid(603).toString())
                 .doesNotHaveDuplicates();
     }
 
@@ -166,6 +225,16 @@ class ActivityStorePostgresqlIntegrationTest {
                     id, incident_type, severity, status, title, opened_at, last_observed_at)
                 VALUES (?, 'SERVICE_UNAVAILABLE', 'CRITICAL', 'OPEN', 'Service unavailable', ?, ?)
                 """, id, Timestamp.from(NOW), Timestamp.from(NOW));
+    }
+
+    private void insertResolvedIncident(UUID id) {
+        jdbc.update("""
+                INSERT INTO incident (
+                    id, incident_type, severity, status, title, opened_at, last_observed_at,
+                    resolved_at, resolved_xid)
+                VALUES (?, 'SERVICE_UNAVAILABLE', 'CRITICAL', 'RESOLVED', 'Service unavailable', ?, ?, ?,
+                        pg_current_xact_id())
+                """, id, Timestamp.from(NOW.minusSeconds(1)), Timestamp.from(NOW), Timestamp.from(NOW));
     }
 
     private void insertAgent(UUID id) {

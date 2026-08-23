@@ -1,5 +1,6 @@
 import type {
   ActivityPage,
+  ActivityTypeFilter,
   ContainerActionResponse,
   ContainerDetail,
   ContainerInventory,
@@ -355,8 +356,9 @@ export async function getContainerAction(operationId: string, signal?: AbortSign
   return action
 }
 
-export function getActivity(cursor?: string, signal?: AbortSignal) {
+export function getActivity(type: ActivityTypeFilter, cursor?: string, signal?: AbortSignal) {
   const parameters = new URLSearchParams({ limit: '25' })
+  if (type !== 'ALL') parameters.set('type', type)
   if (cursor) parameters.set('cursor', cursor)
   return getJson<ActivityPage>(`/api/v1/activity?${parameters}`, signal)
 }

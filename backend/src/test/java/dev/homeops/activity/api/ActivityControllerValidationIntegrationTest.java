@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import dev.homeops.activity.ActivityService;
+import dev.homeops.activity.ActivityTypeFilter;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -46,12 +47,13 @@ class ActivityControllerValidationIntegrationTest {
     @ParameterizedTest
     @ValueSource(ints = {1, 100})
     void should_acceptBoundaryLimit_when_limitIsAllowed(int limit) throws Exception {
-        when(service.page(isNull(), eq(limit))).thenReturn(new ActivityPageResponse(List.of(), null, null));
+        when(service.page(isNull(), eq(ActivityTypeFilter.ALL), eq(limit)))
+                .thenReturn(new ActivityPageResponse(List.of(), null, null));
 
         mockMvc.perform(get("/api/v1/activity").param("limit", String.valueOf(limit)))
                 .andExpect(status().isOk());
 
-        verify(service).page(null, limit);
+        verify(service).page(null, ActivityTypeFilter.ALL, limit);
     }
 
     @Test
@@ -61,6 +63,28 @@ class ActivityControllerValidationIntegrationTest {
                 .andExpect(jsonPath("$.type").value("urn:homeops:problem:validation"))
                 .andExpect(jsonPath("$.title").value("Invalid request"))
                 .andExpect(jsonPath("$.errorCount").value(1));
+
+        verifyNoInteractions(service);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"DEPLOYMENT", "BACKUP", "INCIDENT", "AGENT", "CONTAINER_ACTION"})
+    void should_acceptExactSingleActivityType(String type) throws Exception {
+        ActivityTypeFilter filter = ActivityTypeFilter.valueOf(type);
+        when(service.page(isNull(), eq(filter), eq(25)))
+                .thenReturn(new ActivityPageResponse(List.of(), null, null));
+
+        mockMvc.perform(get("/api/v1/activity").param("type", type))
+                .andExpect(status().isOk());
+
+        verify(service).page(null, filter, 25);
+    }
+
+    @Test
+    void should_keepLimitBound_when_activityTypeIsFiltered() throws Exception {
+        mockMvc.perform(get("/api/v1/activity").param("type", "AGENT").param("limit", "101"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:homeops:problem:validation"));
 
         verifyNoInteractions(service);
     }

@@ -1,7 +1,8 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { Activity, Bot, Boxes, DatabaseBackup, GitCommitHorizontal, RefreshCw, TriangleAlert } from 'lucide-react'
+import { useState } from 'react'
 import { getActivity, isAuthorizationError, isConnectionError } from '../api/client'
-import type { ActivityEvent } from '../api/types'
+import type { ActivityEvent, ActivityTypeFilter } from '../api/types'
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { usePageVisible } from '../hooks/usePageVisible'
 import { Card } from '../ui/Card'
@@ -10,9 +11,10 @@ import { formatTimestamp } from '../utils/format'
 export function ActivityPage() {
   const visible = usePageVisible()
   const online = useOnlineStatus()
+  const [type, setType] = useState<ActivityTypeFilter>('ALL')
   const query = useInfiniteQuery({
-    queryKey: ['activity'],
-    queryFn: ({ pageParam, signal }) => getActivity(pageParam, signal),
+    queryKey: ['activity', type],
+    queryFn: ({ pageParam, signal }) => getActivity(type, pageParam, signal),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     refetchInterval: visible ? 30_000 : false,
@@ -46,14 +48,28 @@ export function ActivityPage() {
         </button>
       </div>
 
+      <label className="block" htmlFor="activity-type-filter">
+        <span className="text-sm font-medium text-slate-300">Event type</span>
+        <select
+          id="activity-type-filter"
+          className="mt-2 min-h-11 w-full rounded-xl border border-white/10 bg-slate-900 px-3 text-sm text-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-300"
+          value={type}
+          onChange={(event) => setType(event.target.value as ActivityTypeFilter)}
+        >
+          {activityTypeOptions.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+
       {stale && <p className="rounded-xl bg-amber-400/10 px-3 py-2 text-sm text-amber-100">{staleMessage}</p>}
       <p className="text-xs text-slate-500">Last refreshed {formatTimestamp(query.data.pages[0].generatedAt)}</p>
 
       {items.length === 0 ? (
         <Card>
           <Activity aria-hidden="true" className="text-slate-500" size={22} />
-          <p className="mt-3 font-medium">No activity recorded yet</p>
-          <p className="mt-1 text-sm text-slate-400">Deployments, backup results, incidents, Agent changes, and container actions will appear here.</p>
+          <p className="mt-3 font-medium">{emptyState[type].title}</p>
+          <p className="mt-1 text-sm text-slate-400">{emptyState[type].description}</p>
         </Card>
       ) : (
         <div className="space-y-3" aria-label="Activity timeline">
@@ -73,6 +89,42 @@ export function ActivityPage() {
       )}
     </section>
   )
+}
+
+const activityTypeOptions: { value: ActivityTypeFilter; label: string }[] = [
+  { value: 'ALL', label: 'All activity' },
+  { value: 'DEPLOYMENT', label: 'Deployments' },
+  { value: 'BACKUP', label: 'Backups' },
+  { value: 'INCIDENT', label: 'Incidents' },
+  { value: 'AGENT', label: 'Agent' },
+  { value: 'CONTAINER_ACTION', label: 'Container actions' },
+]
+
+const emptyState: Record<ActivityTypeFilter, { title: string; description: string }> = {
+  ALL: {
+    title: 'No activity recorded yet',
+    description: 'Deployments, backup results, incidents, Agent changes, and container actions will appear here.',
+  },
+  DEPLOYMENT: {
+    title: 'No deployment activity recorded yet',
+    description: 'Deployment events will appear here.',
+  },
+  BACKUP: {
+    title: 'No backup activity recorded yet',
+    description: 'Backup results will appear here.',
+  },
+  INCIDENT: {
+    title: 'No incident activity recorded yet',
+    description: 'Incident openings and recoveries will appear here.',
+  },
+  AGENT: {
+    title: 'No Agent activity recorded yet',
+    description: 'Agent lifecycle changes will appear here.',
+  },
+  CONTAINER_ACTION: {
+    title: 'No container action activity recorded yet',
+    description: 'Container control audit events will appear here.',
+  },
 }
 
 function ActivityItem({ item }: { item: ActivityEvent }) {

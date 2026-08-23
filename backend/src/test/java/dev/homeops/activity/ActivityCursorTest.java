@@ -18,9 +18,37 @@ class ActivityCursorTest {
     @ParameterizedTest
     @MethodSource("validSortKeys")
     void should_decodeAndEncodeCursor_when_sortKeyUsesServerGeneratedFormat(String sortKey) {
-        ActivityCursor cursor = new ActivityCursor(SNAPSHOT_AT, VISIBILITY_SNAPSHOT, SNAPSHOT_AT, sortKey);
+        ActivityCursor cursor = new ActivityCursor(
+                SNAPSHOT_AT, VISIBILITY_SNAPSHOT, SNAPSHOT_AT, sortKey, ActivityTypeFilter.CONTAINER_ACTION);
 
         assertThat(ActivityCursor.decode(cursor.encode())).isEqualTo(cursor);
+    }
+
+    @ParameterizedTest
+    @MethodSource("validScopes")
+    void should_bindNewCursorToExactActivityScope(ActivityTypeFilter scope) {
+        ActivityCursor cursor = new ActivityCursor(
+                SNAPSHOT_AT, VISIBILITY_SNAPSHOT, SNAPSHOT_AT, "DEPLOYMENT:" + UUID, scope);
+
+        assertThat(ActivityCursor.decode(cursor.encode()).scope()).isEqualTo(scope);
+    }
+
+    @org.junit.jupiter.api.Test
+    void should_decodeLegacyFourPartCursorAsUnfilteredScope() {
+        assertThat(ActivityCursor.decode(cursorWithSortKey("DEPLOYMENT:" + UUID)).scope())
+                .isEqualTo(ActivityTypeFilter.ALL);
+    }
+
+    @org.junit.jupiter.api.Test
+    void should_rejectCursor_when_scopeIsUnknown() {
+        assertThatThrownBy(() -> ActivityCursor.decode(cursorWithScope("UNKNOWN")))
+                .isInstanceOf(InvalidActivityCursorException.class);
+    }
+
+    @org.junit.jupiter.api.Test
+    void should_rejectCursor_when_encodedValueExceedsExistingMaximumLength() {
+        assertThatThrownBy(() -> ActivityCursor.decode("a".repeat(4097)))
+                .isInstanceOf(InvalidActivityCursorException.class);
     }
 
     @ParameterizedTest
@@ -50,8 +78,18 @@ class ActivityCursorTest {
                 "DEPLOYMENT:" + "0".repeat(161));
     }
 
+    private static Stream<ActivityTypeFilter> validScopes() {
+        return Stream.of(ActivityTypeFilter.values());
+    }
+
     private static String cursorWithSortKey(String sortKey) {
         String value = SNAPSHOT_AT + "\n" + VISIBILITY_SNAPSHOT + "\n" + SNAPSHOT_AT + "\n" + sortKey;
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String cursorWithScope(String scope) {
+        String value = SNAPSHOT_AT + "\n" + VISIBILITY_SNAPSHOT + "\n" + SNAPSHOT_AT + "\nDEPLOYMENT:"
+                + UUID + "\n" + scope;
         return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
 }
