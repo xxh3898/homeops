@@ -1,6 +1,7 @@
 package dev.homeops.activity.api;
 
 import dev.homeops.activity.ActivityService;
+import dev.homeops.activity.ActivityTypeFilter;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,7 +21,8 @@ public class ActivityController {
     @GetMapping
     public ActivityPageResponse page(
             @RequestParam(required = false) String cursor,
+            @RequestParam(name = "type", required = false) String[] types,
             @RequestParam(defaultValue = "25") @Min(1) @Max(100) int limit) {
-        return service.page(cursor, limit);
+        return service.page(cursor, ActivityTypeFilter.fromQuery(types), limit);
     }
 }

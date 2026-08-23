@@ -5,6 +5,7 @@ import {
   ApiContractError,
   ApiError,
   CONTAINER_ACTION_ORIGIN_REJECTED_PROBLEM_TYPE,
+  getActivity,
   getContainerAction,
   getContainerDetail,
   getContainerLogs,
@@ -119,6 +120,27 @@ describe('HomeOps API client', () => {
         credentials: 'same-origin',
         signal: expect.any(AbortSignal),
       }),
+    )
+  })
+
+  it('omits the activity type for ALL and encodes one exact event type with its cursor', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+      jsonResponse({ items: [], nextCursor: null, generatedAt: '2026-08-23T00:00:00Z' }),
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getActivity('ALL')
+    await getActivity('CONTAINER_ACTION', 'bounded-cursor')
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/v1/activity?limit=25',
+      expect.objectContaining({ cache: 'no-store', credentials: 'same-origin' }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/v1/activity?limit=25&type=CONTAINER_ACTION&cursor=bounded-cursor',
+      expect.objectContaining({ cache: 'no-store', credentials: 'same-origin' }),
     )
   })
 

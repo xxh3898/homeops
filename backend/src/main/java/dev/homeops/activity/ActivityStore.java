@@ -63,6 +63,7 @@ public class ActivityStore {
                 WHERE c.container_id_prefix ~ '^[0-9a-f]{12}$'
             ) events
             WHERE pg_visible_in_snapshot(recorded_xid, ?::pg_snapshot)
+              AND (?::text IS NULL OR event_type = ?::text)
               AND (?::timestamptz IS NULL OR (occurred_at, sort_key) < (?::timestamptz, ?))
             ORDER BY occurred_at DESC, sort_key DESC
             LIMIT ?
@@ -78,11 +79,13 @@ public class ActivityStore {
         return jdbcTemplate.queryForObject("SELECT pg_current_snapshot()::text", String.class);
     }
 
-    public List<StoredActivity> find(ActivityCursor cursor, String visibilitySnapshot, int limit) {
+    public List<StoredActivity> find(
+            ActivityCursor cursor, String visibilitySnapshot, ActivityTypeFilter type, int limit) {
         Timestamp before = cursor == null ? null : Timestamp.from(cursor.occurredAt());
         String sortKey = cursor == null ? "" : cursor.sortKey();
+        String eventType = type.databaseValue();
         return jdbcTemplate.query(ACTIVITY_QUERY, ActivityStore::mapActivity,
-                visibilitySnapshot, before, before, sortKey, limit);
+                visibilitySnapshot, eventType, eventType, before, before, sortKey, limit);
     }
 
     private static StoredActivity mapActivity(ResultSet row, int index) throws SQLException {

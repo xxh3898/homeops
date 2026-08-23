@@ -24,16 +24,19 @@ public class ActivityService {
     }
 
     @Transactional(readOnly = true)
-    public ActivityPageResponse page(String encodedCursor, int limit) {
+    public ActivityPageResponse page(String encodedCursor, ActivityTypeFilter type, int limit) {
         ActivityCursor cursor = encodedCursor == null ? null : ActivityCursor.decode(encodedCursor);
+        if (cursor != null && cursor.scope() != type) {
+            throw new InvalidActivityCursorException();
+        }
         var snapshotAt = cursor == null ? clock.instant() : cursor.snapshotAt();
         String visibilitySnapshot = cursor == null ? store.currentVisibilitySnapshot() : cursor.visibilitySnapshot();
-        List<StoredActivity> fetched = store.find(cursor, visibilitySnapshot, limit + 1);
+        List<StoredActivity> fetched = store.find(cursor, visibilitySnapshot, type, limit + 1);
         boolean hasNext = fetched.size() > limit;
         List<StoredActivity> page = hasNext ? fetched.subList(0, limit) : fetched;
         String nextCursor = hasNext && !page.isEmpty()
                 ? new ActivityCursor(snapshotAt, visibilitySnapshot, page.getLast().response().occurredAt(),
-                        page.getLast().sortKey()).encode()
+                        page.getLast().sortKey(), type).encode()
                 : null;
         return new ActivityPageResponse(page.stream().map(StoredActivity::response).toList(),
                 nextCursor, snapshotAt);

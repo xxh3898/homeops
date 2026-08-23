@@ -35,23 +35,24 @@ class ActivityServiceTest {
         StoredActivity second = activity("2", NOW.minusSeconds(1), "BACKUP:10000000-0000-0000-0000-000000000002");
         when(store.currentVisibilitySnapshot()).thenReturn(VISIBILITY_SNAPSHOT);
         when(store.find(isNull(), org.mockito.ArgumentMatchers.eq(VISIBILITY_SNAPSHOT),
-                org.mockito.ArgumentMatchers.eq(2)))
+                org.mockito.ArgumentMatchers.eq(ActivityTypeFilter.ALL), org.mockito.ArgumentMatchers.eq(2)))
                 .thenReturn(List.of(first, second));
         ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
 
-        var response = service.page(null, 1);
+        var response = service.page(null, ActivityTypeFilter.ALL, 1);
 
         assertThat(response.items()).containsExactly(first.response());
         assertThat(response.nextCursor()).isNotBlank();
         assertThat(ActivityCursor.decode(response.nextCursor()))
-                .isEqualTo(new ActivityCursor(NOW, VISIBILITY_SNAPSHOT, NOW, DEPLOYMENT_SORT_KEY));
+                .isEqualTo(new ActivityCursor(
+                        NOW, VISIBILITY_SNAPSHOT, NOW, DEPLOYMENT_SORT_KEY, ActivityTypeFilter.ALL));
     }
 
     @Test
     void should_rejectRequest_when_cursorIsMalformed() {
         ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
 
-        assertThatThrownBy(() -> service.page("not-a-cursor", 25))
+        assertThatThrownBy(() -> service.page("not-a-cursor", ActivityTypeFilter.ALL, 25))
                 .isInstanceOf(InvalidActivityCursorException.class);
     }
 
@@ -62,7 +63,7 @@ class ActivityServiceTest {
                 ("not-an-instant\n100:200:\n2026-08-06T12:00:00Z\n" + DEPLOYMENT_SORT_KEY)
                         .getBytes(StandardCharsets.UTF_8));
 
-        assertThatThrownBy(() -> service.page(cursor, 25))
+        assertThatThrownBy(() -> service.page(cursor, ActivityTypeFilter.ALL, 25))
                 .isInstanceOf(InvalidActivityCursorException.class);
     }
 
@@ -71,7 +72,7 @@ class ActivityServiceTest {
         ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
 
         assertThatThrownBy(() -> service.page(cursorWithTimestamps("+1000000000-12-31T23:59:59.999999999Z",
-                "2026-08-06T12:00:00Z"), 25))
+                "2026-08-06T12:00:00Z"), ActivityTypeFilter.ALL, 25))
                 .isInstanceOf(InvalidActivityCursorException.class);
 
         verifyNoInteractions(store);
@@ -82,7 +83,7 @@ class ActivityServiceTest {
         ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
 
         assertThatThrownBy(() -> service.page(cursorWithTimestamps("2026-08-06T12:00:00Z",
-                "+1000000000-12-31T23:59:59.999999999Z"), 25))
+                "+1000000000-12-31T23:59:59.999999999Z"), ActivityTypeFilter.ALL, 25))
                 .isInstanceOf(InvalidActivityCursorException.class);
 
         verifyNoInteractions(store);
@@ -92,7 +93,8 @@ class ActivityServiceTest {
     void should_rejectRequest_when_cursorVisibilitySnapshotIsInvalid() {
         ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
 
-        assertThatThrownBy(() -> service.page(cursorWithVisibilitySnapshot("not-a-snapshot"), 25))
+        assertThatThrownBy(() -> service.page(
+                cursorWithVisibilitySnapshot("not-a-snapshot"), ActivityTypeFilter.ALL, 25))
                 .isInstanceOf(InvalidActivityCursorException.class);
     }
 
@@ -101,7 +103,8 @@ class ActivityServiceTest {
         ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
 
         for (String snapshot : List.of("2:1:", "0:1:", "1:2:0", "1:2:2", "1:4:3,2")) {
-            assertThatThrownBy(() -> service.page(cursorWithVisibilitySnapshot(snapshot), 25))
+            assertThatThrownBy(() -> service.page(
+                    cursorWithVisibilitySnapshot(snapshot), ActivityTypeFilter.ALL, 25))
                     .isInstanceOf(InvalidActivityCursorException.class);
         }
 
@@ -116,6 +119,41 @@ class ActivityServiceTest {
 
         assertThat(ActivityCursor.decode(cursorWithVisibilitySnapshot(snapshot)).visibilitySnapshot())
                 .isEqualTo(snapshot);
+    }
+
+    @Test
+    void should_rejectRequestWithoutStoreAccess_when_cursorScopeDiffersFromRequestedType() {
+        ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
+        String cursor = new ActivityCursor(
+                NOW, VISIBILITY_SNAPSHOT, NOW, DEPLOYMENT_SORT_KEY, ActivityTypeFilter.DEPLOYMENT).encode();
+
+        assertThatThrownBy(() -> service.page(cursor, ActivityTypeFilter.BACKUP, 25))
+                .isInstanceOf(InvalidActivityCursorException.class);
+
+        verifyNoInteractions(store);
+    }
+
+    @Test
+    void should_rejectLegacyUnfilteredCursor_when_filteredRequestUsesIt() {
+        ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThatThrownBy(() -> service.page(
+                cursorWithVisibilitySnapshot(VISIBILITY_SNAPSHOT), ActivityTypeFilter.DEPLOYMENT, 25))
+                .isInstanceOf(InvalidActivityCursorException.class);
+
+        verifyNoInteractions(store);
+    }
+
+    @Test
+    void should_acceptLegacyUnfilteredCursor_when_requestRemainsUnfiltered() {
+        String legacyCursor = cursorWithVisibilitySnapshot(VISIBILITY_SNAPSHOT);
+        ActivityCursor decoded = ActivityCursor.decode(legacyCursor);
+        when(store.find(decoded, VISIBILITY_SNAPSHOT, ActivityTypeFilter.ALL, 26)).thenReturn(List.of());
+        ActivityService service = new ActivityService(store, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThat(service.page(legacyCursor, ActivityTypeFilter.ALL, 25).items()).isEmpty();
+
+        verify(store).find(decoded, VISIBILITY_SNAPSHOT, ActivityTypeFilter.ALL, 26);
     }
 
     private static String cursorWithVisibilitySnapshot(String snapshot) {

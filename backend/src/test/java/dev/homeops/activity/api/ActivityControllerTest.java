@@ -12,6 +12,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -54,6 +56,25 @@ class ActivityControllerTest {
                         "DEPLOYMENT:10000000-0000-0000-0000-000000000001\u0000")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.type").value("urn:homeops:problem:invalid-activity-cursor"));
+
+        verifyNoInteractions(store);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "deployment", "UNKNOWN", "ALL"})
+    void should_returnBadRequestWithoutStoreAccess_when_typeIsNotExactSupportedValue(String type) throws Exception {
+        mockMvc.perform(get("/api/v1/activity").param("type", type))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:homeops:problem:invalid-activity-type"));
+
+        verifyNoInteractions(store);
+    }
+
+    @Test
+    void should_returnBadRequestWithoutStoreAccess_when_multipleTypesAreProvided() throws Exception {
+        mockMvc.perform(get("/api/v1/activity").param("type", "DEPLOYMENT", "BACKUP"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:homeops:problem:invalid-activity-type"));
 
         verifyNoInteractions(store);
     }

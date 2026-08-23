@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import dev.homeops.activity.ActivityService;
+import dev.homeops.activity.ActivityTypeFilter;
 import dev.homeops.activity.api.ActivityController;
 import dev.homeops.activity.api.ActivityEventResponse;
 import dev.homeops.activity.api.ActivityEventResponse.Severity;
@@ -36,7 +37,7 @@ class ActivitySecurityTest {
 
     @Test
     void should_returnBoundedContainerActionAndDisableCaching_when_adminIsAllowlisted() throws Exception {
-        when(service.page(null, 25)).thenReturn(response());
+        when(service.page(null, ActivityTypeFilter.ALL, 25)).thenReturn(response());
 
         mockMvc.perform(get("/api/v1/activity")
                         .header(TailscaleIdentityFilter.IDENTITY_HEADER, "admin@example.test"))
@@ -56,6 +57,19 @@ class ActivitySecurityTest {
                 .andExpect(jsonPath("$.items[0].failureSummary").doesNotExist())
                 .andExpect(jsonPath("$.items[0].metadata").doesNotExist())
                 .andExpect(jsonPath("$.items[0].reasonCode").doesNotExist());
+    }
+
+    @Test
+    void should_preserveAdminAndNoStoreBoundary_when_activityIsFiltered() throws Exception {
+        when(service.page(null, ActivityTypeFilter.CONTAINER_ACTION, 25)).thenReturn(response());
+
+        mockMvc.perform(get("/api/v1/activity")
+                        .param("type", "CONTAINER_ACTION")
+                        .header(TailscaleIdentityFilter.IDENTITY_HEADER, "admin@example.test"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(header().string("Pragma", "no-cache"))
+                .andExpect(jsonPath("$.items[0].type").value("CONTAINER_ACTION"));
     }
 
     @Test
