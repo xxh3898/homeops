@@ -22,7 +22,7 @@
 | Phase 2 native Agent rollout | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 3 운영 이력 | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 4 알림 | IMPLEMENTED | ACTIVE | COMPLETE |
-| Phase 5 제한된 컨테이너 제어 | IMPLEMENTED | INACTIVE | NOT DONE |
+| Phase 5 제한된 컨테이너 제어 | IMPLEMENTED | ACTIVE | COMPLETE |
 
 ## Phase 1: 읽기 전용 대시보드 정확성 및 사용성
 
@@ -74,7 +74,7 @@
 | Deployment ingestion | 신뢰하는 deployment path에서 멱등적인 deployment start/success/failure event 수신 | 시간·본문 bound HMAC-SHA-256 인증, event/digest 멱등성, terminal transition과 concurrent update regression. Production reporter 설치와 live ingestion 확인 |
 | Backup-result ingestion | 기존 project backup script에서 metadata 수신. HomeOps는 backup을 실행하지 않음 | `RUNNING`/`SUCCESS`/`FAILED`/`INCOMPLETE` lifecycle, bounded logical identifier, 멱등성·terminal conflict regression. Production reporter와 live metadata ingestion 확인 |
 | Service check 및 incident | 구성한 HTTP check, 연속 failure/recovery logic, incident history | exact-origin·no-redirect·timeout, per-service in-flight 보호, failure/recovery threshold, single active incident와 check-result retention regression. Production scheduler와 recovery history 확인 |
-| Activity view | deployment, backup, incident, Agent event를 위한 mobile timeline | Allowlist projection, deterministic ordering과 visibility-snapshot cursor, no-store, empty/stale/error/pagination regression. Production multi-page duplicate-free 조회와 `390x844` mobile acceptance 완료 |
+| Activity view | deployment, backup, incident, Agent event와 container control audit를 위한 mobile timeline | Allowlist projection, deterministic ordering과 visibility-snapshot cursor, no-store, empty/stale/error/pagination regression. 기존 네 source는 production multi-page duplicate-free 조회와 `390x844` mobile acceptance 완료. Container control audit는 mixed-source/visibility regression을 source에서 검증하고 release 뒤 read-only production acceptance로 분리 |
 
 Deployment, backup, incident와 Agent 장기 event의 automatic deletion retention은 현재 Phase 3 범위에 포함하지 않습니다. 정상/비정상 service-check result에는 별도의 bounded retention이 적용되며, 장기 운영 이력 보존·삭제 정책은 별도 operational policy로 다뤄야 합니다.
 
@@ -99,7 +99,7 @@ Production acceptance에서는 disabled baseline의 outbound zero와 no-replay, 
 
 ## Phase 5: 제한된 컨테이너 제어
 
-**상태:** Source IMPLEMENTED / Production INACTIVE / Acceptance NOT DONE. Exact managed/project candidate authority, bounded Agent outbound control protocol, ADMIN 전용 public mutation/polling API의 durable audit·client idempotency와 Container Detail mobile control UI까지 구현했습니다. Production V10 migration, Agent rollout, allowlist·managed-label activation과 실제 Docker control acceptance는 아직 수행하지 않았습니다.
+**상태:** Source IMPLEMENTED / Production ACTIVE / Acceptance COMPLETE. Exact managed/project candidate authority, bounded Agent outbound control protocol, ADMIN 전용 public mutation/polling API의 durable audit·client idempotency와 Container Detail mobile control UI가 production에서 검증됐습니다.
 
 **목표:** 명시적으로 관리하는 container만 의도적으로 start, stop, restart할 수 있게 합니다.
 
@@ -112,9 +112,9 @@ Production acceptance에서는 disabled baseline의 outbound zero와 no-replay, 
 7. Container Detail UI는 latest snapshot을 이용해 보수적인 candidate action만 표시하고 Backend와 Agent의 live authorization을 최종 authority로 유지합니다. 별도 confirmation 뒤에만 mutation을 보내며 자동 POST retry를 하지 않습니다.
 8. Ambiguous submission은 같은 in-memory idempotency key로만 explicit retry할 수 있고, `REQUESTED` operation은 반환된 public operation ID에 대한 visibility/online-aware bounded GET polling으로만 확인합니다.
 
-**현재 source 근거:** Agent exact-label/authority-independence와 bounded allowlist/candidate test, control broker concurrency·expiry·duplicate-result test, exact mTLS route, strict wire decode, live protected target/mount revalidation, fixed Docker HTTP와 ambiguous no-retry regression. Public API에는 strict DTO, same-origin/CSRF security, commit-before-dispatch idempotency, bounded audit projection/reconciliation과 PostgreSQL concurrency/migration regression이 있습니다. Container Detail UI에는 conservative action matrix, accessible confirmation, one-key ambiguous retry, GET-only bounded polling과 terminal-state regression이 있으며 production mutation은 없습니다.
+**현재 source 근거:** Agent exact-label/authority-independence와 bounded allowlist/candidate test, control broker concurrency·expiry·duplicate-result test, exact mTLS route, strict wire decode, live protected target/mount revalidation, fixed Docker HTTP와 ambiguous no-retry regression. Public API에는 strict DTO, same-origin/CSRF security, commit-before-dispatch idempotency, bounded audit projection/reconciliation과 PostgreSQL concurrency/migration regression이 있습니다. Container Detail UI에는 conservative action matrix, accessible confirmation, one-key ambiguous retry, GET-only bounded polling과 terminal-state regression이 있습니다. Control audit의 bounded public subset은 visibility-snapshot cursor를 유지한 Activity source로도 projection됩니다.
 
-**전체 완료 근거:** authorization, CSRF, allowlist, duplicate request, audit, timeout, stale Agent, database-protection test와 별도 production acceptance가 모두 필요합니다.
+**전체 완료 근거:** authorization, CSRF, canonical public Origin, allowlist, duplicate request, audit, timeout, stale Agent와 database-protection automated regression에 더해 controlled `STOP → START → RESTART`, terminal 이후 fresh snapshot 확인과 iPhone production interaction acceptance를 완료했습니다.
 
 ## 문서 및 릴리스 원칙
 

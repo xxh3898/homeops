@@ -11,6 +11,6 @@ public record ActivityEventResponse(
         Instant occurredAt,
         String context) {
 
-    public enum Type { DEPLOYMENT, BACKUP, INCIDENT, AGENT }
+    public enum Type { DEPLOYMENT, BACKUP, INCIDENT, AGENT, CONTAINER_ACTION }
     public enum Severity { INFO, WARNING, CRITICAL, RECOVERY }
 }

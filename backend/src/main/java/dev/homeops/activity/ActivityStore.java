@@ -45,6 +45,22 @@ public class ActivityStore {
                 SELECT CAST(a.id AS text), 'AGENT', a.summary, a.event_type, 'INFO',
                        a.occurred_at, a.recorded_xid, a.agent_version, 'AGENT:' || CAST(a.id AS text)
                 FROM agent_event a
+                UNION ALL
+                SELECT CAST(c.id AS text), 'CONTAINER_ACTION',
+                       CASE c.action
+                           WHEN 'START' THEN 'Container start'
+                           WHEN 'STOP' THEN 'Container stop'
+                           WHEN 'RESTART' THEN 'Container restart'
+                           ELSE 'Container action'
+                       END,
+                       c.result,
+                       CASE WHEN c.result IN ('APPLIED', 'NOOP') THEN 'INFO'
+                            WHEN c.result IN ('REQUESTED', 'DENIED', 'EXPIRED') THEN 'WARNING'
+                            ELSE 'CRITICAL' END,
+                       c.requested_at, c.recorded_xid, c.container_id_prefix,
+                       'CONTAINER_ACTION:' || CAST(c.id AS text)
+                FROM container_action_audit c
+                WHERE c.container_id_prefix ~ '^[0-9a-f]{12}$'
             ) events
             WHERE pg_visible_in_snapshot(recorded_xid, ?::pg_snapshot)
               AND (?::timestamptz IS NULL OR (occurred_at, sort_key) < (?::timestamptz, ?))
