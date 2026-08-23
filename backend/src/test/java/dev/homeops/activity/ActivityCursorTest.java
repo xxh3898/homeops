@@ -36,7 +36,8 @@ class ActivityCursorTest {
                 "BACKUP:" + UUID,
                 "INCIDENT_OPEN:" + UUID,
                 "INCIDENT_RECOVERY:" + UUID,
-                "AGENT:" + UUID);
+                "AGENT:" + UUID,
+                "CONTAINER_ACTION:" + UUID);
     }
 
     private static Stream<String> invalidSortKeys() {

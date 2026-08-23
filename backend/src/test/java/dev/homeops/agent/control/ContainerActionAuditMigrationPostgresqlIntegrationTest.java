@@ -38,7 +38,7 @@ class ContainerActionAuditMigrationPostgresqlIntegrationTest {
     }
 
     @Test
-    void should_preserveAndNormalizeLegacyRows_when_migratingFromV1ToV10() {
+    void should_preserveAndNormalizeLegacyRows_when_migratingFromV1ToV11() {
         database.migrateTo("1");
         insertLegacy("REQUESTED", "legacy-requested", "legacy-id");
         insertLegacy("SUCCESS", "legacy-success", "legacy-id");
@@ -48,10 +48,10 @@ class ContainerActionAuditMigrationPostgresqlIntegrationTest {
 
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("10");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("11");
         assertThat(flyway.info().applied())
                 .extracting(migration -> migration.getVersion().getVersion())
-                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11");
         assertThat(statusesByKey()).containsExactlyInAnyOrderEntriesOf(Map.of(
                 "legacy-requested", "REQUESTED",
                 "legacy-success", "APPLIED",
@@ -67,6 +67,9 @@ class ContainerActionAuditMigrationPostgresqlIntegrationTest {
                   AND completed_at IS NOT NULL
                   AND reason_code LIKE 'LEGACY_%'
                 """, Integer.class)).isEqualTo(4);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM container_action_audit WHERE recorded_xid IS NOT NULL",
+                Integer.class)).isEqualTo(5);
     }
 
     @Test
@@ -84,7 +87,7 @@ class ContainerActionAuditMigrationPostgresqlIntegrationTest {
         ContainerActionAuditTransactions later = transactionsAt(
                 NOW.plus(ContainerActionAuditTransactions.STALE_REQUEST_AFTER));
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("10");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("11");
         assertThat(jdbc.queryForObject(
                 "SELECT container_id_prefix FROM container_action_audit WHERE idempotency_key = ?",
                 String.class, "v9-requested")).isEqualTo("not-a-public-id");
@@ -96,6 +99,26 @@ class ContainerActionAuditMigrationPostgresqlIntegrationTest {
                 WHERE idempotency_key = 'v9-requested'
                   AND result = 'REQUESTED'
                 """, Integer.class)).isOne();
+    }
+
+    @Test
+    void should_backfillVisibilityXidWithoutChangingAuditShape_when_migratingFromV10ToV11() {
+        database.migrateTo("10");
+        insertCurrent("REQUESTED", null, null, "0123456789ab");
+        insertCurrent("APPLIED", "APPLIED", NOW.plusSeconds(1), "abcdef012345");
+        List<Map<String, Object>> before = auditShape();
+
+        Flyway flyway = database.migrateToCurrent();
+
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("11");
+        assertThat(auditShape()).isEqualTo(before);
+        assertThat(jdbc.queryForList("""
+                SELECT recorded_xid::text
+                FROM container_action_audit
+                ORDER BY container_id_prefix
+                """, String.class))
+                .hasSize(2)
+                .allSatisfy(xid -> assertThat(xid).isNotBlank());
     }
 
     @Test
@@ -173,5 +196,15 @@ class ContainerActionAuditMigrationPostgresqlIntegrationTest {
             }
             return statuses;
         });
+    }
+
+    private List<Map<String, Object>> auditShape() {
+        return jdbc.queryForList("""
+                SELECT id, idempotency_key, requested_at, completed_at, principal,
+                       action, container_id_prefix, container_name, image, result,
+                       reason_code, failure_summary, metadata
+                FROM container_action_audit
+                ORDER BY container_id_prefix
+                """);
     }
 }

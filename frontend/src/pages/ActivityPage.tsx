@@ -1,5 +1,5 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { Activity, Bot, DatabaseBackup, GitCommitHorizontal, RefreshCw, TriangleAlert } from 'lucide-react'
+import { Activity, Bot, Boxes, DatabaseBackup, GitCommitHorizontal, RefreshCw, TriangleAlert } from 'lucide-react'
 import { getActivity, isAuthorizationError, isConnectionError } from '../api/client'
 import type { ActivityEvent } from '../api/types'
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
@@ -53,7 +53,7 @@ export function ActivityPage() {
         <Card>
           <Activity aria-hidden="true" className="text-slate-500" size={22} />
           <p className="mt-3 font-medium">No activity recorded yet</p>
-          <p className="mt-1 text-sm text-slate-400">Deployments, backup results, incidents, and Agent changes will appear here.</p>
+          <p className="mt-1 text-sm text-slate-400">Deployments, backup results, incidents, Agent changes, and container actions will appear here.</p>
         </Card>
       ) : (
         <div className="space-y-3" aria-label="Activity timeline">
@@ -78,7 +78,8 @@ export function ActivityPage() {
 function ActivityItem({ item }: { item: ActivityEvent }) {
   const Icon = item.type === 'DEPLOYMENT' ? GitCommitHorizontal
     : item.type === 'BACKUP' ? DatabaseBackup
-      : item.type === 'INCIDENT' ? TriangleAlert : Bot
+      : item.type === 'INCIDENT' ? TriangleAlert
+        : item.type === 'CONTAINER_ACTION' ? Boxes : Bot
   const tone = item.severity === 'CRITICAL' ? 'text-rose-300'
     : item.severity === 'WARNING' ? 'text-amber-300'
       : item.severity === 'RECOVERY' ? 'text-emerald-300' : 'text-teal-300'
@@ -87,8 +88,8 @@ function ActivityItem({ item }: { item: ActivityEvent }) {
       <Icon aria-hidden="true" className={`mt-0.5 shrink-0 ${tone}`} size={20} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-start justify-between gap-2">
-          <p className="font-medium">{item.title}</p>
-          <span className={`text-xs font-semibold ${tone}`}>{item.status}</span>
+          <p className="break-words font-medium [overflow-wrap:anywhere]">{item.title}</p>
+          <span className={`break-words text-xs font-semibold [overflow-wrap:anywhere] ${tone}`}>{item.status}</span>
         </div>
         <p className="mt-1 truncate text-sm text-slate-400">{item.context}</p>
         <p className="mt-2 text-xs text-slate-500">{formatTimestamp(item.occurredAt)}</p>

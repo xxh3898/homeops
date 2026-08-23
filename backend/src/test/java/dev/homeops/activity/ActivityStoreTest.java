@@ -42,11 +42,22 @@ class ActivityStoreTest {
                 "d.started_at AS occurred_at, d.recorded_xid AS recorded_xid",
                 "b.started_at, b.recorded_xid",
                 "a.occurred_at, a.recorded_xid",
+                "c.requested_at, c.recorded_xid, c.container_id_prefix",
+                "'CONTAINER_ACTION:' || CAST(c.id AS text)",
+                "WHERE c.container_id_prefix ~ '^[0-9a-f]{12}$'",
                 "WHERE pg_visible_in_snapshot(recorded_xid, ?::pg_snapshot)",
                 "i.opened_at, i.recorded_xid",
                 "COALESCE(i.resolved_xid, i.recorded_xid)",
                 "'INCIDENT_OPEN:' || CAST(i.id AS text)",
                 "'INCIDENT_RECOVERY:' || CAST(i.id AS text)",
                 "WHERE i.resolved_at IS NOT NULL");
+        assertThat(query.getValue()).doesNotContain(
+                "c.principal",
+                "c.idempotency_key",
+                "c.container_name",
+                "c.image",
+                "c.failure_summary",
+                "c.metadata",
+                "c.reason_code");
     }
 }

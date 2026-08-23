@@ -14,7 +14,7 @@ record ActivityCursor(Instant snapshotAt, String visibilitySnapshot, Instant occ
     private static final int MAXIMUM_VISIBILITY_SNAPSHOT_LENGTH = 2048;
     private static final String VISIBILITY_SNAPSHOT_PATTERN = "[0-9]+:[0-9]+:(?:[0-9]+(?:,[0-9]+)*)?";
     private static final Pattern SORT_KEY_PATTERN = Pattern.compile(
-            "^(?:DEPLOYMENT|BACKUP|INCIDENT_OPEN|INCIDENT_RECOVERY|AGENT):"
+            "^(?:DEPLOYMENT|BACKUP|INCIDENT_OPEN|INCIDENT_RECOVERY|AGENT|CONTAINER_ACTION):"
                     + "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
     private static final BigInteger MAXIMUM_XID = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
 

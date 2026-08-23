@@ -130,7 +130,7 @@ export interface ContainerActionResponse {
 
 export interface ActivityEvent {
   id: string
-  type: 'DEPLOYMENT' | 'BACKUP' | 'INCIDENT' | 'AGENT'
+  type: 'DEPLOYMENT' | 'BACKUP' | 'INCIDENT' | 'AGENT' | 'CONTAINER_ACTION'
   title: string
   status: string
   severity: 'INFO' | 'WARNING' | 'CRITICAL' | 'RECOVERY'
