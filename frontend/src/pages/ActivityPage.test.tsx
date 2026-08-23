@@ -20,15 +20,38 @@ describe('ActivityPage', () => {
 
   it('shows all operational event kinds and loads the next page', async () => {
     mocks.getActivity
-      .mockResolvedValueOnce(page('next', [event('DEPLOYMENT', 'Cubing Hub deployment')]))
-      .mockResolvedValueOnce(page(null, [event('BACKUP', 'Guess Pokémon backup')]))
+      .mockResolvedValueOnce(page('next', [
+        event('DEPLOYMENT', 'Cubing Hub deployment'),
+        event('INCIDENT', 'HomeOps is unavailable', 'OPEN'),
+        event('AGENT', 'Agent connected', 'CONNECTED'),
+      ]))
+      .mockResolvedValueOnce(page(null, [
+        event('BACKUP', 'Guess Pokémon backup'),
+        event('CONTAINER_ACTION', 'Container restart', 'APPLIED', '0123456789ab'),
+      ]))
     renderPage()
 
     expect(await screen.findByText('Cubing Hub deployment')).toBeInTheDocument()
+    expect(screen.getByText('HomeOps is unavailable')).toBeInTheDocument()
+    expect(screen.getByText('Agent connected')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Load older activity' }))
 
     expect(await screen.findByText('Guess Pokémon backup')).toBeInTheDocument()
+    expect(screen.getByText('Container restart')).toBeInTheDocument()
     expect(mocks.getActivity).toHaveBeenLastCalledWith('next', expect.any(AbortSignal))
+  })
+
+  it('renders a mobile-safe container action card with bounded public context', async () => {
+    mocks.getActivity.mockResolvedValueOnce(page(null, [
+      event('CONTAINER_ACTION', 'Container restart', 'OUTCOME_UNKNOWN', '0123456789ab', 'CRITICAL'),
+    ]))
+    const { container } = renderPage()
+
+    expect(await screen.findByText('Container restart')).toHaveClass('break-words')
+    expect(screen.getByText('OUTCOME_UNKNOWN')).toHaveClass('break-words')
+    expect(screen.getByText('0123456789ab')).toBeInTheDocument()
+    expect(screen.getByText('0123456789ab').parentElement).toHaveClass('min-w-0')
+    expect(container.querySelector('svg.lucide-boxes')).toBeInTheDocument()
   })
 
   it('renders open and resolved entries for the same incident without duplicate keys', async () => {
@@ -48,6 +71,7 @@ describe('ActivityPage', () => {
     mocks.getActivity.mockResolvedValueOnce(page(null, []))
     renderPage()
     expect(await screen.findByText('No activity recorded yet')).toBeInTheDocument()
+    expect(screen.getByText(/container actions will appear here/)).toBeInTheDocument()
   })
 
   it('keeps cached activity visible and marks it stale after refresh failure', async () => {
@@ -79,7 +103,13 @@ function page(nextCursor: string | null, items: ReturnType<typeof event>[]) {
   return { items, nextCursor, generatedAt: '2026-08-06T12:00:00Z' }
 }
 
-function event(type: 'DEPLOYMENT' | 'BACKUP' | 'INCIDENT' | 'AGENT', title: string, status = 'SUCCESS') {
-  return { id: `${type}-1`, type, title, status, severity: 'INFO' as const,
-    occurredAt: '2026-08-06T12:00:00Z', context: 'homeops' }
+function event(
+  type: 'DEPLOYMENT' | 'BACKUP' | 'INCIDENT' | 'AGENT' | 'CONTAINER_ACTION',
+  title: string,
+  status = 'SUCCESS',
+  context = 'homeops',
+  severity: 'INFO' | 'WARNING' | 'CRITICAL' | 'RECOVERY' = 'INFO',
+) {
+  return { id: `${type}-1`, type, title, status, severity,
+    occurredAt: '2026-08-06T12:00:00Z', context }
 }
