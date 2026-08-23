@@ -66,7 +66,8 @@ Linux agent, Kubernetes, 인터넷 공개, 다중 사용자 계정, 웹 터미�
 - `GET /api/v1/containers/{id}/logs`: fresh Agent capability와 container별 exact opt-in이 있을 때만 `50`, `100`, `200` line으로 제한한 redacted one-shot tail 제공
 - `POST /api/v1/containers/{id}/actions`: ADMIN session, CSRF, server-owned canonical public HTTPS Origin, canonical idempotency key와 명시적 confirmation으로 보호하는 bounded `START|STOP|RESTART` 예약
 - `GET /api/v1/container-actions/{operationId}`: durable control audit의 bounded status projection 제공
-- `GET /api/v1/activity`: deployment, backup, incident, Agent와 container control audit의 범위 제한 projection 및 안정 cursor 제공
+- `GET /api/v1/activity`: deployment, backup, incident, Agent와 container control audit의 범위 제한 projection, optional single `type` filter 및 scope-bound 안정 cursor 제공
+  - `type` 생략은 전체 Activity이며 `DEPLOYMENT`, `BACKUP`, `INCIDENT`, `AGENT`, `CONTAINER_ACTION` 중 정확히 하나만 허용
 - `GET /api/v1/services`, `/status`, `/incidents`
 - `POST /api/v1/services`: 관리자 인증과 CSRF로 보호
 - `PATCH /api/v1/services/{serviceId}/notification`: future HomeOps Discord incident eligibility boolean만 ADMIN + CSRF로 변경

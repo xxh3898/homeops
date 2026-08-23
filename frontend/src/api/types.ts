@@ -128,9 +128,20 @@ export interface ContainerActionResponse {
   completedAt: string | null
 }
 
+export const activityEventTypes = [
+  'DEPLOYMENT',
+  'BACKUP',
+  'INCIDENT',
+  'AGENT',
+  'CONTAINER_ACTION',
+] as const
+
+export type ActivityEventType = (typeof activityEventTypes)[number]
+export type ActivityTypeFilter = 'ALL' | ActivityEventType
+
 export interface ActivityEvent {
   id: string
-  type: 'DEPLOYMENT' | 'BACKUP' | 'INCIDENT' | 'AGENT' | 'CONTAINER_ACTION'
+  type: ActivityEventType
   title: string
   status: string
   severity: 'INFO' | 'WARNING' | 'CRITICAL' | 'RECOVERY'

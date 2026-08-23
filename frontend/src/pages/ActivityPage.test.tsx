@@ -38,7 +38,48 @@ describe('ActivityPage', () => {
 
     expect(await screen.findByText('Guess Pokémon backup')).toBeInTheDocument()
     expect(screen.getByText('Container restart')).toBeInTheDocument()
-    expect(mocks.getActivity).toHaveBeenLastCalledWith('next', expect.any(AbortSignal))
+    expect(mocks.getActivity).toHaveBeenLastCalledWith('ALL', 'next', expect.any(AbortSignal))
+  })
+
+  it('uses an accessible mobile-safe single event type filter', async () => {
+    mocks.getActivity.mockResolvedValueOnce(page(null, []))
+    renderPage()
+
+    const filter = await screen.findByRole('combobox', { name: 'Event type' })
+    expect(filter).toHaveValue('ALL')
+    expect(filter).toHaveClass('min-h-11', 'w-full')
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'All activity',
+      'Deployments',
+      'Backups',
+      'Incidents',
+      'Agent',
+      'Container actions',
+    ])
+    expect(mocks.getActivity).toHaveBeenCalledWith('ALL', undefined, expect.any(AbortSignal))
+  })
+
+  it('starts a new first page and does not mix old results when the filter changes', async () => {
+    mocks.getActivity
+      .mockResolvedValueOnce(page('all-next', [event('AGENT', 'Old all-scope event')]))
+      .mockResolvedValueOnce(page('deployment-next', [event('DEPLOYMENT', 'Filtered deployment')]))
+      .mockResolvedValueOnce(page(null, [event('DEPLOYMENT', 'Older filtered deployment', 'RUNNING')]))
+    renderPage()
+
+    expect(await screen.findByText('Old all-scope event')).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('combobox', { name: 'Event type' }), {
+      target: { value: 'DEPLOYMENT' },
+    })
+
+    expect(await screen.findByText('Filtered deployment')).toBeInTheDocument()
+    expect(screen.queryByText('Old all-scope event')).not.toBeInTheDocument()
+    expect(mocks.getActivity).toHaveBeenNthCalledWith(2, 'DEPLOYMENT', undefined, expect.any(AbortSignal))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load older activity' }))
+    expect(await screen.findByText('Older filtered deployment')).toBeInTheDocument()
+    expect(mocks.getActivity).toHaveBeenLastCalledWith(
+      'DEPLOYMENT', 'deployment-next', expect.any(AbortSignal),
+    )
   })
 
   it('renders a mobile-safe container action card with bounded public context', async () => {
@@ -74,16 +115,40 @@ describe('ActivityPage', () => {
     expect(screen.getByText(/container actions will appear here/)).toBeInTheDocument()
   })
 
+  it('shows a filter-specific empty state', async () => {
+    mocks.getActivity
+      .mockResolvedValueOnce(page(null, []))
+      .mockResolvedValueOnce(page(null, []))
+    renderPage()
+
+    await screen.findByText('No activity recorded yet')
+    fireEvent.change(screen.getByRole('combobox', { name: 'Event type' }), {
+      target: { value: 'INCIDENT' },
+    })
+
+    expect(await screen.findByText('No incident activity recorded yet')).toBeInTheDocument()
+    expect(screen.getByText('Incident openings and recoveries will appear here.')).toBeInTheDocument()
+  })
+
   it('keeps cached activity visible and marks it stale after refresh failure', async () => {
     mocks.getActivity.mockResolvedValueOnce(page(null, [event('AGENT', 'Agent connected')]))
       .mockRejectedValueOnce(new Error('refresh failed'))
     const { queryClient } = renderPage()
     expect(await screen.findByText('Agent connected')).toBeInTheDocument()
 
-    await queryClient.refetchQueries({ queryKey: ['activity'] })
+    await queryClient.refetchQueries({ queryKey: ['activity', 'ALL'] })
 
     await waitFor(() => expect(screen.getByText(/timeline below may be out of date/)).toBeInTheDocument())
     expect(screen.getByText('Agent connected')).toBeInTheDocument()
+  })
+
+  it('keeps cached read-only activity visible while offline', async () => {
+    mocks.online.value = false
+    mocks.getActivity.mockResolvedValueOnce(page(null, [event('BACKUP', 'Offline cached backup')]))
+    renderPage()
+
+    expect(await screen.findByText('Offline cached backup')).toBeInTheDocument()
+    expect(screen.getByText(/timeline below may be out of date/)).toBeInTheDocument()
   })
 
   it('shows a blocking error when the initial request fails', async () => {

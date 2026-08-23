@@ -32,12 +32,12 @@ class ActivityStoreTest {
     void should_useCommitVisibilitySnapshot_when_activitySnapshotIsLoaded() {
         ActivityStore store = new ActivityStore(jdbcTemplate);
 
-        store.find(null, VISIBILITY_SNAPSHOT, 25);
+        store.find(null, VISIBILITY_SNAPSHOT, ActivityTypeFilter.ALL, 25);
 
         ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
         verify(jdbcTemplate).query(query.capture(), org.mockito.ArgumentMatchers
                 .<RowMapper<ActivityStore.StoredActivity>>any(), eq(VISIBILITY_SNAPSHOT),
-                isNull(), isNull(), eq(""), eq(25));
+                isNull(), isNull(), isNull(), isNull(), eq(""), eq(25));
         assertThat(query.getValue().replaceAll("\\s+", " ")).contains(
                 "d.started_at AS occurred_at, d.recorded_xid AS recorded_xid",
                 "b.started_at, b.recorded_xid",
@@ -46,6 +46,7 @@ class ActivityStoreTest {
                 "'CONTAINER_ACTION:' || CAST(c.id AS text)",
                 "WHERE c.container_id_prefix ~ '^[0-9a-f]{12}$'",
                 "WHERE pg_visible_in_snapshot(recorded_xid, ?::pg_snapshot)",
+                "AND (?::text IS NULL OR event_type = ?::text)",
                 "i.opened_at, i.recorded_xid",
                 "COALESCE(i.resolved_xid, i.recorded_xid)",
                 "'INCIDENT_OPEN:' || CAST(i.id AS text)",
@@ -59,5 +60,18 @@ class ActivityStoreTest {
                 "c.failure_summary",
                 "c.metadata",
                 "c.reason_code");
+    }
+
+    @Test
+    void should_bindExactEventTypeWithoutInterpolatingItIntoSql() {
+        ActivityStore store = new ActivityStore(jdbcTemplate);
+
+        store.find(null, VISIBILITY_SNAPSHOT, ActivityTypeFilter.INCIDENT, 25);
+
+        ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+        verify(jdbcTemplate).query(query.capture(), org.mockito.ArgumentMatchers
+                .<RowMapper<ActivityStore.StoredActivity>>any(), eq(VISIBILITY_SNAPSHOT),
+                eq("INCIDENT"), eq("INCIDENT"), isNull(), isNull(), eq(""), eq(25));
+        assertThat(query.getValue()).doesNotContain("event_type = 'INCIDENT'");
     }
 }
