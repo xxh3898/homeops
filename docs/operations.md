@@ -33,7 +33,7 @@ HomeOps는 자체 PostgreSQL에 대해 Master Playbook의 recurring/offsite back
 
 Phase 3 source와 production ingestion/monitoring은 활성 상태이며 formal production acceptance도 COMPLETE입니다. Production의 `dev.homeops.ingestion-reporter` LaunchAgent는 범위 제한 `--drain` retry를 담당하고 신뢰하는 project의 deployment/backup event가 Activity에 수신됩니다. Exact-origin service checker와 incident history가 동작하며, retained ingestion metadata, check growth와 incident recovery, Activity의 안정 cursor 전체 pagination과 mobile 표시를 production mutation 없이 검증했습니다.
 
-자동 retention은 metric aggregate, 처리한 Agent snapshot 멱등성 ledger와 service-check result에 적용됩니다. Deployment, backup, incident와 Agent 장기 event에는 automatic deletion policy가 없으므로, 운영자는 임의 cleanup을 실행하지 말고 별도의 보존 기간·삭제 안전성·감사 요구사항을 먼저 정해야 합니다. 이 operational debt는 현재 Phase 3 acceptance를 미완료로 되돌리는 의미가 아닙니다.
+자동 retention은 metric aggregate, 처리한 Agent snapshot 멱등성 ledger, service-check result와 terminal notification outbox에 각자의 기존 contract로 적용됩니다. [ADR-001](adr/ADR-001-operational-history-retention-and-deletion-safety.md)은 deployment, backup, incident와 Agent 장기 event의 automatic deletion을 명시적인 source policy 전까지 disabled로 두고, `container_action_audit`를 generic Activity retention에서 제외합니다. 운영자는 임의 cleanup이나 age-only DELETE를 실행하면 안 됩니다. 이 fail-closed policy는 Phase 3/5 acceptance를 미완료로 되돌리거나 영구 보존을 Product requirement로 확정하는 의미가 아닙니다.
 
 새 host에서 Phase 3를 활성화하는 작업은 source release와 분리합니다. HomeOps `.env`에 생성한 64글자 소문자 hexadecimal `HOMEOPS_INGESTION_SHARED_SECRET` 하나가 있는지, `smoke.origin`이 의도한 tailnet HTTPS origin인지, 두 file이 owner-only mode `0600`인지, deployment account의 `~/Server/data/homeops/ingestion-spool`이 owner-only mode `0700`인지 확인합니다. private reporter copy와 LaunchAgent를 load 전에 lint하고, reporter warning을 application deploy 또는 backup 실패로 취급하지 말며 spool과 HomeOps ingestion health를 따로 검사하세요.
 
@@ -57,6 +57,12 @@ runtime-config image는 release마다 다시 build합니다. 첫 public release�
 Full validation은 native Agent release 허가가 아닙니다. Persistent Agent artifact는 `agent/**`, `agent-artifact.Dockerfile`, `.dockerignore`, `.gitattributes` 변경만 eligible이며 docs/backend/frontend/workflow-only 변경에서는 publication과 rollout을 건너뜁니다. Rollout은 artifact publication 성공과 repository `HOMEOPS_AGENT_ROLLOUT_ENABLED=true`를 모두 요구합니다. 현재 값은 `false`이며 Phase 2 acceptance와 별개인 operational kill switch입니다.
 
 `HOMEOPS_DEPLOY_HOST`와 `HOMEOPS_DEPLOY_USER`는 Production environment Secret으로만 Tailscale ping과 SSH target에 전달합니다. 같은 이름의 legacy Variable은 제거됐고 secret 기반 production deploy와 public log literal zero-match acceptance를 완료했습니다.
+
+## 장기 운영 이력 destructive retention gate
+
+Operational Activity history 삭제 runtime은 현재 구현되지 않았고 production activation도 승인되지 않았습니다. Future source별 implementation은 bounded Activity cursor validity, deployment/backup idempotency authority, incident/notification dependency와 privileged audit 경계를 [ADR-001](adr/ADR-001-operational-history-retention-and-deletion-safety.md)에 따라 먼저 충족해야 합니다.
+
+첫 production hard-delete 전에는 application release와 별도의 Ops Gate가 필요합니다. Exact DB/release identity, candidate age/count, active/nonterminal/dependency count를 read-only로 확인하고 cleanup switch가 default disabled인지 검증하세요. Pre-delete logical backup 또는 동등한 accepted recovery artifact와 isolated restore evidence가 없으면 실행하지 않습니다. 첫 run은 작은 bounded batch로 제한하고 deleted/skipped aggregate count와 Activity/API/health만 검증하며 raw payload나 private metadata를 evidence에 남기지 않습니다. 예상 밖 삭제가 있으면 추가 batch를 중단하고 restore 또는 사전에 합의한 forward recovery를 사용합니다. Deleted row를 설정 rollback만으로 복구할 수 있다고 간주하지 마세요.
 
 ## Docker network 토폴로지
 

@@ -76,7 +76,7 @@
 | Service check 및 incident | 구성한 HTTP check, 연속 failure/recovery logic, incident history | exact-origin·no-redirect·timeout, per-service in-flight 보호, failure/recovery threshold, single active incident와 check-result retention regression. Production scheduler와 recovery history 확인 |
 | Activity view | deployment, backup, incident, Agent event와 container control audit를 위한 mobile timeline 및 single event-type filter | Allowlist projection, deterministic ordering과 filter scope-bound visibility-snapshot cursor, no-store, empty/stale/error/pagination regression. 기존 production timeline acceptance는 완료됐으며 single-type filtering은 source support와 regression을 제공하고 release acceptance는 별도 gate로 분리 |
 
-Deployment, backup, incident와 Agent 장기 event의 automatic deletion retention은 현재 Phase 3 범위에 포함하지 않습니다. 정상/비정상 service-check result에는 별도의 bounded retention이 적용되며, 장기 운영 이력 보존·삭제 정책은 별도 operational policy로 다뤄야 합니다.
+[ADR-001](adr/ADR-001-operational-history-retention-and-deletion-safety.md)에서 장기 운영 이력 보존·삭제 safety policy를 결정했지만 deletion runtime은 구현하지 않았습니다. Deployment, backup, incident와 Agent 장기 event는 명시적인 source policy와 cursor/idempotency/dependency prerequisite 전까지 automatic deletion이 disabled이며, privileged container control audit는 generic Activity retention 범위 밖입니다. 정상/비정상 service-check result와 다른 existing bounded data의 retention semantics는 그대로 유지합니다. 이 결정은 Phase 3/5 COMPLETE 상태를 변경하지 않습니다.
 
 **포함하지 않음:** Uptime Kuma internal API dependency 또는 독립 reachability 역할의 대체.
 
