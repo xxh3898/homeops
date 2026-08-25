@@ -75,6 +75,17 @@ export function shouldRetryContainerDetailQuery(failureCount: number, error: unk
   return shouldRetryQuery(failureCount, error)
 }
 
+export function isInvalidActivityCursorError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 400
+}
+
+export function shouldRetryActivityQuery(failureCount: number, error: unknown) {
+  if (isInvalidActivityCursorError(error)) {
+    return false
+  }
+  return shouldRetryQuery(failureCount, error)
+}
+
 export function isAmbiguousContainerActionSubmissionError(error: unknown) {
   return error instanceof ApiConnectionError
     || error instanceof ApiContractError
