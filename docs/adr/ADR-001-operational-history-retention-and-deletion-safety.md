@@ -49,10 +49,23 @@ Operational Activity history의 현재 무기한 보존은 영구 보존 Product
 
 현재 Activity cursor에는 server-enforced expiry가 없으므로 Activity source automatic hard-delete는 승인되지 않습니다. Cursor가 생성될 때 보이던 row를 cursor chain이 유효한 동안 삭제하면 PostgreSQL visibility predicate만으로는 previously-visible event의 존재를 복구할 수 없습니다.
 
-Hard-delete 전에는 다음 중 하나가 필요합니다.
+다음 hard-delete safety invariant가 우선합니다.
 
-1. 선호안: server-owned issued/expiry semantics를 가진 bounded cursor validity를 추가합니다. Expired cursor는 deterministic한 existing invalid-cursor client error로 끝나고, retention cutoff보다 오래 유효한 cursor가 없어야 합니다. `ALL`과 single-type filter scope binding 및 legacy cursor compatibility를 함께 검증합니다.
-2. 대안: 삭제 candidate가 어떤 valid Activity cursor에서도 참조될 수 없음을 형식적으로 보장하는 다른 bounded contract를 채택합니다.
+> A row MUST NOT be physically hard-deleted while it can be referenced by any Activity cursor that the server may still accept.
+
+Future implementation은 다음 세 경계를 별도로 정의해야 합니다.
+
+- **Logical visibility cutoff:** 새로 발급하는 cursor와 첫 page query가 더 이상 오래된 row를 visibility snapshot에 포함하지 않는 경계입니다. Row가 이 cutoff를 넘었다는 사실만으로 physical deletion을 허용하지 않습니다.
+- **Cursor validity/invalidation boundary:** 해당 row를 관측할 수 있었던 모든 cursor가 expire되거나 server에서 deterministic하게 invalid 처리되는 경계입니다.
+- **Physical deletion eligibility:** 앞의 두 경계를 통과하고 source별 idempotency, dependency와 recovery prerequisite도 충족한 뒤에만 row가 hard-delete candidate가 되는 단계입니다.
+
+선호하는 bounded model은 다음 순서를 보장합니다.
+
+1. Row가 logical visibility cutoff를 넘으면 그 뒤 새로 발급하는 cursor에는 해당 row를 포함하지 않습니다.
+2. 해당 row를 관측했을 가능성이 있는 기존 cursor는 physical deletion 전에 expire되거나 deterministic하게 invalid 처리합니다.
+3. 그 뒤에만 해당 row를 physical hard-delete candidate로 분류합니다.
+
+Expired 또는 invalidated cursor는 deterministic한 existing invalid-cursor client error로 끝나야 하며, `ALL`과 single-type filter scope binding 및 legacy cursor compatibility를 함께 검증합니다. Cursor TTL이 retention duration보다 짧다는 비교만으로는 이 ordering과 invariant를 증명할 수 없습니다. 위 invariant를 형식적으로 증명하는 다른 bounded mechanism도 허용하지만, server가 여전히 수락할 cursor와 physical deletion이 겹칠 수 없어야 합니다.
 
 ### 4. Deployment / backup idempotency prerequisite
 
