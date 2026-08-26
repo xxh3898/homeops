@@ -29,10 +29,10 @@ HomeOps Activity는 다음 다섯 PostgreSQL source를 하나의 visibility-snap
 | Class | Data | 현재 정책 |
 |---|---|---|
 | Existing bounded/derived retention | `host_metric_aggregate`, `processed_agent_snapshot`, `health_check_result`, terminal `notification_event` | 각 기존 retention·cleanup contract를 그대로 유지합니다. 이 ADR은 기간이나 의미를 변경하지 않습니다. |
-| Operational Activity history | `deployment`, `backup_run`, `incident`, `agent_event` | `AUTO DELETE = DISABLED`. 명시적인 source policy와 아래 prerequisite가 충족될 때까지 bounded하지 않은 상태로 보존합니다. |
+| Operational Activity history | `deployment`, `backup_run`, `incident`, `agent_event` | `AUTO DELETE = DISABLED`. 아래 source별 current operating decision과 prerequisite를 만족하는 별도 Decision 전까지 bounded하지 않은 상태로 보존합니다. |
 | Privileged audit | `container_action_audit` | Generic Activity retention으로 삭제하는 것을 금지합니다. Finite retention은 별도 Security/Audit Decision만 허용합니다. |
 
-Operational Activity history의 현재 무기한 보존은 영구 보존 Product requirement가 아닙니다. 안전한 finite-retention prerequisite가 아직 충족되지 않았을 때 삭제하지 않는 fail-closed default입니다. Source별 명시적 policy가 없으면 삭제하지 않습니다.
+Operational Activity history의 현재 무기한 보존은 영구 보존 Product requirement가 아닙니다. Current evidence에서 destructive cleanup의 benefit이 입증되지 않았을 때 삭제하지 않는 fail-closed operating decision입니다.
 
 ### 2. Retention duration
 
@@ -45,7 +45,21 @@ Operational Activity history의 현재 무기한 보존은 영구 보존 Product
 - recovery capability
 - privileged audit requirement
 
-### 3. Activity cursor prerequisite
+### 3. Source별 current operating decision
+
+2026-08-26 production read-only aggregate evidence를 기준으로 다음을 결정했습니다. Candidate 세 source의 관측 구간은 모두 20일 미만이라 장기 growth 또는 retention duration을 외삽하기에 부족합니다(`INSUFFICIENT_OBSERVATION_WINDOW`). Candidate relation과 index의 합계는 272 KiB이고 current database 전체 크기는 약 109 MiB이며, current Activity first-page projection에서 storage 또는 query pressure가 관측되지 않았습니다. HomeOps PostgreSQL recurring/offsite backup도 여전히 없습니다.
+
+| Source | Decision | Evidence | Duration | Re-evaluation trigger |
+|---|---|---|---|---|
+| `deployment` | `KEEP_UNBOUNDED` | 7 rows, relation+index 72 KiB, 20일 미만 관측, measurable query pressure 없음 | N/A | relation growth가 storage나 Activity query에 material pressure를 만들거나 explicit privacy requirement 또는 accepted recovery capability가 생길 때 |
+| `backup_run` | `KEEP_UNBOUNDED` | 160 rows, relation+index 144 KiB, 20일 미만 관측, recovery risk가 deletion benefit보다 큼 | N/A | relation growth가 material해지거나 explicit data-minimization requirement와 recoverable cleanup gate가 함께 생길 때 |
+| `agent_event` | `KEEP_UNBOUNDED` | 8 rows, relation+index 56 KiB, low-frequency event라 cleanup runtime benefit이 입증되지 않음 | N/A | event frequency나 relation pressure가 material하게 바뀌거나 explicit privacy requirement가 생길 때 |
+| `incident` | `NOT_ELIGIBLE_IN_THIS_DECISION` | Open/recovery dual temporal semantics와 notification dependency가 별도 prerequisite | N/A | incident lifecycle·notification dependency·recovery time model을 다루는 별도 Decision |
+| `container_action_audit` | `SECURITY_DECISION_REQUIRED` | Privileged mutation idempotency와 audit authority | N/A | 별도 Security/Audit Decision |
+
+`KEEP_UNBOUNDED`는 current operating decision입니다. 위 trigger가 발생하면 새로운 aggregate evidence로 source 하나씩 재평가하며, 단순 row 증가나 임의의 `30d`, `90d`, `1y` convenience 값만으로 finite retention을 승인하지 않습니다. Deployment/backup의 `ingestion_event_key_ledger`는 business history와 별개의 durable replay authority이므로 계속 unbounded/cleanup disabled 상태를 유지합니다.
+
+### 4. Activity cursor와 logical visibility prerequisite
 
 Activity cursor source는 process-local 256-bit 이상 random key의 HMAC-SHA-256으로 payload authenticity를 확인하고, first-page `snapshotAt` 기준 정확히 1시간의 maximum validity를 강제합니다. Continuation cursor는 원래 `snapshotAt`을 유지하므로 pagination이 validity를 연장하지 않으며, application restart는 key rotation으로 이전 cursor를 deterministic하게 invalid 처리합니다. Unsigned legacy cursor도 수락하지 않습니다.
 
@@ -61,15 +75,25 @@ Future implementation은 다음 세 경계를 별도로 정의해야 합니다.
 - **Cursor validity/invalidation boundary:** 해당 row를 관측할 수 있었던 모든 cursor가 expire되거나 server에서 deterministic하게 invalid 처리되는 경계입니다.
 - **Physical deletion eligibility:** 앞의 두 경계를 통과하고 source별 idempotency, dependency와 recovery prerequisite도 충족한 뒤에만 row가 hard-delete candidate가 되는 단계입니다.
 
+Future finite source의 physical age authority는 server-owned `recorded_at`입니다. Activity display와 ordering은 기존 domain event time인 `started_at`, `opened_at`/`resolved_at`, `occurred_at`을 유지하며, client/source-provided event time만으로 physical deletion eligibility를 결정하지 않습니다.
+
+Finite duration `D`가 별도 승인되면 first page에서 다음 logical cutoff를 고정합니다.
+
+```text
+logicalCutoff = cursorChain.snapshotAt - D
+```
+
+같은 cursor chain의 continuation은 이 cutoff를 유지하며 page마다 `clock.now()`로 다시 계산하지 않습니다. Deployment `REQUESTED|RUNNING`과 backup `RUNNING` 같은 active/nonterminal row는 age만으로 숨기거나 삭제하지 않고 새 Activity chain에서도 visible 상태로 유지하는 것을 기본 fail-closed model로 삼습니다.
+
 선호하는 bounded model은 다음 순서를 보장합니다.
 
 1. Row가 logical visibility cutoff를 넘으면 그 뒤 새로 발급하는 cursor에는 해당 row를 포함하지 않습니다.
-2. 해당 row를 관측했을 가능성이 있는 기존 cursor는 physical deletion 전에 expire되거나 deterministic하게 invalid 처리합니다.
+2. 해당 row를 관측했을 가능성이 있는 기존 cursor는 first-page 기준 최대 1시간 validity boundary를 지나 expire되거나 그보다 먼저 deterministic하게 invalid 처리합니다.
 3. 그 뒤에만 해당 row를 physical hard-delete candidate로 분류합니다.
 
 Expired 또는 invalidated cursor는 deterministic한 existing invalid-cursor client error로 끝나야 하며, `ALL`과 single-type filter scope binding 및 unsigned legacy cursor rejection을 함께 검증합니다. Cursor TTL이 retention duration보다 짧다는 비교만으로는 이 ordering과 invariant를 증명할 수 없습니다. 위 invariant를 형식적으로 증명하는 다른 bounded mechanism도 허용하지만, server가 여전히 수락할 cursor와 physical deletion이 겹칠 수 없어야 합니다.
 
-### 4. Deployment / backup idempotency prerequisite
+### 5. Deployment / backup idempotency prerequisite
 
 V12는 `deployment`와 `backup_run` business history와 별개인 minimal durable replay authority인 `ingestion_event_key_ledger`를 추가합니다. `(source_type, event_key)`만 저장하며 source는 `DEPLOYMENT`와 `BACKUP`으로 제한합니다. Existing business key를 migration에서 backfill하고, DB-level business INSERT fence가 application version과 관계없이 ledger key를 먼저 reserve합니다. Reservation, business insert와 notification intent는 같은 transaction에서 commit/rollback됩니다.
 
@@ -85,7 +109,7 @@ V12는 `deployment`와 `backup_run` business history와 별개인 minimal durabl
 
 Current business row가 있으면 기존 digest·lifecycle resolver가 detailed authority입니다. Ledger만 있고 business row가 없으면 기존 ingestion-conflict taxonomy로 fail closed하며 business row나 notification을 부활시키지 않습니다. 이 prerequisite 완료는 business row hard-delete를 승인하지 않습니다.
 
-### 5. Incident prerequisite
+### 6. Incident prerequisite
 
 Incident finite retention은 최소 다음 계약을 요구합니다.
 
@@ -98,11 +122,11 @@ Incident finite retention은 최소 다음 계약을 요구합니다.
 
 FK 제거 또는 `ON DELETE CASCADE` 추가는 기본 해결책이 아니며 필요하면 별도 Data Decision으로 다룹니다.
 
-### 6. Agent event prerequisite
+### 7. Agent event prerequisite
 
-`agent_event`에는 deployment/backup과 같은 external `event_key` duplicate barrier가 없습니다. 그러나 Activity source이므로 cursor prerequisite를 충족하기 전에는 자동 삭제하지 않습니다. Future implementation에서 가장 단순한 첫 candidate가 될 수 있지만, 이 ADR은 기간이나 cleanup job을 승인하지 않습니다.
+`agent_event`에는 deployment/backup과 같은 external `event_key` duplicate barrier가 없습니다. 그러나 Activity source이므로 current `KEEP_UNBOUNDED` decision을 따릅니다. 구조가 단순하다는 사실만으로 deletion runtime을 정당화하지 않으며, 명시한 frequency·storage·query·privacy trigger가 발생한 경우에만 새 evidence로 재평가합니다.
 
-### 7. Container control audit boundary
+### 8. Container control audit boundary
 
 Generic Activity retention scheduler는 `container_action_audit`를 조회·삭제 대상으로 사용하면 안 됩니다. Finite retention은 별도 Security/Audit Decision에서 최소 다음을 다시 결정해야 합니다.
 
@@ -113,7 +137,7 @@ Generic Activity retention scheduler는 `container_action_audit`를 조회·삭�
 - Activity cursor lifetime
 - recovery 또는 audit export 필요 여부
 
-### 8. Notification retention boundary
+### 9. Notification retention boundary
 
 Existing `notification_event` terminal retention은 이 ADR과 별개이며 현재 status별 기간, parent 보존과 cleanup semantics를 변경하지 않습니다. Operational history retention이 notification retention을 암묵적으로 늘리거나 줄이지 않습니다. 반대로 incident row는 notification dependency가 실제로 해소되기 전까지 삭제하지 않습니다.
 
@@ -150,7 +174,8 @@ Rollback은 삭제한 row를 자동으로 되살린다고 주장하지 않습니
 
 ## 결과
 
-- Operational Activity retention policy는 결정됐지만 deletion runtime은 구현되지 않았습니다.
+- `deployment`, `backup_run`, `agent_event`의 current operating decision은 `KEEP_UNBOUNDED`이며 arbitrary retention duration은 승인하지 않았습니다.
+- `incident`는 이 Decision의 finite candidate가 아니고 `container_action_audit`는 별도 Security/Audit Decision 전까지 제외합니다.
 - Activity cursor source에는 tamper-resistant payload와 first-page 기준 최대 1시간의 server-verifiable validity가 구현됐습니다.
 - Deployment/backup event-key replay authority는 V12 minimal ledger로 business history와 분리됐습니다.
 - Automatic deletion of Activity sources는 disabled 상태입니다.
@@ -164,11 +189,11 @@ Rollback은 삭제한 row를 자동으로 되살린다고 주장하지 않습니
 
 1. 완료: Activity cursor bounded validity/expiry contract와 source 구현
 2. 완료: Deployment/backup ingestion idempotency ledger 설계와 구현
-3. Evidence에 따라 가장 단순한 eligible Activity source retention 구현
-4. Deployment/backup retention 구현
-5. Notification dependency contract 이후 incident retention 구현
-6. 별도 Security/Audit Decision을 통한 `container_action_audit` retention 검토
-7. 별도 production destructive-activation acceptance gate
+3. Current decision: `deployment`, `backup_run`, `agent_event` retention 구현 없음
+4. 명시한 re-evaluation trigger가 발생한 source 하나만 새 evidence/Decision으로 재검토
+5. Finite candidate가 승인된 경우 logical visibility를 먼저 별도 구현하고 physical DELETE는 후속 destructive gate로 분리
+6. Incident prerequisite Decision과 `container_action_audit` Security/Audit Decision은 각 범위에서 별도 검토
+7. Physical deletion이 승인된 경우에만 별도 production destructive-activation acceptance gate 수행
 
 ## 명시적 비범위
 
