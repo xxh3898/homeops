@@ -168,6 +168,24 @@ assert_state_revision() {
   /usr/bin/grep -Fxq "RUNTIME_CONFIG_DIGEST=${expected_config_digest}" "${state_file}"
 }
 
+assert_command_order() {
+  local before="$1"
+  local after="$2"
+  local before_line
+  local after_line
+
+  before_line="$(/usr/bin/grep -n -F -- "${before}" "${docker_log}" | /usr/bin/head -n 1 | /usr/bin/cut -d: -f1)"
+  after_line="$(/usr/bin/grep -n -F -- "${after}" "${docker_log}" | /usr/bin/head -n 1 | /usr/bin/cut -d: -f1)"
+  if [[ -z "${before_line}" || -z "${after_line}" ]] \
+    || [[ "${before_line}" -ge "${after_line}" ]]
+  then
+    printf 'Expected command order was not observed: %s before %s\n' \
+      "${before}" "${after}" >&2
+    /bin/cat "${docker_log}" >&2
+    exit 1
+  fi
+}
+
 prepare_case initial-success
 run_bootstrap \
   "${REVISION_ONE}" \
@@ -186,6 +204,39 @@ test "$(/usr/bin/readlink "${app_dir}/runtime-config/current")" \
 test ! -e "${app_dir}/runtime-config/pending"
 /usr/bin/grep -Fxq "${SMOKE_ORIGIN}/" "${curl_log}"
 /usr/bin/grep -Fq -- '--profile operations run --rm migration' "${docker_log}"
+assert_command_order ' stop api' '--profile operations run --rm migration'
+assert_command_order \
+  '--profile operations run --rm migration' \
+  "api=ghcr.io/example/homeops-api@${API_DIGEST_ONE} web=ghcr.io/example/homeops-web@${WEB_DIGEST_ONE} --project-directory ${app_dir} --env-file ${app_dir}/.env --file ${app_dir}/runtime-config/releases/${CONFIG_DIGEST_ONE#sha256:}/compose.yaml up -d --remove-orphans api web"
+assert_secret_absent
+
+prepare_case upgrade-success-ordering
+run_bootstrap \
+  "${REVISION_ONE}" \
+  "${API_DIGEST_ONE}" \
+  "${WEB_DIGEST_ONE}" \
+  "${CONFIG_DIGEST_ONE}" \
+  >"${case_output}" 2>&1
+: >"${docker_log}"
+: >"${curl_log}"
+FAKE_PREVIOUS_REVISION="${REVISION_ONE}" \
+FAKE_PREVIOUS_API_DIGEST="${API_DIGEST_ONE}" \
+FAKE_PREVIOUS_WEB_DIGEST="${WEB_DIGEST_ONE}" \
+  run_bootstrap \
+    "${REVISION_TWO}" \
+    "${API_DIGEST_TWO}" \
+    "${WEB_DIGEST_TWO}" \
+    "${CONFIG_DIGEST_TWO}" \
+    >"${case_output}" 2>&1
+assert_state_revision \
+  "${REVISION_TWO}" \
+  "${API_DIGEST_TWO}" \
+  "${WEB_DIGEST_TWO}" \
+  "${CONFIG_DIGEST_TWO}"
+assert_command_order ' stop api' '--profile operations run --rm migration'
+assert_command_order \
+  '--profile operations run --rm migration' \
+  "api=ghcr.io/example/homeops-api@${API_DIGEST_TWO} web=ghcr.io/example/homeops-web@${WEB_DIGEST_TWO} --project-directory ${app_dir} --env-file ${app_dir}/.env --file ${app_dir}/runtime-config/releases/${CONFIG_DIGEST_TWO#sha256:}/compose.yaml up -d --remove-orphans api web"
 assert_secret_absent
 
 prepare_case compose-plugin-missing
@@ -228,10 +279,58 @@ FAKE_MIGRATION_FAIL=true \
 test ! -e "${app_dir}/deployment.state"
 test ! -e "${app_dir}/runtime-config/current"
 test -L "${app_dir}/runtime-config/pending"
+assert_command_order ' stop api' '--profile operations run --rm migration'
 if /usr/bin/grep -Fq -- 'up -d --remove-orphans api web' "${docker_log}"; then
   printf 'Application cutover occurred after a failed migration\n' >&2
   exit 1
 fi
+assert_secret_absent
+
+prepare_case migration-failure-current-recovery
+run_bootstrap \
+  "${REVISION_ONE}" \
+  "${API_DIGEST_ONE}" \
+  "${WEB_DIGEST_ONE}" \
+  "${CONFIG_DIGEST_ONE}" \
+  >"${case_output}" 2>&1
+current_state_before_migration_failure="$(/bin/cat "${app_dir}/deployment.state")"
+: >"${docker_log}"
+: >"${curl_log}"
+FAKE_PREVIOUS_REVISION="${REVISION_ONE}" \
+FAKE_PREVIOUS_API_DIGEST="${API_DIGEST_ONE}" \
+FAKE_PREVIOUS_WEB_DIGEST="${WEB_DIGEST_ONE}" \
+FAKE_MIGRATION_FAIL=true \
+  assert_failure 1 \
+    run_bootstrap \
+      "${REVISION_TWO}" \
+      "${API_DIGEST_TWO}" \
+      "${WEB_DIGEST_TWO}" \
+      "${CONFIG_DIGEST_TWO}"
+assert_state_revision \
+  "${REVISION_ONE}" \
+  "${API_DIGEST_ONE}" \
+  "${WEB_DIGEST_ONE}" \
+  "${CONFIG_DIGEST_ONE}"
+test "$(/usr/bin/readlink "${app_dir}/runtime-config/current")" \
+  = "releases/${CONFIG_DIGEST_ONE#sha256:}"
+test "$(/usr/bin/readlink "${app_dir}/runtime-config/pending")" \
+  = "releases/${CONFIG_DIGEST_TWO#sha256:}"
+test "$(/bin/cat "${app_dir}/deployment.state")" \
+  = "${current_state_before_migration_failure}"
+assert_command_order ' stop api' '--profile operations run --rm migration'
+current_recovery_command="api=ghcr.io/example/homeops-api@${API_DIGEST_ONE} web=ghcr.io/example/homeops-web@${WEB_DIGEST_ONE} --project-directory ${app_dir} --env-file ${app_dir}/.env --file ${app_dir}/runtime-config/releases/${CONFIG_DIGEST_ONE#sha256:}/compose.yaml up -d --remove-orphans api web"
+/usr/bin/grep -Fq -- "${current_recovery_command}" "${docker_log}"
+assert_command_order '--profile operations run --rm migration' "${current_recovery_command}"
+if /usr/bin/grep -F -- \
+  "api=ghcr.io/example/homeops-api@${API_DIGEST_TWO} web=ghcr.io/example/homeops-web@${WEB_DIGEST_TWO}" \
+  "${docker_log}" \
+  | /usr/bin/grep -Fq -- 'up -d --remove-orphans api web'
+then
+  printf 'Candidate application activated after a failed migration\n' >&2
+  exit 1
+fi
+/usr/bin/grep -Fq -- 'current application recovery succeeded' "${case_output}"
+/usr/bin/grep -Fxq "${SMOKE_ORIGIN}/" "${curl_log}"
 assert_secret_absent
 
 prepare_case application-identity-failure

@@ -94,7 +94,7 @@ HomeOps는 비공식 Uptime Kuma API에 의존하지 않습니다. 두 서비스
 - API response는 `no-store`를 사용하고 service worker는 API GET request에 `NetworkOnly`를 사용합니다.
 - 배포는 변경 불가능한 API, Web, runtime-config digest를 사용하며 두 application image가 요청한 full-SHA revision label을 가지는지 검증합니다.
 - application health가 성공할 때까지 runtime configuration은 pending 상태입니다.
-- migration 실패는 application cutover 전에 중지합니다. application health 실패 시 이전 runtime configuration으로 시도하기 전에 이전 digest-pinned application을 pull하고 검증합니다.
+- ingestion ledger backfill을 포함한 migration 전에는 current API를 완전히 정지해 live writer를 quiesce합니다. Migration 성공 뒤에만 candidate API/Web을 활성화합니다. Migration 실패 시 candidate state를 기록하지 않고 current digest-pinned application/runtime configuration을 복구해 health/readiness/public smoke를 확인하며, current release가 없는 bootstrap은 fail closed합니다. Candidate application health 실패 시에도 이전 runtime configuration으로 시도하기 전에 이전 digest-pinned application을 pull하고 검증합니다.
 
 이 문서의 live 동작은 해당 development, CI, Mac Agent, iPhone, production acceptance gate가 실행되기 전까지 검증된 것으로 간주해서는 안 됩니다.
 

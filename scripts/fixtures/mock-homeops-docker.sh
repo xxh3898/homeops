@@ -145,6 +145,7 @@ case "${command_name}" in
       printf 'healthy-web\n'
     elif [[ "${arguments}" == *" pull "* ]] \
       || [[ "${arguments}" == *" up "* ]] \
+      || [[ "${arguments}" == *" stop api "* ]] \
       || [[ "${arguments}" == *" stop api web "* ]]
     then
       :

@@ -84,16 +84,16 @@ Operational Activity history 삭제 runtime은 현재 구현되지 않았고 pro
 | validation 또는 image build | publish/deploy 없음 | source를 고치고 검토된 CI 재실행 |
 | runtime image identity/shape mismatch | bootstrap 중지 | digest, GHCR package, immutable release directory 검증 |
 | lock 사용 불가 | 중첩 없이 종료 | 활성 exact operation을 찾고 lock 우회 금지 |
-| migration 실패 | cutover 중지 | Flyway와 DB를 검사하고 forward fix 우선 |
+| migration 실패 | current API writer quiesce 유지, candidate cutover와 state advance 중지 | current pinned application/runtime configuration 복구와 health/readiness/public smoke 확인 후 Flyway와 DB를 검사하고 forward fix 우선. current release가 없는 bootstrap은 fail closed |
 | API/Web health 실패 | previous digest-pinned image와 runtime config 시도 | rollback health를 검증하고 pending evidence 보존 |
 | tailnet smoke 실패 | local health 뒤 workflow 실패 | Serve/ACL/identity와 application health 분리 |
 | 첫 배포 검증 실패 | API/Web 중지. 수락된 `current` state 없음 | `pending`과 전용 DB를 진단용으로 보존. volume 자동 삭제 금지 |
 | Agent delivery 실패 | retry 가능한 pending delivery는 FIFO를 보존하고 새 collection을 억제. 새 snapshot 전달 실패 시 queue | spool file을 지우지 말고 API, mTLS, spool capacity, clock 검증 |
 | snapshot 영구 거부 | 연속 permanent reject를 FIFO drain의 같은 위치에 숨은 `.rejected-*.json` evidence file로 rename. retryable pending item이 없으면 fresh collection 재개 | metadata와 안전한 error status만 검사. rejected evidence도 bounded spool capacity에 포함되므로 정확한 retention을 수동 결정 |
-| event reporter transient 실패 | event는 private ingestion spool에 남고 `dev.homeops.ingestion-reporter` LaunchAgent가 5분마다 범위 제한 `--drain` retry 호출 | spool entry를 지우지 말고 API ingestion health, origin, secret configuration, spool count 검사 |
+| event reporter transient 실패 또는 deployment 중 API quiescence | event는 전송 전에 private ingestion spool에 원자 기록되고 transient/unavailable route에서는 남아 `dev.homeops.ingestion-reporter` LaunchAgent가 5분마다 범위 제한 `--drain` retry 호출 | spool entry를 지우지 말고 API ingestion health, origin, secret configuration, spool count 검사 |
 | stale Agent | UI가 stale/offline 경고 | native process와 Docker Desktop 검사. 자동 restart 없음 |
 
-Flyway가 이미 database를 바꿨을 수 있으므로 image rollback은 backward-compatible migration일 때만 안전합니다. 자동 path에 incompatible migration을 사용하지 마세요.
+Production worker는 ingestion ledger backfill을 포함한 migration 전에 current API를 완전히 정지하고, migration 성공 뒤에만 candidate API/Web을 활성화합니다. Migration 실패 시 accepted deployment state와 runtime-config current pointer를 candidate로 바꾸지 않습니다. Flyway가 이미 database를 바꿨을 수 있으므로 image rollback은 backward-compatible migration일 때만 안전합니다. 자동 path에 incompatible migration을 사용하지 마세요.
 
 ## 일상 읽기 전용 점검
 
