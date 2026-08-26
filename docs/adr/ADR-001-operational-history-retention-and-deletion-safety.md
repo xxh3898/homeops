@@ -16,7 +16,7 @@ HomeOps Activity는 다음 다섯 PostgreSQL source를 하나의 visibility-snap
 
 현재 일부 derived data와 protocol ledger에는 별도 automatic retention이 있지만, 위 Activity source를 위한 generic hard-delete runtime은 없습니다. 장기 이력 row를 age만으로 삭제하면 Activity display 이외의 durable contract도 함께 사라지거나 약해질 수 있습니다.
 
-- `deployment.event_key`와 `backup_run.event_key` unique row는 delayed/replayed ingestion을 막는 현재 duplicate barrier입니다.
+- V12 `ingestion_event_key_ledger`의 source-scoped event key가 delayed/replayed deployment·backup ingestion의 durable resurrection barrier입니다. Business table의 unique `event_key`는 current row invariant와 defense-in-depth로 유지합니다.
 - `notification_event.incident_id`는 `incident(id)`를 참조하고, notification root/child provenance는 V7 self-FK로 보호됩니다.
 - Activity cursor는 PostgreSQL visibility snapshot, pagination position과 filter scope를 보존하는 versioned HMAC token이며, first-page snapshot 기준 최대 1시간의 server-enforced validity를 가집니다. Signing authority는 process-local이라 application restart가 기존 cursor를 더 일찍 invalid 처리할 수 있습니다.
 - `container_action_audit`는 Activity source인 동시에 privileged control의 idempotency 및 audit authority입니다.
@@ -71,17 +71,19 @@ Expired 또는 invalidated cursor는 deterministic한 existing invalid-cursor cl
 
 ### 4. Deployment / backup idempotency prerequisite
 
-`deployment`와 `backup_run` business history를 삭제하기 전에 row history와 별개인 durable replay authority가 필요합니다. 선호 방향은 minimal ingestion idempotency tombstone/ledger입니다.
+V12는 `deployment`와 `backup_run` business history와 별개인 minimal durable replay authority인 `ingestion_event_key_ledger`를 추가합니다. `(source_type, event_key)`만 저장하며 source는 `DEPLOYMENT`와 `BACKUP`으로 제한합니다. Existing business key를 migration에서 backfill하고, DB-level business INSERT fence가 application version과 관계없이 ledger key를 먼저 reserve합니다. Reservation, business insert와 notification intent는 같은 transaction에서 commit/rollback됩니다.
 
-Future implementation은 다음을 모두 만족해야 합니다.
+구현된 contract는 다음을 만족합니다.
 
 - 삭제한 event의 canonical `event_key` 재사용을 계속 거부합니다.
 - business payload와 private metadata를 tombstone에 복제하지 않습니다.
 - business history retention과 duplicate barrier lifetime을 분리합니다.
 - delayed reporter retry가 historical event를 새 event로 부활시키지 않습니다.
-- tombstone retention은 upstream replay horizon을 증명한 뒤 별도로 결정합니다.
+- V12 DB 위의 pre-V12 writer도 ledger reservation 없이 deployment/backup business row를 만들 수 없습니다.
+- ledger에는 FK, digest, business UUID, timestamp 또는 expiry가 없으며 source별 동일 literal key는 독립 namespace로 유지합니다.
+- ledger retention은 upstream replay horizon을 증명한 뒤 별도로 결정합니다. 현재 cleanup은 없고 fail-closed로 보존합니다.
 
-Business row를 삭제해 V1 unique barrier를 잃는 방식은 허용하지 않습니다.
+Current business row가 있으면 기존 digest·lifecycle resolver가 detailed authority입니다. Ledger만 있고 business row가 없으면 기존 ingestion-conflict taxonomy로 fail closed하며 business row나 notification을 부활시키지 않습니다. 이 prerequisite 완료는 business row hard-delete를 승인하지 않습니다.
 
 ### 5. Incident prerequisite
 
@@ -150,6 +152,7 @@ Rollback은 삭제한 row를 자동으로 되살린다고 주장하지 않습니
 
 - Operational Activity retention policy는 결정됐지만 deletion runtime은 구현되지 않았습니다.
 - Activity cursor source에는 tamper-resistant payload와 first-page 기준 최대 1시간의 server-verifiable validity가 구현됐습니다.
+- Deployment/backup event-key replay authority는 V12 minimal ledger로 business history와 분리됐습니다.
 - Automatic deletion of Activity sources는 disabled 상태입니다.
 - Privileged control audit는 generic retention 범위 밖입니다.
 - Production destructive activation은 별도 승인 전까지 허용되지 않습니다.
@@ -160,7 +163,7 @@ Rollback은 삭제한 row를 자동으로 되살린다고 주장하지 않습니
 각 단계는 별도 Issue/PR로 다룹니다.
 
 1. 완료: Activity cursor bounded validity/expiry contract와 source 구현
-2. Deployment/backup ingestion idempotency tombstone 설계와 구현
+2. 완료: Deployment/backup ingestion idempotency ledger 설계와 구현
 3. Evidence에 따라 가장 단순한 eligible Activity source retention 구현
 4. Deployment/backup retention 구현
 5. Notification dependency contract 이후 incident retention 구현
@@ -169,4 +172,4 @@ Rollback은 삭제한 row를 자동으로 되살린다고 주장하지 않습니
 
 ## 명시적 비범위
 
-이 ADR과 현재 cursor prerequisite source는 DELETE SQL, retention scheduler/property, migration/schema/FK, tombstone, retention API/UI, notification retention, Agent, workflow/classifier 또는 production configuration/data 변경을 구현하거나 승인하지 않습니다.
+이 ADR과 현재 prerequisite source는 Activity history DELETE SQL, retention scheduler/property, ledger cleanup/expiry, retention API/UI, incident/notification FK 변경, notification retention 변경, Agent, workflow/classifier 또는 production configuration/data 변경을 구현하거나 승인하지 않습니다.

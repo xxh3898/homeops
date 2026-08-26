@@ -292,7 +292,17 @@ then
   fail "candidate application image revision is invalid"
 fi
 compose up -d db
-compose --profile operations run --rm migration
+compose stop api
+if ! compose --profile operations run --rm migration; then
+  if rollback_previous_application; then
+    fail "migration failed; current application recovery succeeded"
+  else
+    if [[ "${current_sha}" == "${ZERO_SHA}" ]]; then
+      compose stop api web >/dev/null 2>&1 || true
+    fi
+    fail "migration failed; current application recovery was unavailable or failed"
+  fi
+fi
 compose up -d --remove-orphans api web
 
 if ! wait_for_health || ! public_smoke; then

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
+import dev.homeops.common.EventKeyConflictException;
 import dev.homeops.common.InvalidIngestionStateTransitionException;
 import dev.homeops.ingestion.IngestionDigest;
 import dev.homeops.ingestion.IngestionService;
@@ -70,6 +71,7 @@ class DeploymentNotificationProducerPostgresqlIntegrationTest {
         jdbc.update("DELETE FROM notification_event");
         jdbc.update("DELETE FROM deployment");
         jdbc.update("DELETE FROM backup_run");
+        jdbc.update("DELETE FROM ingestion_event_key_ledger");
     }
 
     @Test
@@ -142,7 +144,28 @@ class DeploymentNotificationProducerPostgresqlIntegrationTest {
                 .hasMessage("Notification payload exceeds the serialized byte limit");
 
         assertThat(jdbc.queryForObject("SELECT count(*) FROM deployment", Integer.class)).isZero();
+        assertThat(ledgerCount("DEPLOYMENT", "deploy-rollback")).isZero();
         assertThat(notificationCount()).isZero();
+    }
+
+    @Test
+    void should_allowRetryAfterLedgerReservationRollsBack_when_initialNotificationFails() {
+        String eventKey = "deploy-rollback-retry";
+        DeploymentIngestionRequest request = deployment(
+                eventKey, DeploymentIngestionRequest.DeploymentStatus.RUNNING, null);
+        IngestionService failingService = service(
+                new NotificationPayloadCodec(new ObjectMapper(), 1), false);
+
+        assertThatThrownBy(() -> inTransaction(() -> failingService.acceptDeployment(request)))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        IngestionAcceptedResponse retry = inTransaction(() -> disabledService.acceptDeployment(request));
+
+        assertThat(retry.duplicate()).isFalse();
+        assertThat(ledgerCount("DEPLOYMENT", eventKey)).isOne();
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM deployment WHERE event_key = ?", Integer.class, eventKey)).isOne();
+        assertThat(notificationEventTypes()).containsExactly("DEPLOYMENT_STARTED");
     }
 
     @Test
@@ -154,6 +177,7 @@ class DeploymentNotificationProducerPostgresqlIntegrationTest {
         });
 
         assertThat(jdbc.queryForObject("SELECT count(*) FROM deployment", Integer.class)).isZero();
+        assertThat(ledgerCount("DEPLOYMENT", "deploy-outer-rollback")).isZero();
         assertThat(notificationCount()).isZero();
     }
 
@@ -167,6 +191,23 @@ class DeploymentNotificationProducerPostgresqlIntegrationTest {
         assertThat(responses).extracting(IngestionAcceptedResponse::duplicate)
                 .containsExactlyInAnyOrder(false, true);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM deployment", Integer.class)).isEqualTo(1);
+        assertThat(ledgerCount("DEPLOYMENT", request.eventKey())).isOne();
+        assertThat(notificationEventTypes()).containsExactly("DEPLOYMENT_STARTED");
+    }
+
+    @Test
+    void should_notResurrectDeploymentOrNotification_when_businessHistoryWasDeleted() {
+        DeploymentIngestionRequest request = deployment(
+                "deploy-deleted-history", DeploymentIngestionRequest.DeploymentStatus.RUNNING, null);
+        inTransaction(() -> disabledService.acceptDeployment(request));
+        jdbc.update("DELETE FROM deployment WHERE event_key = ?", request.eventKey());
+
+        assertThatThrownBy(() -> inTransaction(() -> disabledService.acceptDeployment(request)))
+                .isInstanceOf(EventKeyConflictException.class);
+
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM deployment WHERE event_key = ?", Integer.class, request.eventKey())).isZero();
+        assertThat(ledgerCount("DEPLOYMENT", request.eventKey())).isOne();
         assertThat(notificationEventTypes()).containsExactly("DEPLOYMENT_STARTED");
     }
 
@@ -357,6 +398,14 @@ class DeploymentNotificationProducerPostgresqlIntegrationTest {
 
     private int notificationCount() {
         return jdbc.queryForObject("SELECT count(*) FROM notification_event", Integer.class);
+    }
+
+    private int ledgerCount(String sourceType, String eventKey) {
+        return jdbc.queryForObject("""
+                SELECT count(*)
+                FROM ingestion_event_key_ledger
+                WHERE source_type = ? AND event_key = ?
+                """, Integer.class, sourceType, eventKey);
     }
 
     private List<String> notificationEventTypes() {

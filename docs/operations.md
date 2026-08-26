@@ -60,7 +60,7 @@ Full validation은 native Agent release 허가가 아닙니다. Persistent Agent
 
 ## 장기 운영 이력 destructive retention gate
 
-Operational Activity history 삭제 runtime은 현재 구현되지 않았고 production activation도 승인되지 않았습니다. Activity cursor source에는 process-local HMAC integrity와 first-page 기준 최대 1시간 validity가 구현됐지만, future source별 retention은 logical visibility cutoff, cursor validity/invalidation boundary와 physical deletion eligibility를 계속 분리해야 합니다. Server가 아직 수락할 Activity cursor가 참조할 수 있는 row는 hard-delete할 수 없으며 cursor TTL과 retention duration의 단순 비교만으로 이 조건을 충족했다고 판단하면 안 됩니다. Deployment/backup idempotency authority, incident/notification dependency와 privileged audit 경계도 [ADR-001](adr/ADR-001-operational-history-retention-and-deletion-safety.md)에 따라 먼저 충족해야 합니다.
+Operational Activity history 삭제 runtime은 현재 구현되지 않았고 production activation도 승인되지 않았습니다. Activity cursor source에는 process-local HMAC integrity와 first-page 기준 최대 1시간 validity가 구현됐지만, future source별 retention은 logical visibility cutoff, cursor validity/invalidation boundary와 physical deletion eligibility를 계속 분리해야 합니다. Server가 아직 수락할 Activity cursor가 참조할 수 있는 row는 hard-delete할 수 없으며 cursor TTL과 retention duration의 단순 비교만으로 이 조건을 충족했다고 판단하면 안 됩니다. V12 minimal ledger로 deployment/backup event-key replay authority는 business history와 분리됐지만 ledger cleanup은 없고, source별 retention policy·grace, incident/notification dependency와 privileged audit 경계는 [ADR-001](adr/ADR-001-operational-history-retention-and-deletion-safety.md)에 따라 별도로 충족해야 합니다.
 
 첫 production hard-delete 전에는 application release와 별도의 Ops Gate가 필요합니다. Exact DB/release identity, candidate age/count, active/nonterminal/dependency count를 read-only로 확인하고 cleanup switch가 default disabled인지 검증하세요. Pre-delete logical backup 또는 동등한 accepted recovery artifact와 isolated restore evidence가 없으면 실행하지 않습니다. 첫 run은 작은 bounded batch로 제한하고 deleted/skipped aggregate count와 Activity/API/health만 검증하며 raw payload나 private metadata를 evidence에 남기지 않습니다. 예상 밖 삭제가 있으면 추가 batch를 중단하고 restore 또는 사전에 합의한 forward recovery를 사용합니다. Deleted row를 설정 rollback만으로 복구할 수 있다고 간주하지 마세요.
 
@@ -84,16 +84,16 @@ Operational Activity history 삭제 runtime은 현재 구현되지 않았고 pro
 | validation 또는 image build | publish/deploy 없음 | source를 고치고 검토된 CI 재실행 |
 | runtime image identity/shape mismatch | bootstrap 중지 | digest, GHCR package, immutable release directory 검증 |
 | lock 사용 불가 | 중첩 없이 종료 | 활성 exact operation을 찾고 lock 우회 금지 |
-| migration 실패 | cutover 중지 | Flyway와 DB를 검사하고 forward fix 우선 |
-| API/Web health 실패 | previous digest-pinned image와 runtime config 시도 | rollback health를 검증하고 pending evidence 보존 |
+| migration 실패 | current API writer quiesce 유지, candidate cutover와 state advance 중지 | current pinned application/runtime configuration 복구와 health/readiness/public smoke 확인 후 Flyway와 DB를 검사하고 forward fix 우선. current release가 없는 bootstrap은 fail closed |
+| API/Web health 실패 | previous digest-pinned image와 runtime config 시도 | rollback health를 검증하고 pending evidence 보존. V12 적용 뒤 pre-V12 API가 복구돼도 DB-level fence가 ledgerless ingestion INSERT를 차단 |
 | tailnet smoke 실패 | local health 뒤 workflow 실패 | Serve/ACL/identity와 application health 분리 |
 | 첫 배포 검증 실패 | API/Web 중지. 수락된 `current` state 없음 | `pending`과 전용 DB를 진단용으로 보존. volume 자동 삭제 금지 |
 | Agent delivery 실패 | retry 가능한 pending delivery는 FIFO를 보존하고 새 collection을 억제. 새 snapshot 전달 실패 시 queue | spool file을 지우지 말고 API, mTLS, spool capacity, clock 검증 |
 | snapshot 영구 거부 | 연속 permanent reject를 FIFO drain의 같은 위치에 숨은 `.rejected-*.json` evidence file로 rename. retryable pending item이 없으면 fresh collection 재개 | metadata와 안전한 error status만 검사. rejected evidence도 bounded spool capacity에 포함되므로 정확한 retention을 수동 결정 |
-| event reporter transient 실패 | event는 private ingestion spool에 남고 `dev.homeops.ingestion-reporter` LaunchAgent가 5분마다 범위 제한 `--drain` retry 호출 | spool entry를 지우지 말고 API ingestion health, origin, secret configuration, spool count 검사 |
+| event reporter transient 실패 또는 deployment 중 API quiescence | event는 전송 전에 private ingestion spool에 원자 기록되고 transient/unavailable route에서는 남아 `dev.homeops.ingestion-reporter` LaunchAgent가 5분마다 범위 제한 `--drain` retry 호출 | spool entry를 지우지 말고 API ingestion health, origin, secret configuration, spool count 검사 |
 | stale Agent | UI가 stale/offline 경고 | native process와 Docker Desktop 검사. 자동 restart 없음 |
 
-Flyway가 이미 database를 바꿨을 수 있으므로 image rollback은 backward-compatible migration일 때만 안전합니다. 자동 path에 incompatible migration을 사용하지 마세요.
+Production worker는 ingestion ledger backfill을 포함한 migration 전에 current API를 완전히 정지하고, migration 성공 뒤에만 candidate API/Web을 활성화합니다. Migration 실패 시 accepted deployment state와 runtime-config current pointer를 candidate로 바꾸지 않습니다. V12 DB는 old/new application writer 모두의 deployment/backup INSERT 전에 ledger reservation을 강제하므로 migration 성공 뒤 candidate verification rollback에서도 ledgerless business row를 허용하지 않습니다. 다른 migration은 이미 database를 바꿨을 수 있으므로 image rollback이 backward-compatible할 때만 안전합니다. 자동 path에 incompatible migration을 사용하지 마세요.
 
 ## 일상 읽기 전용 점검
 
