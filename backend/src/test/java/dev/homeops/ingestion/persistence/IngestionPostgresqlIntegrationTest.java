@@ -52,7 +52,7 @@ class IngestionPostgresqlIntegrationTest {
         jdbc = new JdbcTemplate(dataSource);
         transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
         service = new IngestionService(new DeploymentIngestionStore(jdbc), new BackupIngestionStore(jdbc),
-                new IngestionEventKeyLedgerStore(jdbc), new IngestionDigest(), mock(DeploymentNotificationProducer.class),
+                new IngestionDigest(), mock(DeploymentNotificationProducer.class),
                 mock(BackupNotificationProducer.class));
     }
 

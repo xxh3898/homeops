@@ -12,7 +12,6 @@ import dev.homeops.ingestion.api.DeploymentIngestionRequest;
 import dev.homeops.ingestion.api.IngestionAcceptedResponse;
 import dev.homeops.ingestion.persistence.BackupIngestionStore;
 import dev.homeops.ingestion.persistence.DeploymentIngestionStore;
-import dev.homeops.ingestion.persistence.IngestionEventKeyLedgerStore;
 import dev.homeops.notification.config.HomeOpsNotificationProperties;
 import java.time.Clock;
 import java.time.Duration;
@@ -370,7 +369,6 @@ class BackupNotificationProducerPostgresqlIntegrationTest {
         return new IngestionService(
                 new DeploymentIngestionStore(jdbc),
                 new BackupIngestionStore(jdbc),
-                new IngestionEventKeyLedgerStore(jdbc),
                 new IngestionDigest(),
                 new DeploymentNotificationProducer(outbox),
                 new BackupNotificationProducer(outbox));

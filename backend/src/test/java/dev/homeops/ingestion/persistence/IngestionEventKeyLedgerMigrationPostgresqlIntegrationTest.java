@@ -55,6 +55,18 @@ class IngestionEventKeyLedgerMigrationPostgresqlIntegrationTest {
                   AND table_row.relname = 'ingestion_event_key_ledger'
                   AND constraint_row.contype = 'f'
                 """, Integer.class)).isZero();
+        assertThat(jdbc.queryForList("""
+                SELECT trigger_row.tgname
+                FROM pg_trigger trigger_row
+                JOIN pg_class table_row ON table_row.oid = trigger_row.tgrelid
+                JOIN pg_namespace namespace_row ON namespace_row.oid = table_row.relnamespace
+                WHERE namespace_row.nspname = current_schema()
+                  AND NOT trigger_row.tgisinternal
+                  AND table_row.relname IN ('deployment', 'backup_run')
+                ORDER BY trigger_row.tgname
+                """, String.class)).containsExactly(
+                        "trg_backup_run_reserve_ingestion_event_key",
+                        "trg_deployment_reserve_ingestion_event_key");
 
         insertLedger("DEPLOYMENT", "shared-event-key");
         insertLedger("BACKUP", "shared-event-key");
@@ -104,6 +116,34 @@ class IngestionEventKeyLedgerMigrationPostgresqlIntegrationTest {
     }
 
     @Test
+    void should_reserveLedgerBeforeBusinessInsert_when_preV12WriterUsesV12Schema() {
+        database.migrateToCurrent();
+
+        assertThat(insertCurrentDeployment("old-writer-deployment", "RUNNING", "a".repeat(64))).isOne();
+        assertThat(insertCurrentBackup("old-writer-backup", "RUNNING", "b".repeat(64))).isOne();
+
+        assertThat(ledgerRows()).containsExactly(
+                Map.of("source_type", "BACKUP", "event_key", "old-writer-backup"),
+                Map.of("source_type", "DEPLOYMENT", "event_key", "old-writer-deployment"));
+    }
+
+    @Test
+    void should_blockLedgerlessBusinessResurrection_when_preV12WriterUsesV12Schema() {
+        database.migrateToCurrent();
+        insertLedger("DEPLOYMENT", "deleted-deployment");
+        insertLedger("BACKUP", "deleted-backup");
+
+        assertThat(insertCurrentDeployment("deleted-deployment", "RUNNING", "a".repeat(64))).isZero();
+        assertThat(insertCurrentBackup("deleted-backup", "RUNNING", "b".repeat(64))).isZero();
+
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM deployment WHERE event_key = 'deleted-deployment'", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM backup_run WHERE event_key = 'deleted-backup'", Integer.class)).isZero();
+        assertThat(ledgerRows()).hasSize(2);
+    }
+
+    @Test
     void should_preserveCurrentBusinessRowsAndLedger_when_migratingFromV11ToV12() {
         database.migrateTo("11");
         insertCurrentDeployment("deployment-current", "RUNNING", "a".repeat(64));
@@ -149,16 +189,16 @@ class IngestionEventKeyLedgerMigrationPostgresqlIntegrationTest {
                 """, UUID.randomUUID(), eventKey, status, Timestamp.from(STARTED_AT));
     }
 
-    private void insertCurrentDeployment(String eventKey, String status, String digest) {
-        jdbc.update("""
+    private int insertCurrentDeployment(String eventKey, String status, String digest) {
+        return jdbc.update("""
                 INSERT INTO deployment (
                     id, event_key, project, environment, commit_sha, status, started_at, ingestion_digest)
                 VALUES (?, ?, 'homeops', 'production', ?, ?, ?, ?)
                 """, UUID.randomUUID(), eventKey, "a".repeat(40), status, Timestamp.from(STARTED_AT), digest);
     }
 
-    private void insertCurrentBackup(String eventKey, String status, String digest) {
-        jdbc.update("""
+    private int insertCurrentBackup(String eventKey, String status, String digest) {
+        return jdbc.update("""
                 INSERT INTO backup_run (
                     id, event_key, project, database_type, status, started_at, ingestion_digest)
                 VALUES (?, ?, 'homeops', 'POSTGRESQL', ?, ?, ?)

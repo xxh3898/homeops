@@ -71,7 +71,7 @@ Expired 또는 invalidated cursor는 deterministic한 existing invalid-cursor cl
 
 ### 4. Deployment / backup idempotency prerequisite
 
-V12는 `deployment`와 `backup_run` business history와 별개인 minimal durable replay authority인 `ingestion_event_key_ledger`를 추가합니다. `(source_type, event_key)`만 저장하며 source는 `DEPLOYMENT`와 `BACKUP`으로 제한합니다. Existing business key를 migration에서 backfill하고, 새 ingestion은 business insert·notification intent와 같은 transaction에서 ledger key를 reserve합니다.
+V12는 `deployment`와 `backup_run` business history와 별개인 minimal durable replay authority인 `ingestion_event_key_ledger`를 추가합니다. `(source_type, event_key)`만 저장하며 source는 `DEPLOYMENT`와 `BACKUP`으로 제한합니다. Existing business key를 migration에서 backfill하고, DB-level business INSERT fence가 application version과 관계없이 ledger key를 먼저 reserve합니다. Reservation, business insert와 notification intent는 같은 transaction에서 commit/rollback됩니다.
 
 구현된 contract는 다음을 만족합니다.
 
@@ -79,6 +79,7 @@ V12는 `deployment`와 `backup_run` business history와 별개인 minimal durabl
 - business payload와 private metadata를 tombstone에 복제하지 않습니다.
 - business history retention과 duplicate barrier lifetime을 분리합니다.
 - delayed reporter retry가 historical event를 새 event로 부활시키지 않습니다.
+- V12 DB 위의 pre-V12 writer도 ledger reservation 없이 deployment/backup business row를 만들 수 없습니다.
 - ledger에는 FK, digest, business UUID, timestamp 또는 expiry가 없으며 source별 동일 literal key는 독립 namespace로 유지합니다.
 - ledger retention은 upstream replay horizon을 증명한 뒤 별도로 결정합니다. 현재 cleanup은 없고 fail-closed로 보존합니다.
 

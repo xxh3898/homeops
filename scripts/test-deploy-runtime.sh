@@ -391,6 +391,7 @@ run_bootstrap \
   "${WEB_DIGEST_ONE}" \
   "${CONFIG_DIGEST_ONE}" \
   >"${case_output}" 2>&1
+current_state_before_candidate_failure="$(/bin/cat "${app_dir}/deployment.state")"
 : >"${docker_log}"
 : >"${curl_log}"
 FAKE_PREVIOUS_REVISION="${REVISION_ONE}" \
@@ -412,8 +413,16 @@ test "$(/usr/bin/readlink "${app_dir}/runtime-config/current")" \
   = "releases/${CONFIG_DIGEST_ONE#sha256:}"
 test "$(/usr/bin/readlink "${app_dir}/runtime-config/pending")" \
   = "releases/${CONFIG_DIGEST_TWO#sha256:}"
-/usr/bin/grep -Fq -- "api=ghcr.io/example/homeops-api@${API_DIGEST_ONE}" "${docker_log}"
+test "$(/bin/cat "${app_dir}/deployment.state")" \
+  = "${current_state_before_candidate_failure}"
+candidate_activation_command="api=ghcr.io/example/homeops-api@${API_DIGEST_TWO} web=ghcr.io/example/homeops-web@${WEB_DIGEST_TWO} --project-directory ${app_dir} --env-file ${app_dir}/.env --file ${app_dir}/runtime-config/releases/${CONFIG_DIGEST_TWO#sha256:}/compose.yaml up -d --remove-orphans api web"
+current_rollback_command="api=ghcr.io/example/homeops-api@${API_DIGEST_ONE} web=ghcr.io/example/homeops-web@${WEB_DIGEST_ONE} --project-directory ${app_dir} --env-file ${app_dir}/.env --file ${app_dir}/runtime-config/releases/${CONFIG_DIGEST_ONE#sha256:}/compose.yaml up -d --remove-orphans api web"
+/usr/bin/grep -Fq -- "${candidate_activation_command}" "${docker_log}"
+/usr/bin/grep -Fq -- "${current_rollback_command}" "${docker_log}"
+assert_command_order '--profile operations run --rm migration' "${candidate_activation_command}"
+assert_command_order "${candidate_activation_command}" "${current_rollback_command}"
 /usr/bin/grep -Fq -- 'previous application rollback succeeded' "${case_output}"
+/usr/bin/grep -Fxq "${SMOKE_ORIGIN}/" "${curl_log}"
 assert_secret_absent
 
 prepare_case rollback-failure
