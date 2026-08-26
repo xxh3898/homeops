@@ -30,6 +30,8 @@ services:
       - postgres-data:/var/lib/postgresql
     networks:
       - application
+    labels:
+      homeops.logs: "true"
     logging:
       driver: json-file
       options:
@@ -102,6 +104,7 @@ services:
       - application
       - egress
     labels:
+      homeops.logs: "true"
       homeops.managed: "false"
     logging:
       driver: json-file
@@ -175,6 +178,7 @@ services:
       - application
       - ingress
     labels:
+      homeops.logs: "true"
       homeops.managed: "false"
     logging:
       driver: json-file
