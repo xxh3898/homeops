@@ -18,7 +18,7 @@ HomeOps Activity는 다음 다섯 PostgreSQL source를 하나의 visibility-snap
 
 - `deployment.event_key`와 `backup_run.event_key` unique row는 delayed/replayed ingestion을 막는 현재 duplicate barrier입니다.
 - `notification_event.incident_id`는 `incident(id)`를 참조하고, notification root/child provenance는 V7 self-FK로 보호됩니다.
-- Activity cursor는 PostgreSQL visibility snapshot, pagination position과 filter scope를 보존하지만 bounded validity/expiry를 검증하지 않습니다.
+- Activity cursor는 PostgreSQL visibility snapshot, pagination position과 filter scope를 보존하는 versioned HMAC token이며, first-page snapshot 기준 최대 1시간의 server-enforced validity를 가집니다. Signing authority는 process-local이라 application restart가 기존 cursor를 더 일찍 invalid 처리할 수 있습니다.
 - `container_action_audit`는 Activity source인 동시에 privileged control의 idempotency 및 audit authority입니다.
 - HomeOps PostgreSQL에는 recurring/offsite backup이 제공되지 않으므로 hard-delete는 application release만으로 승인할 수 없는 destructive operation입니다.
 
@@ -47,7 +47,9 @@ Operational Activity history의 현재 무기한 보존은 영구 보존 Product
 
 ### 3. Activity cursor prerequisite
 
-현재 Activity cursor에는 server-enforced expiry가 없으므로 Activity source automatic hard-delete는 승인되지 않습니다. Cursor가 생성될 때 보이던 row를 cursor chain이 유효한 동안 삭제하면 PostgreSQL visibility predicate만으로는 previously-visible event의 존재를 복구할 수 없습니다.
+Activity cursor source는 process-local 256-bit 이상 random key의 HMAC-SHA-256으로 payload authenticity를 확인하고, first-page `snapshotAt` 기준 정확히 1시간의 maximum validity를 강제합니다. Continuation cursor는 원래 `snapshotAt`을 유지하므로 pagination이 validity를 연장하지 않으며, application restart는 key rotation으로 이전 cursor를 deterministic하게 invalid 처리합니다. Unsigned legacy cursor도 수락하지 않습니다.
+
+이 bounded validity source prerequisite가 구현됐어도 Activity source automatic hard-delete는 승인되지 않습니다. Cursor가 생성될 때 보이던 row를 cursor chain이 유효한 동안 삭제하면 PostgreSQL visibility predicate만으로는 previously-visible event의 존재를 복구할 수 없습니다.
 
 다음 hard-delete safety invariant가 우선합니다.
 
@@ -65,7 +67,7 @@ Future implementation은 다음 세 경계를 별도로 정의해야 합니다.
 2. 해당 row를 관측했을 가능성이 있는 기존 cursor는 physical deletion 전에 expire되거나 deterministic하게 invalid 처리합니다.
 3. 그 뒤에만 해당 row를 physical hard-delete candidate로 분류합니다.
 
-Expired 또는 invalidated cursor는 deterministic한 existing invalid-cursor client error로 끝나야 하며, `ALL`과 single-type filter scope binding 및 legacy cursor compatibility를 함께 검증합니다. Cursor TTL이 retention duration보다 짧다는 비교만으로는 이 ordering과 invariant를 증명할 수 없습니다. 위 invariant를 형식적으로 증명하는 다른 bounded mechanism도 허용하지만, server가 여전히 수락할 cursor와 physical deletion이 겹칠 수 없어야 합니다.
+Expired 또는 invalidated cursor는 deterministic한 existing invalid-cursor client error로 끝나야 하며, `ALL`과 single-type filter scope binding 및 unsigned legacy cursor rejection을 함께 검증합니다. Cursor TTL이 retention duration보다 짧다는 비교만으로는 이 ordering과 invariant를 증명할 수 없습니다. 위 invariant를 형식적으로 증명하는 다른 bounded mechanism도 허용하지만, server가 여전히 수락할 cursor와 physical deletion이 겹칠 수 없어야 합니다.
 
 ### 4. Deployment / backup idempotency prerequisite
 
@@ -147,6 +149,7 @@ Rollback은 삭제한 row를 자동으로 되살린다고 주장하지 않습니
 ## 결과
 
 - Operational Activity retention policy는 결정됐지만 deletion runtime은 구현되지 않았습니다.
+- Activity cursor source에는 tamper-resistant payload와 first-page 기준 최대 1시간의 server-verifiable validity가 구현됐습니다.
 - Automatic deletion of Activity sources는 disabled 상태입니다.
 - Privileged control audit는 generic retention 범위 밖입니다.
 - Production destructive activation은 별도 승인 전까지 허용되지 않습니다.
@@ -156,7 +159,7 @@ Rollback은 삭제한 row를 자동으로 되살린다고 주장하지 않습니
 
 각 단계는 별도 Issue/PR로 다룹니다.
 
-1. Activity cursor bounded validity/expiry contract와 구현
+1. 완료: Activity cursor bounded validity/expiry contract와 source 구현
 2. Deployment/backup ingestion idempotency tombstone 설계와 구현
 3. Evidence에 따라 가장 단순한 eligible Activity source retention 구현
 4. Deployment/backup retention 구현
@@ -166,4 +169,4 @@ Rollback은 삭제한 row를 자동으로 되살린다고 주장하지 않습니
 
 ## 명시적 비범위
 
-이 ADR은 DELETE SQL, retention scheduler/property, migration/schema/FK, cursor format/TTL, tombstone, API/UI, notification retention, Agent, workflow/classifier 또는 production configuration/data 변경을 구현하거나 승인하지 않습니다.
+이 ADR과 현재 cursor prerequisite source는 DELETE SQL, retention scheduler/property, migration/schema/FK, tombstone, retention API/UI, notification retention, Agent, workflow/classifier 또는 production configuration/data 변경을 구현하거나 승인하지 않습니다.

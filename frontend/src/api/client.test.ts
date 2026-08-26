@@ -16,6 +16,8 @@ import {
   isAuthorizationError,
   isConnectionError,
   isContainerDetailTerminalError,
+  isInvalidActivityCursorError,
+  shouldRetryActivityQuery,
   shouldRetryContainerDetailQuery,
   shouldRetryQuery,
   submitContainerAction,
@@ -405,6 +407,15 @@ describe('HomeOps API client', () => {
     expect(shouldRetryContainerDetailQuery(0, new ApiConnectionError())).toBe(true)
     expect(shouldRetryContainerDetailQuery(1, new ApiError(503, 'inventory unavailable'))).toBe(false)
     expect(isContainerDetailTerminalError(new ApiError(503, 'inventory unavailable'))).toBe(false)
+  })
+
+  it('does not retry deterministic invalid Activity cursors', () => {
+    const invalidCursor = new ApiError(400, 'invalid cursor')
+
+    expect(isInvalidActivityCursorError(invalidCursor)).toBe(true)
+    expect(shouldRetryActivityQuery(0, invalidCursor)).toBe(false)
+    expect(shouldRetryActivityQuery(0, new ApiError(503, 'temporarily unavailable'))).toBe(true)
+    expect(shouldRetryActivityQuery(1, new ApiConnectionError())).toBe(false)
   })
 })
 

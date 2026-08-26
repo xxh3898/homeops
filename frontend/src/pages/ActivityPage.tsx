@@ -1,7 +1,13 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { Activity, Bot, Boxes, DatabaseBackup, GitCommitHorizontal, RefreshCw, TriangleAlert } from 'lucide-react'
-import { useState } from 'react'
-import { getActivity, isAuthorizationError, isConnectionError } from '../api/client'
+import { useEffect, useState } from 'react'
+import {
+  getActivity,
+  isAuthorizationError,
+  isConnectionError,
+  isInvalidActivityCursorError,
+  shouldRetryActivityQuery,
+} from '../api/client'
 import type { ActivityEvent, ActivityTypeFilter } from '../api/types'
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import { usePageVisible } from '../hooks/usePageVisible'
@@ -12,17 +18,44 @@ export function ActivityPage() {
   const visible = usePageVisible()
   const online = useOnlineStatus()
   const [type, setType] = useState<ActivityTypeFilter>('ALL')
+  const [chainGeneration, setChainGeneration] = useState(0)
+  const [continuationInvalid, setContinuationInvalid] = useState(false)
   const query = useInfiniteQuery({
-    queryKey: ['activity', type],
+    queryKey: ['activity', type, chainGeneration],
     queryFn: ({ pageParam, signal }) => getActivity(type, pageParam, signal),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-    refetchInterval: visible ? 30_000 : false,
+    enabled: !continuationInvalid,
+    retry: shouldRetryActivityQuery,
+    refetchInterval: visible && !continuationInvalid ? 30_000 : false,
   })
+
+  useEffect(() => {
+    if (!continuationInvalid && query.data !== undefined && isInvalidActivityCursorError(query.error)) {
+      setContinuationInvalid(true)
+    }
+  }, [continuationInvalid, query.data, query.error])
+
+  const refresh = () => {
+    if (continuationInvalid) {
+      setContinuationInvalid(false)
+      setChainGeneration((generation) => generation + 1)
+      return
+    }
+    void query.refetch()
+  }
+
+  const changeType = (nextType: ActivityTypeFilter) => {
+    if (nextType === type) return
+    setContinuationInvalid(false)
+    setChainGeneration((generation) => generation + 1)
+    setType(nextType)
+  }
 
   if (query.isPending) return <ActivitySkeleton />
   if (isAuthorizationError(query.error) || query.data === undefined) {
-    return <ActivityError message={query.error?.message} onRetry={() => void query.refetch()} />
+    const message = query.error instanceof Error ? query.error.message : undefined
+    return <ActivityError message={message} onRetry={() => void query.refetch()} />
   }
 
   const items = query.data.pages.flatMap((page) => page.items)
@@ -42,7 +75,7 @@ export function ActivityPage() {
           type="button"
           aria-label="Refresh activity"
           className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl bg-white/10"
-          onClick={() => void query.refetch()}
+          onClick={refresh}
         >
           <RefreshCw aria-hidden="true" size={18} />
         </button>
@@ -54,7 +87,7 @@ export function ActivityPage() {
           id="activity-type-filter"
           className="mt-2 min-h-11 w-full rounded-xl border border-white/10 bg-slate-900 px-3 text-sm text-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-300"
           value={type}
-          onChange={(event) => setType(event.target.value as ActivityTypeFilter)}
+          onChange={(event) => changeType(event.target.value as ActivityTypeFilter)}
         >
           {activityTypeOptions.map((option) => (
             <option key={option.value} value={option.value}>{option.label}</option>
@@ -62,30 +95,52 @@ export function ActivityPage() {
         </select>
       </label>
 
-      {stale && <p className="rounded-xl bg-amber-400/10 px-3 py-2 text-sm text-amber-100">{staleMessage}</p>}
-      <p className="text-xs text-slate-500">Last refreshed {formatTimestamp(query.data.pages[0].generatedAt)}</p>
-
-      {items.length === 0 ? (
-        <Card>
-          <Activity aria-hidden="true" className="text-slate-500" size={22} />
-          <p className="mt-3 font-medium">{emptyState[type].title}</p>
-          <p className="mt-1 text-sm text-slate-400">{emptyState[type].description}</p>
+      {continuationInvalid ? (
+        <Card className="border-amber-400/30">
+          <h3 className="font-semibold text-amber-100">Activity timeline changed</h3>
+          <p className="mt-2 text-sm text-slate-400">
+            Refresh to continue from a new first page. Older cached pages will not be reused.
+          </p>
+          <button
+            type="button"
+            className="mt-4 min-h-11 w-full rounded-xl bg-white/10 px-4 text-sm font-semibold sm:w-auto"
+            onClick={refresh}
+          >
+            Refresh activity timeline
+          </button>
         </Card>
       ) : (
-        <div className="space-y-3" aria-label="Activity timeline">
-          {items.map((item) => <ActivityItem key={`${item.type}:${item.id}:${item.status}`} item={item} />)}
-        </div>
-      )}
+        <>
+          {stale && (
+            <p className="rounded-xl bg-amber-400/10 px-3 py-2 text-sm text-amber-100">{staleMessage}</p>
+          )}
+          <p className="text-xs text-slate-500">
+            Last refreshed {formatTimestamp(query.data.pages[0].generatedAt)}
+          </p>
 
-      {query.hasNextPage && (
-        <button
-          type="button"
-          className="min-h-11 w-full rounded-xl bg-white/10 px-4 text-sm font-semibold disabled:opacity-50"
-          disabled={query.isFetchingNextPage}
-          onClick={() => void query.fetchNextPage()}
-        >
-          {query.isFetchingNextPage ? 'Loading…' : 'Load older activity'}
-        </button>
+          {items.length === 0 ? (
+            <Card>
+              <Activity aria-hidden="true" className="text-slate-500" size={22} />
+              <p className="mt-3 font-medium">{emptyState[type].title}</p>
+              <p className="mt-1 text-sm text-slate-400">{emptyState[type].description}</p>
+            </Card>
+          ) : (
+            <div className="space-y-3" aria-label="Activity timeline">
+              {items.map((item) => <ActivityItem key={`${item.type}:${item.id}:${item.status}`} item={item} />)}
+            </div>
+          )}
+
+          {query.hasNextPage && (
+            <button
+              type="button"
+              className="min-h-11 w-full rounded-xl bg-white/10 px-4 text-sm font-semibold disabled:opacity-50"
+              disabled={query.isFetchingNextPage}
+              onClick={() => void query.fetchNextPage()}
+            >
+              {query.isFetchingNextPage ? 'Loading…' : 'Load older activity'}
+            </button>
+          )}
+        </>
       )}
     </section>
   )
