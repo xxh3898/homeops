@@ -52,7 +52,7 @@ class IngestionPostgresqlIntegrationTest {
         jdbc = new JdbcTemplate(dataSource);
         transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
         service = new IngestionService(new DeploymentIngestionStore(jdbc), new BackupIngestionStore(jdbc),
-                new IngestionDigest(), mock(DeploymentNotificationProducer.class),
+                new IngestionEventKeyLedgerStore(jdbc), new IngestionDigest(), mock(DeploymentNotificationProducer.class),
                 mock(BackupNotificationProducer.class));
     }
 
@@ -60,6 +60,57 @@ class IngestionPostgresqlIntegrationTest {
     void clearIngestionTables() {
         jdbc.update("DELETE FROM deployment");
         jdbc.update("DELETE FROM backup_run");
+        jdbc.update("DELETE FROM ingestion_event_key_ledger");
+    }
+
+    @Test
+    void should_reserveIndependentLedgerRows_when_sourcesUseSameLiteralEventKey() {
+        String eventKey = "shared-source-key";
+
+        IngestionAcceptedResponse deployment = inTransaction(() -> service.acceptDeployment(deployment(
+                eventKey, DeploymentIngestionRequest.DeploymentStatus.RUNNING, STARTED_RAW, null)));
+        IngestionAcceptedResponse backup = inTransaction(() -> service.acceptBackup(backup(
+                eventKey, BackupIngestionRequest.BackupStatus.RUNNING, STARTED_RAW, null, null, null)));
+
+        assertThat(deployment.id()).isNotEqualTo(backup.id());
+        assertThat(jdbc.queryForList("""
+                SELECT source_type, event_key
+                FROM ingestion_event_key_ledger
+                ORDER BY source_type
+                """))
+                .containsExactly(
+                        java.util.Map.of("source_type", "BACKUP", "event_key", eventKey),
+                        java.util.Map.of("source_type", "DEPLOYMENT", "event_key", eventKey));
+    }
+
+    @Test
+    void should_rejectDeploymentReplay_when_businessHistoryWasDeleted() {
+        DeploymentIngestionRequest request = deployment(
+                "deleted-deployment", DeploymentIngestionRequest.DeploymentStatus.RUNNING, STARTED_RAW, null);
+        inTransaction(() -> service.acceptDeployment(request));
+        jdbc.update("DELETE FROM deployment WHERE event_key = ?", request.eventKey());
+
+        assertThatThrownBy(() -> inTransaction(() -> service.acceptDeployment(request)))
+                .isInstanceOf(EventKeyConflictException.class);
+
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM deployment WHERE event_key = ?", Integer.class, request.eventKey())).isZero();
+        assertThat(ledgerCount("DEPLOYMENT", request.eventKey())).isOne();
+    }
+
+    @Test
+    void should_rejectBackupReplay_when_businessHistoryWasDeleted() {
+        BackupIngestionRequest request = backup(
+                "deleted-backup", BackupIngestionRequest.BackupStatus.RUNNING, STARTED_RAW, null, null, null);
+        inTransaction(() -> service.acceptBackup(request));
+        jdbc.update("DELETE FROM backup_run WHERE event_key = ?", request.eventKey());
+
+        assertThatThrownBy(() -> inTransaction(() -> service.acceptBackup(request)))
+                .isInstanceOf(EventKeyConflictException.class);
+
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM backup_run WHERE event_key = ?", Integer.class, request.eventKey())).isZero();
+        assertThat(ledgerCount("BACKUP", request.eventKey())).isOne();
     }
 
     @Test
@@ -276,6 +327,14 @@ class IngestionPostgresqlIntegrationTest {
 
     private String backupStatus(String eventKey) {
         return jdbc.queryForObject("SELECT status FROM backup_run WHERE event_key = ?", String.class, eventKey);
+    }
+
+    private int ledgerCount(String sourceType, String eventKey) {
+        return jdbc.queryForObject("""
+                SELECT count(*)
+                FROM ingestion_event_key_ledger
+                WHERE source_type = ? AND event_key = ?
+                """, Integer.class, sourceType, eventKey);
     }
 
     private static Instant instant(java.sql.ResultSet result, int index) throws java.sql.SQLException {

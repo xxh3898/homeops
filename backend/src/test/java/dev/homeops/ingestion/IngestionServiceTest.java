@@ -15,6 +15,8 @@ import dev.homeops.ingestion.api.BackupIngestionRequest;
 import dev.homeops.ingestion.api.DeploymentIngestionRequest;
 import dev.homeops.ingestion.persistence.BackupIngestionStore;
 import dev.homeops.ingestion.persistence.DeploymentIngestionStore;
+import dev.homeops.ingestion.persistence.IngestionEventKeyLedgerStore;
+import dev.homeops.ingestion.persistence.IngestionEventKeyLedgerStore.SourceType;
 import dev.homeops.notification.BackupNotificationProducer;
 import dev.homeops.notification.DeploymentNotificationProducer;
 import java.time.Instant;
@@ -31,6 +33,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class IngestionServiceTest {
     @Mock private DeploymentIngestionStore deployments;
     @Mock private BackupIngestionStore backups;
+    @Mock private IngestionEventKeyLedgerStore eventKeys;
     @Mock private DeploymentNotificationProducer deploymentNotifications;
     @Mock private BackupNotificationProducer backupNotifications;
     @InjectMocks private IngestionService service;
@@ -48,6 +51,7 @@ class IngestionServiceTest {
 
         assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
         verify(deployments, never()).update(any(), any(), any());
+        verifyNoInteractions(eventKeys);
         verifyNoInteractions(deploymentNotifications);
     }
 
@@ -56,26 +60,42 @@ class IngestionServiceTest {
         var request = deployment(DeploymentIngestionRequest.DeploymentStatus.RUNNING);
         UUID id = UUID.fromString("10000000-0000-0000-0000-000000000011");
         when(deployments.find(request.eventKey())).thenReturn(Optional.empty());
+        when(eventKeys.reserve(SourceType.DEPLOYMENT, request.eventKey())).thenReturn(true);
         when(deployments.insertIfAbsent(eq(request), any())).thenReturn(Optional.of(id));
 
         var result = service.acceptDeployment(request);
 
         assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, false));
+        verify(eventKeys).reserve(SourceType.DEPLOYMENT, request.eventKey());
         verify(deploymentNotifications).recordInitial(id, request);
     }
 
     @Test
-    void should_acceptWinningDeployment_when_concurrentInsertLoses() {
+    void should_acceptWinningDeployment_when_concurrentLedgerReservationLoses() {
         var request = deployment(DeploymentIngestionRequest.DeploymentStatus.RUNNING);
         UUID id = UUID.fromString("10000000-0000-0000-0000-000000000012");
         String requestDigest = digest.calculate(request);
         when(deployments.find(request.eventKey())).thenReturn(Optional.empty(), Optional.of(
                 deploymentStored(id, "RUNNING", requestDigest)));
-        when(deployments.insertIfAbsent(eq(request), any())).thenReturn(Optional.empty());
+        when(eventKeys.reserve(SourceType.DEPLOYMENT, request.eventKey())).thenReturn(false);
 
         var result = service.acceptDeployment(request);
 
         assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
+        verify(deployments, never()).insertIfAbsent(any(), any());
+        verifyNoInteractions(deploymentNotifications);
+    }
+
+    @Test
+    void should_rejectDeployment_when_ledgerExistsWithoutBusinessRow() {
+        var request = deployment(DeploymentIngestionRequest.DeploymentStatus.RUNNING);
+        when(deployments.find(request.eventKey())).thenReturn(Optional.empty());
+        when(eventKeys.reserve(SourceType.DEPLOYMENT, request.eventKey())).thenReturn(false);
+
+        assertThatThrownBy(() -> service.acceptDeployment(request))
+                .isInstanceOf(EventKeyConflictException.class);
+
+        verify(deployments, never()).insertIfAbsent(any(), any());
         verifyNoInteractions(deploymentNotifications);
     }
 
@@ -135,12 +155,43 @@ class IngestionServiceTest {
         var request = backup(BackupIngestionRequest.BackupStatus.RUNNING);
         UUID id = UUID.fromString("10000000-0000-0000-0000-000000000018");
         when(backups.find(request.eventKey())).thenReturn(Optional.empty());
+        when(eventKeys.reserve(SourceType.BACKUP, request.eventKey())).thenReturn(true);
         when(backups.insertIfAbsent(eq(request), any())).thenReturn(Optional.of(id));
 
         var result = service.acceptBackup(request);
 
         assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, false));
+        verify(eventKeys).reserve(SourceType.BACKUP, request.eventKey());
         verify(backupNotifications).recordInitial(id, request);
+    }
+
+    @Test
+    void should_acceptWinningBackup_when_concurrentLedgerReservationLoses() {
+        var request = backup(BackupIngestionRequest.BackupStatus.RUNNING);
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000021");
+        String requestDigest = digest.calculate(request);
+        when(backups.find(request.eventKey())).thenReturn(Optional.empty(), Optional.of(
+                backupStored(id, "RUNNING", requestDigest)));
+        when(eventKeys.reserve(SourceType.BACKUP, request.eventKey())).thenReturn(false);
+
+        var result = service.acceptBackup(request);
+
+        assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
+        verify(backups, never()).insertIfAbsent(any(), any());
+        verifyNoInteractions(backupNotifications);
+    }
+
+    @Test
+    void should_rejectBackup_when_ledgerExistsWithoutBusinessRow() {
+        var request = backup(BackupIngestionRequest.BackupStatus.RUNNING);
+        when(backups.find(request.eventKey())).thenReturn(Optional.empty());
+        when(eventKeys.reserve(SourceType.BACKUP, request.eventKey())).thenReturn(false);
+
+        assertThatThrownBy(() -> service.acceptBackup(request))
+                .isInstanceOf(EventKeyConflictException.class);
+
+        verify(backups, never()).insertIfAbsent(any(), any());
+        verifyNoInteractions(backupNotifications);
     }
 
     @Test
@@ -154,6 +205,7 @@ class IngestionServiceTest {
         var result = service.acceptBackup(request);
 
         assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
+        verifyNoInteractions(eventKeys);
         verifyNoInteractions(backupNotifications);
     }
 

@@ -7,6 +7,8 @@ import dev.homeops.ingestion.api.DeploymentIngestionRequest;
 import dev.homeops.ingestion.api.IngestionAcceptedResponse;
 import dev.homeops.ingestion.persistence.BackupIngestionStore;
 import dev.homeops.ingestion.persistence.DeploymentIngestionStore;
+import dev.homeops.ingestion.persistence.IngestionEventKeyLedgerStore;
+import dev.homeops.ingestion.persistence.IngestionEventKeyLedgerStore.SourceType;
 import dev.homeops.notification.BackupNotificationProducer;
 import dev.homeops.notification.DeploymentNotificationProducer;
 import org.springframework.stereotype.Service;
@@ -16,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class IngestionService {
     private final DeploymentIngestionStore deployments;
     private final BackupIngestionStore backups;
+    private final IngestionEventKeyLedgerStore eventKeys;
     private final IngestionDigest digest;
     private final DeploymentNotificationProducer deploymentNotifications;
     private final BackupNotificationProducer backupNotifications;
@@ -23,11 +26,13 @@ public class IngestionService {
     public IngestionService(
             DeploymentIngestionStore deployments,
             BackupIngestionStore backups,
+            IngestionEventKeyLedgerStore eventKeys,
             IngestionDigest digest,
             DeploymentNotificationProducer deploymentNotifications,
             BackupNotificationProducer backupNotifications) {
         this.deployments = deployments;
         this.backups = backups;
+        this.eventKeys = eventKeys;
         this.digest = digest;
         this.deploymentNotifications = deploymentNotifications;
         this.backupNotifications = backupNotifications;
@@ -39,10 +44,12 @@ public class IngestionService {
         String requestDigest = digest.calculate(canonicalRequest);
         var existing = deployments.find(canonicalRequest.eventKey());
         if (existing.isEmpty()) {
-            var inserted = deployments.insertIfAbsent(canonicalRequest, requestDigest);
-            if (inserted.isPresent()) {
-                deploymentNotifications.recordInitial(inserted.get(), canonicalRequest);
-                return new IngestionAcceptedResponse(inserted.get(), false);
+            if (eventKeys.reserve(SourceType.DEPLOYMENT, canonicalRequest.eventKey())) {
+                var inserted = deployments.insertIfAbsent(canonicalRequest, requestDigest);
+                if (inserted.isPresent()) {
+                    deploymentNotifications.recordInitial(inserted.get(), canonicalRequest);
+                    return new IngestionAcceptedResponse(inserted.get(), false);
+                }
             }
             existing = deployments.find(canonicalRequest.eventKey());
         }
@@ -66,10 +73,12 @@ public class IngestionService {
         String requestDigest = digest.calculate(canonicalRequest);
         var existing = backups.find(canonicalRequest.eventKey());
         if (existing.isEmpty()) {
-            var inserted = backups.insertIfAbsent(canonicalRequest, requestDigest);
-            if (inserted.isPresent()) {
-                backupNotifications.recordInitial(inserted.get(), canonicalRequest);
-                return new IngestionAcceptedResponse(inserted.get(), false);
+            if (eventKeys.reserve(SourceType.BACKUP, canonicalRequest.eventKey())) {
+                var inserted = backups.insertIfAbsent(canonicalRequest, requestDigest);
+                if (inserted.isPresent()) {
+                    backupNotifications.recordInitial(inserted.get(), canonicalRequest);
+                    return new IngestionAcceptedResponse(inserted.get(), false);
+                }
             }
             existing = backups.find(canonicalRequest.eventKey());
         }
