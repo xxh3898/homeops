@@ -32,8 +32,8 @@ class ActivityControllerTest {
     }
 
     @Test
-    void should_returnBadRequest_when_cursorSnapshotViolatesPostgresSemantics() throws Exception {
-        mockMvc.perform(get("/api/v1/activity").param("cursor", cursorWithVisibilitySnapshot("2:1:")))
+    void should_returnBadRequestWithoutStoreAccess_when_unsignedLegacyCursorHasFourParts() throws Exception {
+        mockMvc.perform(get("/api/v1/activity").param("cursor", unsignedLegacyCursor(false)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.type").value("urn:homeops:problem:invalid-activity-cursor"));
 
@@ -41,9 +41,8 @@ class ActivityControllerTest {
     }
 
     @Test
-    void should_returnBadRequest_when_cursorTimestampIsOutsidePostgresqlRange() throws Exception {
-        mockMvc.perform(get("/api/v1/activity").param("cursor", cursorWithTimestamps(
-                        "2026-08-06T12:00:00Z", "+1000000000-12-31T23:59:59.999999999Z")))
+    void should_returnBadRequestWithoutStoreAccess_when_unsignedLegacyCursorHasFiveParts() throws Exception {
+        mockMvc.perform(get("/api/v1/activity").param("cursor", unsignedLegacyCursor(true)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.type").value("urn:homeops:problem:invalid-activity-cursor"));
 
@@ -51,9 +50,8 @@ class ActivityControllerTest {
     }
 
     @Test
-    void should_returnBadRequest_when_cursorSortKeyIsNotServerGeneratedFormat() throws Exception {
-        mockMvc.perform(get("/api/v1/activity").param("cursor", cursorWithSortKey(
-                        "DEPLOYMENT:10000000-0000-0000-0000-000000000001\u0000")))
+    void should_returnBadRequestWithoutStoreAccess_when_cursorEnvelopeIsMalformed() throws Exception {
+        mockMvc.perform(get("/api/v1/activity").param("cursor", "v1.not-a-complete-envelope"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.type").value("urn:homeops:problem:invalid-activity-cursor"));
 
@@ -79,20 +77,10 @@ class ActivityControllerTest {
         verifyNoInteractions(store);
     }
 
-    private static String cursorWithVisibilitySnapshot(String snapshot) {
-        String value = "2026-08-06T12:00:00Z\n" + snapshot + "\n2026-08-06T12:00:00Z\n"
-                + "DEPLOYMENT:10000000-0000-0000-0000-000000000001";
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private static String cursorWithTimestamps(String snapshotAt, String occurredAt) {
-        String value = snapshotAt + "\n100:200:150\n" + occurredAt + "\n"
-                + "DEPLOYMENT:10000000-0000-0000-0000-000000000001";
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private static String cursorWithSortKey(String sortKey) {
-        String value = "2026-08-06T12:00:00Z\n100:200:150\n2026-08-06T12:00:00Z\n" + sortKey;
+    private static String unsignedLegacyCursor(boolean includeScope) {
+        String value = "2026-08-06T12:00:00Z\n100:200:150\n2026-08-06T12:00:00Z\n"
+                + "DEPLOYMENT:10000000-0000-0000-0000-000000000001"
+                + (includeScope ? "\nALL" : "");
         return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
 }

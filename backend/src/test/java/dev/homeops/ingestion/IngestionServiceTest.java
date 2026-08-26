@@ -65,7 +65,7 @@ class IngestionServiceTest {
     }
 
     @Test
-    void should_acceptWinningDeployment_when_concurrentInsertLoses() {
+    void should_acceptWinningDeployment_when_concurrentBusinessInsertLoses() {
         var request = deployment(DeploymentIngestionRequest.DeploymentStatus.RUNNING);
         UUID id = UUID.fromString("10000000-0000-0000-0000-000000000012");
         String requestDigest = digest.calculate(request);
@@ -76,6 +76,18 @@ class IngestionServiceTest {
         var result = service.acceptDeployment(request);
 
         assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
+        verifyNoInteractions(deploymentNotifications);
+    }
+
+    @Test
+    void should_rejectDeployment_when_ledgerExistsWithoutBusinessRow() {
+        var request = deployment(DeploymentIngestionRequest.DeploymentStatus.RUNNING);
+        when(deployments.find(request.eventKey())).thenReturn(Optional.empty());
+        when(deployments.insertIfAbsent(eq(request), any())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.acceptDeployment(request))
+                .isInstanceOf(EventKeyConflictException.class);
+
         verifyNoInteractions(deploymentNotifications);
     }
 
@@ -141,6 +153,33 @@ class IngestionServiceTest {
 
         assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, false));
         verify(backupNotifications).recordInitial(id, request);
+    }
+
+    @Test
+    void should_acceptWinningBackup_when_concurrentBusinessInsertLoses() {
+        var request = backup(BackupIngestionRequest.BackupStatus.RUNNING);
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000021");
+        String requestDigest = digest.calculate(request);
+        when(backups.find(request.eventKey())).thenReturn(Optional.empty(), Optional.of(
+                backupStored(id, "RUNNING", requestDigest)));
+        when(backups.insertIfAbsent(eq(request), any())).thenReturn(Optional.empty());
+
+        var result = service.acceptBackup(request);
+
+        assertThat(result).isEqualTo(new dev.homeops.ingestion.api.IngestionAcceptedResponse(id, true));
+        verifyNoInteractions(backupNotifications);
+    }
+
+    @Test
+    void should_rejectBackup_when_ledgerExistsWithoutBusinessRow() {
+        var request = backup(BackupIngestionRequest.BackupStatus.RUNNING);
+        when(backups.find(request.eventKey())).thenReturn(Optional.empty());
+        when(backups.insertIfAbsent(eq(request), any())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.acceptBackup(request))
+                .isInstanceOf(EventKeyConflictException.class);
+
+        verifyNoInteractions(backupNotifications);
     }
 
     @Test

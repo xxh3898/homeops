@@ -33,7 +33,7 @@ HomeOps는 자체 PostgreSQL에 대해 Master Playbook의 recurring/offsite back
 
 Phase 3 source와 production ingestion/monitoring은 활성 상태이며 formal production acceptance도 COMPLETE입니다. Production의 `dev.homeops.ingestion-reporter` LaunchAgent는 범위 제한 `--drain` retry를 담당하고 신뢰하는 project의 deployment/backup event가 Activity에 수신됩니다. Exact-origin service checker와 incident history가 동작하며, retained ingestion metadata, check growth와 incident recovery, Activity의 안정 cursor 전체 pagination과 mobile 표시를 production mutation 없이 검증했습니다.
 
-자동 retention은 metric aggregate, 처리한 Agent snapshot 멱등성 ledger와 service-check result에 적용됩니다. Deployment, backup, incident와 Agent 장기 event에는 automatic deletion policy가 없으므로, 운영자는 임의 cleanup을 실행하지 말고 별도의 보존 기간·삭제 안전성·감사 요구사항을 먼저 정해야 합니다. 이 operational debt는 현재 Phase 3 acceptance를 미완료로 되돌리는 의미가 아닙니다.
+자동 retention은 metric aggregate, 처리한 Agent snapshot 멱등성 ledger, service-check result와 terminal notification outbox에 각자의 기존 contract로 적용됩니다. [ADR-001](adr/ADR-001-operational-history-retention-and-deletion-safety.md)은 deployment, backup, incident와 Agent 장기 event의 automatic deletion을 명시적인 source policy 전까지 disabled로 두고, `container_action_audit`를 generic Activity retention에서 제외합니다. 운영자는 임의 cleanup이나 age-only DELETE를 실행하면 안 됩니다. 이 fail-closed policy는 Phase 3/5 acceptance를 미완료로 되돌리거나 영구 보존을 Product requirement로 확정하는 의미가 아닙니다.
 
 새 host에서 Phase 3를 활성화하는 작업은 source release와 분리합니다. HomeOps `.env`에 생성한 64글자 소문자 hexadecimal `HOMEOPS_INGESTION_SHARED_SECRET` 하나가 있는지, `smoke.origin`이 의도한 tailnet HTTPS origin인지, 두 file이 owner-only mode `0600`인지, deployment account의 `~/Server/data/homeops/ingestion-spool`이 owner-only mode `0700`인지 확인합니다. private reporter copy와 LaunchAgent를 load 전에 lint하고, reporter warning을 application deploy 또는 backup 실패로 취급하지 말며 spool과 HomeOps ingestion health를 따로 검사하세요.
 
@@ -58,6 +58,12 @@ Full validation은 native Agent release 허가가 아닙니다. Persistent Agent
 
 `HOMEOPS_DEPLOY_HOST`와 `HOMEOPS_DEPLOY_USER`는 Production environment Secret으로만 Tailscale ping과 SSH target에 전달합니다. 같은 이름의 legacy Variable은 제거됐고 secret 기반 production deploy와 public log literal zero-match acceptance를 완료했습니다.
 
+## 장기 운영 이력 destructive retention gate
+
+Operational Activity history 삭제 runtime은 현재 구현되지 않았고 production activation도 승인되지 않았습니다. Activity cursor source에는 process-local HMAC integrity와 first-page 기준 최대 1시간 validity가 구현됐지만, future source별 retention은 logical visibility cutoff, cursor validity/invalidation boundary와 physical deletion eligibility를 계속 분리해야 합니다. Server가 아직 수락할 Activity cursor가 참조할 수 있는 row는 hard-delete할 수 없으며 cursor TTL과 retention duration의 단순 비교만으로 이 조건을 충족했다고 판단하면 안 됩니다. V12 minimal ledger로 deployment/backup event-key replay authority는 business history와 분리됐지만 ledger cleanup은 없고, source별 retention policy·grace, incident/notification dependency와 privileged audit 경계는 [ADR-001](adr/ADR-001-operational-history-retention-and-deletion-safety.md)에 따라 별도로 충족해야 합니다.
+
+첫 production hard-delete 전에는 application release와 별도의 Ops Gate가 필요합니다. Exact DB/release identity, candidate age/count, active/nonterminal/dependency count를 read-only로 확인하고 cleanup switch가 default disabled인지 검증하세요. Pre-delete logical backup 또는 동등한 accepted recovery artifact와 isolated restore evidence가 없으면 실행하지 않습니다. 첫 run은 작은 bounded batch로 제한하고 deleted/skipped aggregate count와 Activity/API/health만 검증하며 raw payload나 private metadata를 evidence에 남기지 않습니다. 예상 밖 삭제가 있으면 추가 batch를 중단하고 restore 또는 사전에 합의한 forward recovery를 사용합니다. Deleted row를 설정 rollback만으로 복구할 수 있다고 간주하지 마세요.
+
 ## Docker network 토폴로지
 
 `application`은 Web, API, PostgreSQL, one-shot migration용 internal east-west network입니다. `ingress`는 Docker Desktop이 loopback-published browser/Tailscale Serve entry에 필요하므로 Web에만 연결한 non-internal bridge입니다. `egress`는 monitored-service HTTPS check를 위해 API에만 연결한 별도 non-internal bridge입니다. Docker network name은 방향성 firewall rule을 만들지 않습니다. Web의 ingress 연결은 Docker 수준 outbound 차단을 보장하지 않습니다. Web image는 static-file 및 Nginx reverse-proxy 역할만 하며 API check destination은 계속 `SafeServiceUrlPolicy`로 제한합니다. 더 강한 Web egress 격리가 필요하면 host firewall, proxy, 별도 edge network policy가 필요합니다.
@@ -78,16 +84,16 @@ Full validation은 native Agent release 허가가 아닙니다. Persistent Agent
 | validation 또는 image build | publish/deploy 없음 | source를 고치고 검토된 CI 재실행 |
 | runtime image identity/shape mismatch | bootstrap 중지 | digest, GHCR package, immutable release directory 검증 |
 | lock 사용 불가 | 중첩 없이 종료 | 활성 exact operation을 찾고 lock 우회 금지 |
-| migration 실패 | cutover 중지 | Flyway와 DB를 검사하고 forward fix 우선 |
-| API/Web health 실패 | previous digest-pinned image와 runtime config 시도 | rollback health를 검증하고 pending evidence 보존 |
+| migration 실패 | current API writer quiesce 유지, candidate cutover와 state advance 중지 | current pinned application/runtime configuration 복구와 health/readiness/public smoke 확인 후 Flyway와 DB를 검사하고 forward fix 우선. current release가 없는 bootstrap은 fail closed |
+| API/Web health 실패 | previous digest-pinned image와 runtime config 시도 | rollback health를 검증하고 pending evidence 보존. V12 적용 뒤 pre-V12 API가 복구돼도 DB-level fence가 ledgerless ingestion INSERT를 차단 |
 | tailnet smoke 실패 | local health 뒤 workflow 실패 | Serve/ACL/identity와 application health 분리 |
 | 첫 배포 검증 실패 | API/Web 중지. 수락된 `current` state 없음 | `pending`과 전용 DB를 진단용으로 보존. volume 자동 삭제 금지 |
 | Agent delivery 실패 | retry 가능한 pending delivery는 FIFO를 보존하고 새 collection을 억제. 새 snapshot 전달 실패 시 queue | spool file을 지우지 말고 API, mTLS, spool capacity, clock 검증 |
 | snapshot 영구 거부 | 연속 permanent reject를 FIFO drain의 같은 위치에 숨은 `.rejected-*.json` evidence file로 rename. retryable pending item이 없으면 fresh collection 재개 | metadata와 안전한 error status만 검사. rejected evidence도 bounded spool capacity에 포함되므로 정확한 retention을 수동 결정 |
-| event reporter transient 실패 | event는 private ingestion spool에 남고 `dev.homeops.ingestion-reporter` LaunchAgent가 5분마다 범위 제한 `--drain` retry 호출 | spool entry를 지우지 말고 API ingestion health, origin, secret configuration, spool count 검사 |
+| event reporter transient 실패 또는 deployment 중 API quiescence | event는 전송 전에 private ingestion spool에 원자 기록되고 transient/unavailable route에서는 남아 `dev.homeops.ingestion-reporter` LaunchAgent가 5분마다 범위 제한 `--drain` retry 호출 | spool entry를 지우지 말고 API ingestion health, origin, secret configuration, spool count 검사 |
 | stale Agent | UI가 stale/offline 경고 | native process와 Docker Desktop 검사. 자동 restart 없음 |
 
-Flyway가 이미 database를 바꿨을 수 있으므로 image rollback은 backward-compatible migration일 때만 안전합니다. 자동 path에 incompatible migration을 사용하지 마세요.
+Production worker는 ingestion ledger backfill을 포함한 migration 전에 current API를 완전히 정지하고, migration 성공 뒤에만 candidate API/Web을 활성화합니다. Migration 실패 시 accepted deployment state와 runtime-config current pointer를 candidate로 바꾸지 않습니다. V12 DB는 old/new application writer 모두의 deployment/backup INSERT 전에 ledger reservation을 강제하므로 migration 성공 뒤 candidate verification rollback에서도 ledgerless business row를 허용하지 않습니다. 다른 migration은 이미 database를 바꿨을 수 있으므로 image rollback이 backward-compatible할 때만 안전합니다. 자동 path에 incompatible migration을 사용하지 마세요.
 
 ## 일상 읽기 전용 점검
 

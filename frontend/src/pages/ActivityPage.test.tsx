@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '../api/client'
 import { ActivityPage } from './ActivityPage'
 
 const mocks = vi.hoisted(() => ({ getActivity: vi.fn(), online: { value: true } }))
@@ -82,6 +83,40 @@ describe('ActivityPage', () => {
     )
   })
 
+  it('discards an invalid continuation chain and refreshes the selected filter from its first page', async () => {
+    mocks.getActivity
+      .mockResolvedValueOnce(page(null, []))
+      .mockResolvedValueOnce(page('expired-cursor', [event('DEPLOYMENT', 'Old deployment chain')]))
+      .mockRejectedValueOnce(new ApiError(400, 'invalid cursor'))
+      .mockResolvedValueOnce(page(null, [event('DEPLOYMENT', 'Fresh deployment chain')]))
+    renderPage()
+
+    await screen.findByText('No activity recorded yet')
+    fireEvent.change(screen.getByRole('combobox', { name: 'Event type' }), {
+      target: { value: 'DEPLOYMENT' },
+    })
+    expect(await screen.findByText('Old deployment chain')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load older activity' }))
+
+    expect(await screen.findByText('Activity timeline changed')).toBeInTheDocument()
+    expect(screen.queryByText('Old deployment chain')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Load older activity' })).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Event type' })).toHaveValue('DEPLOYMENT')
+    const refresh = screen.getByRole('button', { name: 'Refresh activity timeline' })
+    expect(refresh).toHaveClass('min-h-11', 'w-full')
+    expect(mocks.getActivity).toHaveBeenCalledTimes(3)
+
+    fireEvent.click(refresh)
+
+    expect(await screen.findByText('Fresh deployment chain')).toBeInTheDocument()
+    expect(screen.queryByText('Old deployment chain')).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Event type' })).toHaveValue('DEPLOYMENT')
+    expect(mocks.getActivity).toHaveBeenNthCalledWith(
+      4, 'DEPLOYMENT', undefined, expect.any(AbortSignal),
+    )
+  })
+
   it('renders a mobile-safe container action card with bounded public context', async () => {
     mocks.getActivity.mockResolvedValueOnce(page(null, [
       event('CONTAINER_ACTION', 'Container restart', 'OUTCOME_UNKNOWN', '0123456789ab', 'CRITICAL'),
@@ -132,7 +167,7 @@ describe('ActivityPage', () => {
 
   it('keeps cached activity visible and marks it stale after refresh failure', async () => {
     mocks.getActivity.mockResolvedValueOnce(page(null, [event('AGENT', 'Agent connected')]))
-      .mockRejectedValueOnce(new Error('refresh failed'))
+      .mockRejectedValue(new Error('refresh failed'))
     const { queryClient } = renderPage()
     expect(await screen.findByText('Agent connected')).toBeInTheDocument()
 
@@ -152,14 +187,14 @@ describe('ActivityPage', () => {
   })
 
   it('shows a blocking error when the initial request fails', async () => {
-    mocks.getActivity.mockRejectedValueOnce(new Error('unavailable'))
+    mocks.getActivity.mockRejectedValue(new Error('unavailable'))
     renderPage()
     expect(await screen.findByText('Unable to load activity')).toBeInTheDocument()
   })
 })
 
 function renderPage() {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 } } })
   const rendered = render(<QueryClientProvider client={queryClient}><ActivityPage /></QueryClientProvider>)
   return { ...rendered, queryClient }
 }

@@ -37,10 +37,10 @@ class NotificationOutboxMigrationPostgresqlIntegrationTest {
 
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("11");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("12");
         assertThat(flyway.info().applied())
                 .extracting(migration -> migration.getVersion().getVersion())
-                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12");
         assertThat(jdbc.queryForObject(
                 "SELECT count(*) FROM notification_event WHERE deduplication_key = 'legacy-duplicate'",
                 Integer.class)).isEqualTo(2);
@@ -61,7 +61,7 @@ class NotificationOutboxMigrationPostgresqlIntegrationTest {
 
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("11");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("12");
         assertThat(jdbc.queryForObject("""
                 SELECT count(*) FROM notification_event
                 WHERE deduplication_key = 'legacy-sent'
