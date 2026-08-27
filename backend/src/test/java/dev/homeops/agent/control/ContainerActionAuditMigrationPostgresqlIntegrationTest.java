@@ -38,7 +38,7 @@ class ContainerActionAuditMigrationPostgresqlIntegrationTest {
     }
 
     @Test
-    void should_preserveAndNormalizeLegacyRows_when_migratingFromV1ToV12() {
+    void should_preserveAndNormalizeLegacyRows_when_migratingFromV1ToV13() {
         database.migrateTo("1");
         insertLegacy("REQUESTED", "legacy-requested", "legacy-id");
         insertLegacy("SUCCESS", "legacy-success", "legacy-id");
@@ -48,10 +48,10 @@ class ContainerActionAuditMigrationPostgresqlIntegrationTest {
 
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("12");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
         assertThat(flyway.info().applied())
                 .extracting(migration -> migration.getVersion().getVersion())
-                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13");
         assertThat(statusesByKey()).containsExactlyInAnyOrderEntriesOf(Map.of(
                 "legacy-requested", "REQUESTED",
                 "legacy-success", "APPLIED",
@@ -87,7 +87,7 @@ class ContainerActionAuditMigrationPostgresqlIntegrationTest {
         ContainerActionAuditTransactions later = transactionsAt(
                 NOW.plus(ContainerActionAuditTransactions.STALE_REQUEST_AFTER));
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("12");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
         assertThat(jdbc.queryForObject(
                 "SELECT container_id_prefix FROM container_action_audit WHERE idempotency_key = ?",
                 String.class, "v9-requested")).isEqualTo("not-a-public-id");
@@ -110,7 +110,7 @@ class ContainerActionAuditMigrationPostgresqlIntegrationTest {
 
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("12");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
         assertThat(auditShape()).isEqualTo(before);
         assertThat(jdbc.queryForList("""
                 SELECT recorded_xid::text

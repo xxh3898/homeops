@@ -221,7 +221,11 @@ public class ApiExceptionHandler {
         return detail;
     }
 
-    @ExceptionHandler({EventKeyConflictException.class, InvalidIngestionStateTransitionException.class})
+    @ExceptionHandler({
+            EventKeyConflictException.class,
+            InvalidIngestionStateTransitionException.class,
+            SignalIngestionConflictException.class
+    })
     ProblemDetail handleIngestionConflict(RuntimeException exception) {
         ProblemDetail detail = ProblemDetail.forStatusAndDetail(
                 HttpStatus.CONFLICT, exception.getMessage());

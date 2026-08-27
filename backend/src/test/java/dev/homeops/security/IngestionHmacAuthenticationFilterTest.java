@@ -45,6 +45,21 @@ class IngestionHmacAuthenticationFilterTest {
     }
 
     @Test
+    void should_authenticateSignalEndpoint_when_signatureIsValid() throws Exception {
+        byte[] body = "{\"eventKey\":\"signal-1\"}".getBytes(StandardCharsets.UTF_8);
+        String timestamp = NOW.toString();
+        MockHttpServletRequest request = request(body, timestamp, signature(timestamp, body));
+        request.setRequestURI("/api/v1/internal/ingestion/signals");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicInteger chainCalls = new AtomicInteger();
+
+        filter(SECRET).doFilter(request, response, (wrapped, ignored) -> chainCalls.incrementAndGet());
+
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThat(chainCalls).hasValue(1);
+    }
+
+    @Test
     void should_reject_when_secretIsNotConfigured() throws Exception {
         MockHttpServletResponse response = new MockHttpServletResponse();
         filter("").doFilter(request(new byte[0], NOW.toString(), "0".repeat(64)), response,

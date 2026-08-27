@@ -2,6 +2,7 @@ package dev.homeops.ingestion;
 
 import dev.homeops.ingestion.api.BackupIngestionRequest;
 import dev.homeops.ingestion.api.DeploymentIngestionRequest;
+import dev.homeops.ingestion.api.SignalIngestionRequest;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -58,6 +59,22 @@ public class IngestionDigest {
             append(value, backup.failureSummary());
             append(value, stringify(backup.restoreTestedAt()));
             append(value, backup.restoreTestStatus());
+            return value.toString();
+        }
+        if (request instanceof SignalIngestionRequest signal) {
+            signal = IngestionTimestampCanonicalizer.canonicalize(signal);
+            append(value, "signal-v1");
+            append(value, signal.eventKey());
+            append(value, signal.episodeKey());
+            append(value, signal.project());
+            append(value, stringify(signal.signalType()));
+            append(value, stringify(signal.status()));
+            append(value, stringify(signal.observedAt()));
+            append(value, stringify(signal.availablePercent()));
+            append(value, stringify(signal.thresholdPercent()));
+            append(value, stringify(signal.count()));
+            append(value, stringify(signal.windowSeconds()));
+            append(value, stringify(signal.thresholdCount()));
             return value.toString();
         }
         throw new IllegalArgumentException("Unsupported ingestion request type");
