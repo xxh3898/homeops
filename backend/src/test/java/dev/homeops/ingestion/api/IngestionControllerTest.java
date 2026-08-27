@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import dev.homeops.common.ApiExceptionHandler;
 import dev.homeops.common.PostgresqlTimestampRange;
 import dev.homeops.ingestion.IngestionService;
+import dev.homeops.ingestion.SignalIngestionService;
 import java.util.List;
 import java.util.stream.Stream;
 import java.util.UUID;
@@ -32,12 +33,139 @@ class IngestionControllerTest {
     private static final String OUTSIDE_POSTGRESQL_RANGE = "+300000-01-01T00:00:00Z";
 
     @Mock private IngestionService service;
+    @Mock private SignalIngestionService signalService;
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(new IngestionController(service))
+        mockMvc = MockMvcBuilders.standaloneSetup(new IngestionController(service, signalService))
                 .setControllerAdvice(new ApiExceptionHandler()).build();
+    }
+
+    @Test
+    void should_acceptDiskSignal_when_typedPayloadIsValid() throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000030");
+        when(signalService.accept(any())).thenReturn(new IngestionAcceptedResponse(id, false));
+
+        mockMvc.perform(post("/api/v1/internal/ingestion/signals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validDiskSignalJson()))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.id").value(id.toString()))
+                .andExpect(jsonPath("$.duplicate").value(false));
+    }
+
+    @Test
+    void should_acceptHttpSignal_when_typedPayloadIsValid() throws Exception {
+        UUID id = UUID.fromString("10000000-0000-0000-0000-000000000031");
+        when(signalService.accept(any())).thenReturn(new IngestionAcceptedResponse(id, false));
+
+        mockMvc.perform(post("/api/v1/internal/ingestion/signals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validHttpSignalJson()))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.id").value(id.toString()));
+    }
+
+    @Test
+    void should_rejectSignalWithoutServiceAccess_when_typeIsUnknown() throws Exception {
+        mockMvc.perform(post("/api/v1/internal/ingestion/signals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validDiskSignalJson().replace("DISK_LOW", "CUSTOM_SIGNAL")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:homeops:problem:malformed-request"));
+
+        verifyNoInteractions(signalService);
+    }
+
+    @Test
+    void should_rejectSignalWithoutServiceAccess_when_rawFieldIsUnsupported() throws Exception {
+        String body = validDiskSignalJson().replace("\"thresholdPercent\":15",
+                "\"thresholdPercent\":15,\"rawLog\":\"synthetic-private-value\"");
+
+        String response = mockMvc.perform(post("/api/v1/internal/ingestion/signals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:homeops:problem:malformed-request"))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(response).doesNotContain("synthetic-private-value", "rawLog");
+        verifyNoInteractions(signalService);
+    }
+
+    @Test
+    void should_rejectSignalWithoutServiceAccess_when_measurementsDoNotMatchType() throws Exception {
+        String body = validDiskSignalJson().replace("\"thresholdPercent\":15",
+                "\"thresholdPercent\":15,\"count\":10,\"windowSeconds\":300,\"thresholdCount\":5");
+
+        mockMvc.perform(post("/api/v1/internal/ingestion/signals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:homeops:problem:validation"));
+
+        verifyNoInteractions(signalService);
+    }
+
+    @Test
+    void should_rejectSignalWithoutServiceAccess_when_numericMeasurementIsOutOfRange() throws Exception {
+        for (String body : List.of(
+                validDiskSignalJson().replace("\"availablePercent\":14", "\"availablePercent\":-1"),
+                validDiskSignalJson().replace("\"thresholdPercent\":15", "\"thresholdPercent\":101"),
+                validHttpSignalJson().replace("\"count\":12", "\"count\":-1"),
+                validHttpSignalJson().replace("\"count\":12", "\"count\":1000001"),
+                validHttpSignalJson().replace("\"windowSeconds\":300", "\"windowSeconds\":0"))) {
+            mockMvc.perform(post("/api/v1/internal/ingestion/signals")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.type").value("urn:homeops:problem:validation"));
+        }
+
+        verifyNoInteractions(signalService);
+    }
+
+    @Test
+    void should_rejectSignalWithoutServiceAccess_when_integerMeasurementOverflows() throws Exception {
+        mockMvc.perform(post("/api/v1/internal/ingestion/signals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validHttpSignalJson().replace("\"count\":12",
+                                "\"count\":999999999999999999999")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:homeops:problem:malformed-request"));
+
+        verifyNoInteractions(signalService);
+    }
+
+    @Test
+    void should_rejectSignalWithoutServiceAccess_when_identityIsOverlongOrContainsNul() throws Exception {
+        for (String body : List.of(
+                validDiskSignalJson().replace("signal-alert-1", "a".repeat(129)),
+                validDiskSignalJson().replace("episode-1", "b".repeat(129)),
+                validDiskSignalJson().replace("form-dock", "c".repeat(129)),
+                validDiskSignalJson().replace("form-dock", "form/dock"),
+                validDiskSignalJson().replace("\"project\":\"form-dock\"",
+                        "\"project\":\"\\u0000form-dock\""))) {
+            mockMvc.perform(post("/api/v1/internal/ingestion/signals")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.type").value("urn:homeops:problem:validation"));
+        }
+
+        verifyNoInteractions(signalService);
+    }
+
+    @Test
+    void should_rejectSignalWithoutServiceAccess_when_timestampIsOutsidePostgresqlRange() throws Exception {
+        mockMvc.perform(post("/api/v1/internal/ingestion/signals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validDiskSignalJson().replace("2026-08-27T01:02:03Z", OUTSIDE_POSTGRESQL_RANGE)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value("urn:homeops:problem:validation"));
+
+        verifyNoInteractions(signalService);
     }
 
     @Test
@@ -306,6 +434,37 @@ class IngestionControllerTest {
                   "failureSummary":"none",
                   "restoreTestedAt":"2026-08-06T01:00:00Z",
                   "restoreTestStatus":"SUCCESS"
+                }
+                """;
+    }
+
+    private static String validDiskSignalJson() {
+        return """
+                {
+                  "eventKey":"signal-alert-1",
+                  "episodeKey":"episode-1",
+                  "project":"form-dock",
+                  "signalType":"DISK_LOW",
+                  "status":"ALERT",
+                  "observedAt":"2026-08-27T01:02:03Z",
+                  "availablePercent":14,
+                  "thresholdPercent":15
+                }
+                """;
+    }
+
+    private static String validHttpSignalJson() {
+        return """
+                {
+                  "eventKey":"signal-http-alert-1",
+                  "episodeKey":"episode-http-1",
+                  "project":"form-dock",
+                  "signalType":"HTTP_5XX_BURST",
+                  "status":"ALERT",
+                  "observedAt":"2026-08-27T01:02:03Z",
+                  "count":12,
+                  "windowSeconds":300,
+                  "thresholdCount":10
                 }
                 """;
     }

@@ -38,7 +38,7 @@ class IngestionEventKeyLedgerMigrationPostgresqlIntegrationTest {
     void should_enforceMinimalSourceScopedLedgerContract_when_schemaIsMigratedCleanly() {
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("12");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
         assertThat(jdbc.queryForList("""
                 SELECT column_name
                 FROM information_schema.columns
@@ -83,7 +83,7 @@ class IngestionEventKeyLedgerMigrationPostgresqlIntegrationTest {
     }
 
     @Test
-    void should_backfillBothNamespaces_when_migratingFromV1ToV12() {
+    void should_backfillBothNamespaces_when_migratingFromV1ToCurrent() {
         database.migrateTo("1");
         insertV1Deployment("shared-key", "RUNNING");
         insertV1Deployment("deployment-only", "SUCCESS");
@@ -92,10 +92,10 @@ class IngestionEventKeyLedgerMigrationPostgresqlIntegrationTest {
 
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("12");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
         assertThat(flyway.info().applied())
                 .extracting(migration -> migration.getVersion().getVersion())
-                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13");
         assertThat(ledgerRows()).containsExactly(
                 Map.of("source_type", "BACKUP", "event_key", "backup-only"),
                 Map.of("source_type", "BACKUP", "event_key", "shared-key"),
@@ -144,7 +144,7 @@ class IngestionEventKeyLedgerMigrationPostgresqlIntegrationTest {
     }
 
     @Test
-    void should_preserveCurrentBusinessRowsAndLedger_when_migratingFromV11ToV12() {
+    void should_preserveCurrentBusinessRowsAndLedger_when_migratingFromV11ToCurrent() {
         database.migrateTo("11");
         insertCurrentDeployment("deployment-current", "RUNNING", "a".repeat(64));
         insertCurrentBackup("backup-current", "SUCCESS", "b".repeat(64));
@@ -153,7 +153,7 @@ class IngestionEventKeyLedgerMigrationPostgresqlIntegrationTest {
 
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("12");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
         assertThat(deploymentShape()).isEqualTo(deploymentBefore);
         assertThat(backupShape()).isEqualTo(backupBefore);
         assertThat(ledgerRows()).containsExactly(

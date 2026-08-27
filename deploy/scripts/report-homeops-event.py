@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import datetime
+import decimal
 import fcntl
 import hashlib
 import hmac
@@ -100,14 +101,70 @@ def ingestion_secret():
 
 
 def validate_payload(kind, body):
-    if kind not in ("deployments", "backups"):
+    if kind not in ("deployments", "backups", "signals"):
         raise ValueError("unsupported ingestion event kind")
     if not body or len(body) > MAX_PAYLOAD_BYTES:
         raise ValueError("ingestion payload size is invalid")
     value = json.loads(body)
     if not isinstance(value, dict) or not isinstance(value.get("eventKey"), str):
         raise ValueError("ingestion payload must contain an eventKey")
+    if kind == "signals":
+        validate_signal_payload(value)
     return value
+
+
+def validate_signal_payload(value):
+    common = {"eventKey", "episodeKey", "project", "signalType", "status", "observedAt"}
+    disk = {"availablePercent", "thresholdPercent"}
+    http = {"count", "windowSeconds", "thresholdCount"}
+    signal_type = value.get("signalType")
+    expected = common | (disk if signal_type == "DISK_LOW" else http)
+    if signal_type not in ("DISK_LOW", "HTTP_5XX_BURST") or set(value) != expected:
+        raise ValueError("signal ingestion fields are invalid")
+    if value.get("status") not in ("ALERT", "RECOVERED"):
+        raise ValueError("signal ingestion status is invalid")
+    for name in ("eventKey", "episodeKey", "project"):
+        field = value.get(name)
+        if not isinstance(field, str) or not field.strip() or len(field) > 128 or "\0" in field:
+            raise ValueError("signal ingestion identity is invalid")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value["eventKey"]) \
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value["episodeKey"]) \
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value["project"]):
+        raise ValueError("signal ingestion identity is invalid")
+    observed_at = value.get("observedAt")
+    if not isinstance(observed_at, str) or len(observed_at) > 64:
+        raise ValueError("signal ingestion timestamp is invalid")
+    try:
+        parsed_time = datetime.datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("signal ingestion timestamp is invalid") from error
+    if parsed_time.tzinfo is None:
+        raise ValueError("signal ingestion timestamp is invalid")
+    if signal_type == "DISK_LOW":
+        available = finite_number(value.get("availablePercent"))
+        threshold = finite_number(value.get("thresholdPercent"))
+        if not 0 <= available <= 100 or not 0 < threshold <= 100:
+            raise ValueError("disk signal measurement is invalid")
+        return
+    if not bounded_integer(value.get("count"), 0, 1_000_000):
+        raise ValueError("HTTP signal count is invalid")
+    if not bounded_integer(value.get("windowSeconds"), 1, 86_400):
+        raise ValueError("HTTP signal window is invalid")
+    if not bounded_integer(value.get("thresholdCount"), 1, 1_000_000):
+        raise ValueError("HTTP signal threshold is invalid")
+
+
+def finite_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("signal numeric measurement is invalid")
+    number = decimal.Decimal(str(value))
+    if not number.is_finite() or number.as_tuple().exponent < -2:
+        raise ValueError("signal numeric measurement is invalid")
+    return number
+
+
+def bounded_integer(value, minimum, maximum):
+    return not isinstance(value, bool) and isinstance(value, int) and minimum <= value <= maximum
 
 
 def spool_entry_count():
@@ -216,11 +273,15 @@ def drain():
 
 def main():
     if len(sys.argv) != 2:
-        raise ValueError("usage: report-homeops-event.py <deployments|backups|--drain>")
-    if sys.argv[1] != "--drain":
+        raise ValueError("usage: report-homeops-event.py <deployments|backups|signal|--drain>")
+    argument = sys.argv[1]
+    if argument not in ("deployments", "backups", "signal", "--drain"):
+        raise ValueError("unsupported ingestion event kind")
+    if argument != "--drain":
+        kind = "signals" if argument == "signal" else argument
         body = sys.stdin.buffer.read(MAX_PAYLOAD_BYTES + 1)
-        validate_payload(sys.argv[1], body)
-        write_spool(sys.argv[1], body)
+        validate_payload(kind, body)
+        write_spool(kind, body)
     try:
         drain()
     except (OSError, ValueError, json.JSONDecodeError, urllib.error.URLError) as exception:

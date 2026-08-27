@@ -33,9 +33,11 @@ HomeOps는 자체 PostgreSQL에 대해 Master Playbook의 recurring/offsite back
 
 Phase 3 source와 production ingestion/monitoring은 활성 상태이며 formal production acceptance도 COMPLETE입니다. Production의 `dev.homeops.ingestion-reporter` LaunchAgent는 범위 제한 `--drain` retry를 담당하고 신뢰하는 project의 deployment/backup event가 Activity에 수신됩니다. Exact-origin service checker와 incident history가 동작하며, retained ingestion metadata, check growth와 incident recovery, Activity의 안정 cursor 전체 pagination과 mobile 표시를 production mutation 없이 검증했습니다.
 
+Phase 3 완료 뒤 추가된 bounded signal source는 `DISK_LOW`, `HTTP_5XX_BURST`의 logical `ALERT`/`RECOVERED` episode만 받아 기존 incident/Activity에 연결합니다. Every-observation history, arbitrary signal/URL/JSON, raw log와 private endpoint는 받지 않습니다. Source merge만으로 production reporter나 caller를 활성화하지 말고, Release·V13 migration 뒤 `notifications=false`와 existing ingestion regression을 확인한 다음 별도 production gate에서 exact caller를 opt-in하세요. Old API의 `/signals` 404/405 동안 reporter spool은 event를 삭제하거나 quarantine하지 않고 bounded retry 상태로 보존합니다.
+
 자동 retention은 metric aggregate, 처리한 Agent snapshot 멱등성 ledger, service-check result와 terminal notification outbox에 각자의 기존 contract로 적용됩니다. [ADR-001](adr/ADR-001-operational-history-retention-and-deletion-safety.md)은 production aggregate evidence를 근거로 deployment, backup과 Agent 장기 event를 current `KEEP_UNBOUNDED`로 결정하고, incident와 `container_action_audit`를 각각 별도 dependency 및 Security/Audit Decision으로 분리합니다. 운영자는 임의 cleanup이나 age-only DELETE를 실행하면 안 됩니다. 이 fail-closed operating decision은 Phase 3/5 acceptance를 미완료로 되돌리거나 영구 보존 Product requirement를 확정하는 의미가 아닙니다.
 
-새 host에서 Phase 3를 활성화하는 작업은 source release와 분리합니다. HomeOps `.env`에 생성한 64글자 소문자 hexadecimal `HOMEOPS_INGESTION_SHARED_SECRET` 하나가 있는지, `smoke.origin`이 의도한 tailnet HTTPS origin인지, 두 file이 owner-only mode `0600`인지, deployment account의 `~/Server/data/homeops/ingestion-spool`이 owner-only mode `0700`인지 확인합니다. private reporter copy와 LaunchAgent를 load 전에 lint하고, reporter warning을 application deploy 또는 backup 실패로 취급하지 말며 spool과 HomeOps ingestion health를 따로 검사하세요.
+새 host에서 Phase 3를 활성화하는 작업은 source release와 분리합니다. HomeOps `.env`에 생성한 64글자 소문자 hexadecimal `HOMEOPS_INGESTION_SHARED_SECRET` 하나가 있는지, `smoke.origin`이 의도한 tailnet HTTPS origin인지, 두 file이 owner-only mode `0600`인지, deployment account의 `~/Server/data/homeops/ingestion-spool`이 owner-only mode `0700`인지 확인합니다. private reporter copy와 LaunchAgent를 load 전에 lint하고, reporter warning을 application deploy, backup 또는 monitoring outcome 자체로 취급하지 말며 spool과 HomeOps ingestion health를 따로 검사하세요.
 
 GitHub workflow는 다음을 수행합니다.
 
