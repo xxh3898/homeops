@@ -6,7 +6,7 @@ HomeOps는 Docker Desktop을 실행하는 Apple Silicon Mac용 모바일 우선 
 
 ## 상태
 
-HomeOps는 정식 출시 전 소프트웨어입니다. 현재 production에서는 읽기 전용 호스트 메트릭과 컨테이너 인벤토리, HMAC 인증 배포·백업 결과 수집, 허용 목록 기반 HTTP 서비스 점검과 인시던트 이력, 페이지네이션을 적용한 모바일 활동 타임라인, opt-in Discord 알림 capability가 활성화되어 있습니다. 새 설치에서 secret 또는 정확한 origin 허용 목록이 비어 있으면 해당 입력은 계속 fail closed합니다.
+HomeOps는 정식 출시 전 소프트웨어입니다. 현재 production에서는 읽기 전용 호스트 메트릭과 컨테이너 인벤토리, HMAC 인증 배포·백업 결과 수집, 허용 목록 기반 HTTP 서비스 점검과 인시던트 이력, 페이지네이션을 적용한 모바일 활동 타임라인, opt-in Discord 알림 capability가 활성화되어 있습니다. Source에는 `DISK_LOW`와 `HTTP_5XX_BURST`의 bounded episode ingestion도 포함되지만 설치된 production에서 사용하려면 별도 Release·V13 migration·reporter activation acceptance가 필요합니다. 새 설치에서 secret 또는 정확한 origin 허용 목록이 비어 있으면 해당 입력은 계속 fail closed합니다.
 
 읽기 전용 Phase 1은 Source IMPLEMENTED / Production ACTIVE / Acceptance COMPLETE입니다. CPU, memory, disk의 bounded metric history, latest Agent snapshot 기반 Container Detail, explicit opt-in과 이중 redaction을 적용한 bounded Container Logs API/UI가 production에서 검증됐습니다. Container Logs는 controlled opt-in, one-shot retrieval, mobile 표시와 revoke 뒤 fail-closed/payload 제거 acceptance까지 완료했습니다.
 
@@ -21,7 +21,7 @@ macOS Agent는 production에서 운영 중입니다. 변경 불가능한 GHCR ar
 - `agent`: 실제 호스트 메트릭과 제한된 Docker Engine 읽기를 담당하는 macOS Go process
 - `deploy`: 일반적인 Docker Compose, Nginx, LaunchAgent 예시
 
-runtime-config image에는 신뢰하는 프로젝트의 배포·백업 worker가 쓰는 범위 제한 호스트 측 event reporter도 포함합니다. 전송 전에 spool에 저장하고 HMAC signing을 담당하므로 caller interface를 통해 secret이 전달되지 않습니다.
+runtime-config image에는 신뢰하는 프로젝트의 배포·백업 worker와 bounded signal caller가 쓰는 범위 제한 호스트 측 event reporter도 포함합니다. 전송 전에 spool에 저장하고 HMAC signing을 담당하므로 caller interface를 통해 secret이 전달되지 않습니다.
 
 API container에는 Docker socket을 절대 mount하지 않습니다. 사용자 수준의 native Agent가 호스트와 Docker Engine을 읽은 뒤 loopback mTLS ingress를 통해 범위가 제한된 snapshot을 보냅니다.
 
@@ -74,7 +74,7 @@ Linux agent, Kubernetes, 인터넷 공개, 다중 사용자 계정, 웹 터미�
 - `POST /api/v1/internal/agent/snapshots`: loopback mTLS ingress를 통해서만 사용 가능
 - `GET /api/v1/internal/agent/log-requests/next`, `POST /api/v1/internal/agent/log-results`: public log API가 아닌 bounded Agent work protocol foundation. 동일 loopback mTLS ingress의 exact path만 허용
 - `GET /api/v1/internal/agent/control-requests/next`, `POST /api/v1/internal/agent/control-results`: public API가 예약한 fixed `START|STOP|RESTART` work를 처리하는 Agent protocol. 동일 loopback mTLS ingress의 exact path에서만 동작하며 generic command를 받지 않음
-- `POST /api/v1/internal/ingestion/deployments`, `/backups`: production의 신뢰하는 reporter에서 활성화. ingestion secret이 비어 있는 새 설치에서는 fail closed
+- `POST /api/v1/internal/ingestion/deployments`, `/backups`, `/signals`: 신뢰하는 reporter 전용 HMAC ingestion. `/signals`는 `DISK_LOW`, `HTTP_5XX_BURST`의 typed `ALERT|RECOVERED` lifecycle만 허용하며 ingestion secret이 비어 있으면 fail closed
 - `GET /actuator/health/readiness`
 
 Container Detail의 control UI는 fresh latest snapshot을 바탕으로 보수적인 candidate action만 제시하며 Backend와 Agent의 live authorization을 대체하지 않습니다. Mutation은 자동 재시도하지 않고, 전송 결과가 모호할 때만 사용자가 같은 in-memory idempotency key로 명시적으로 재시도할 수 있습니다. 임의 명령, live/follow log stream, log 저장·검색·내보내기, 일반 네트워크 요청 endpoint는 없습니다. Public control API는 fixed operation과 12자리 ID만 받아 durable reservation을 commit한 뒤 기존 bounded broker로 전달하며, Agent는 fixed Docker POST만 수행하고 generic command/path/query/body를 받지 않습니다. Discord 알림은 typed allowlist, explicit opt-in과 global kill switch 안에서만 동작하며 arbitrary webhook이나 optional email escalation은 제공하지 않습니다.

@@ -34,7 +34,7 @@
 | `HOMEOPS_AGENT_PROCESSED_SNAPSHOT_CLEANUP_CRON` | 아니요 | 아니요 | UTC 기준 멱등성 ledger cleanup cron. 기본값 `0 47 3 * * *` |
 | `HOMEOPS_METRIC_RETENTION` | 아니요 | 아니요 | 1분 aggregate 보존 기간. 기본값 `30d`, 최대 `365d` |
 | `HOMEOPS_METRIC_CLEANUP_CRON` | 아니요 | 아니요 | UTC 기준 cleanup cron. 기본값 `0 17 3 * * *` |
-| `HOMEOPS_INGESTION_SHARED_SECRET` | Phase 3 통합 | 예 | 신뢰하는 deployment/backup-result script용 공유 HMAC secret. 비어 있으면 ingestion 비활성화(fail closed) |
+| `HOMEOPS_INGESTION_SHARED_SECRET` | Phase 3 통합 | 예 | 신뢰하는 deployment/backup-result 및 bounded signal reporter용 공유 HMAC secret. 비어 있으면 ingestion 비활성화(fail closed) |
 | `HOMEOPS_INGESTION_MAXIMUM_REQUEST_AGE` | 아니요 | 아니요 | 허용하는 가장 오래된 signed request. 양수, 최대 `24h`, 기본값 `5m` |
 | `HOMEOPS_INGESTION_ALLOWED_FUTURE_SKEW` | 아니요 | 아니요 | 허용 sender clock skew. `0`부터 `15m`, 기본값 `1m` |
 | `HOMEOPS_MONITORING_ALLOWED_ORIGINS` | Phase 3 점검 | 비공개 | service check에 허용하는 쉼표 구분 정확한 HTTPS origin. 비어 있으면 등록 비활성화 |
@@ -66,16 +66,16 @@ Production acceptance 종료 현재 webhook Secret은 값 비노출 상태로 �
 
 `HOMEOPS_AUTH_MODE=DEV`는 Spring `dev` profile에서만 허용됩니다. production 환경에서는 절대 설정하지 마세요.
 
-## 배포 및 백업 수집
+## 배포, 백업 및 bounded signal 수집
 
-`HOMEOPS_INGESTION_SHARED_SECRET`이 비어 있는 동안 ingestion endpoint는 의도적으로 비활성화됩니다. 현재 production은 secret과 reporter를 구성해 deployment/backup ingestion이 활성 상태지만, 새 설치와 미구성 환경의 fail-closed contract는 그대로 유지됩니다. 신뢰하는 caller는 `POST /api/v1/internal/ingestion/deployments` 또는 `POST /api/v1/internal/ingestion/backups`로 compact JSON request를 보내며 다음 header를 포함합니다.
+`HOMEOPS_INGESTION_SHARED_SECRET`이 비어 있는 동안 ingestion endpoint는 의도적으로 비활성화됩니다. 현재 production은 secret과 reporter를 구성해 deployment/backup ingestion이 활성 상태지만, 새 설치와 미구성 환경의 fail-closed contract는 그대로 유지됩니다. Source의 `POST /api/v1/internal/ingestion/signals`는 `DISK_LOW`, `HTTP_5XX_BURST` 두 type과 `ALERT`, `RECOVERED` lifecycle만 추가로 받습니다. 이 source capability는 별도 Release·V13 migration·reporter activation 전까지 installed production capability가 아닙니다. 신뢰하는 caller는 compact JSON request를 보내며 다음 header를 포함합니다.
 
 - `X-HomeOps-Ingestion-Timestamp`: ISO-8601 UTC instant
 - `X-HomeOps-Ingestion-Signature`: 공유 secret을 사용한 `timestamp + "." + raw-request-body`의 소문자 hexadecimal HMAC-SHA-256
 
-API는 구성한 time window 안의 request만 받습니다. secret을 command line, repository variable, shell trace, deployment output, event payload에 넣지 마세요. event key는 하나의 deployment 또는 backup lifecycle을 식별합니다. 정확히 같은 retry는 duplicate로 허용하고, 유효한 active-state transition은 event를 갱신하며, 충돌하거나 terminal-state를 바꾸는 요청은 거부합니다. Backup `logicalLocation`은 logical identifier이며 absolute host path가 아닙니다.
+API는 구성한 time window 안의 request만 받습니다. secret을 command line, repository variable, shell trace, deployment output, event payload에 넣지 마세요. Deployment와 backup event key는 각각의 lifecycle을 식별합니다. Signal request는 별도의 bounded `eventKey`, `episodeKey`, `project`, type, status, `observedAt`과 type별 numeric measurement만 허용합니다. `DISK_LOW`는 available/threshold percent, `HTTP_5XX_BURST`는 count/window/threshold count만 받으며 URL, path, log, response 또는 generic metadata field는 거부합니다. 정확히 같은 retry는 duplicate로 허용하고, 유효한 active-state transition만 반영하며, 충돌하거나 terminal-state를 다시 여는 요청은 거부합니다. Backup `logicalLocation`은 logical identifier이며 absolute host path가 아닙니다.
 
-포함된 host reporter는 `runtime-config/current/scripts/report-homeops-event.py`입니다. mode `0600` HomeOps `.env`에서 `HOMEOPS_INGESTION_SHARED_SECRET`을, 기존 mode `0600` `smoke.origin`에서 HTTPS origin을 읽습니다. reporter와 API가 두 번째 secret file 없이 같은 값을 공유하도록 생성한 64글자 소문자 hexadecimal secret을 사용하세요. 현재 macOS account에서 HomeOps path를 유도한 뒤 `~/Server/data/homeops/ingestion-spool`에 mode `0600` event를 기록하고 file lock으로 drain을 직렬화하며, 각 drain을 제한하고 redirect를 거부합니다. active, pending, quarantine을 합친 capacity는 128개입니다. 가득 찬 경우 기존 evidence를 보존하고 오래된 event를 지우는 대신 새 event를 거부합니다. transient failure는 retry를 위해 spool에 남고, malformed entry와 permanent API client rejection은 이후 event를 막지 않도록 mode `0700` `quarantine` subdirectory로 옮깁니다. 이후 deployment나 backup이 없을 때도 보존된 transient failure를 재시도할 수 있도록 별도 주기 LaunchAgent에서 event payload 없이 `--drain`을 호출하세요. 통합 protocol은 caller에게 secret을 전달하지 않지만 같은 macOS account에서 이미 침해된 다른 process에 대한 격리 경계는 아닙니다.
+포함된 host reporter는 `runtime-config/current/scripts/report-homeops-event.py`입니다. mode `0600` HomeOps `.env`에서 `HOMEOPS_INGESTION_SHARED_SECRET`을, 기존 mode `0600` `smoke.origin`에서 HTTPS origin을 읽습니다. reporter와 API가 두 번째 secret file 없이 같은 값을 공유하도록 생성한 64글자 소문자 hexadecimal secret을 사용하세요. `signal` mode는 exact typed JSON을 검증한 뒤 고정 `/signals` path로만 전송하며 caller가 endpoint나 HMAC secret을 선택할 수 없습니다. 현재 macOS account에서 HomeOps path를 유도한 뒤 `~/Server/data/homeops/ingestion-spool`에 mode `0600` event를 기록하고 file lock으로 drain을 직렬화하며, 각 drain을 제한하고 redirect를 거부합니다. active, pending, quarantine을 합친 capacity는 128개입니다. 가득 찬 경우 기존 evidence를 보존하고 오래된 event를 지우는 대신 새 event를 거부합니다. transient failure와 old API의 404/405는 retry를 위해 spool에 남고, malformed entry와 permanent API client rejection은 이후 event를 막지 않도록 mode `0700` `quarantine` subdirectory로 옮깁니다. 새 event가 없을 때도 보존된 transient failure를 재시도할 수 있도록 별도 주기 LaunchAgent에서 event payload 없이 `--drain`을 호출하세요. 통합 protocol은 caller에게 secret을 전달하지 않지만 같은 macOS account에서 이미 침해된 다른 process에 대한 격리 경계는 아닙니다.
 
 ## 서비스 점검 경계
 

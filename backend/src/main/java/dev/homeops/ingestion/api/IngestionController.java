@@ -1,6 +1,7 @@
 package dev.homeops.ingestion.api;
 
 import dev.homeops.ingestion.IngestionService;
+import dev.homeops.ingestion.SignalIngestionService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -13,7 +14,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/internal/ingestion")
 public class IngestionController {
     private final IngestionService service;
-    public IngestionController(IngestionService service) { this.service = service; }
+    private final SignalIngestionService signalService;
+
+    public IngestionController(IngestionService service, SignalIngestionService signalService) {
+        this.service = service;
+        this.signalService = signalService;
+    }
 
     @PostMapping("/deployments")
     @ResponseStatus(HttpStatus.ACCEPTED)
@@ -25,5 +31,11 @@ public class IngestionController {
     @ResponseStatus(HttpStatus.ACCEPTED)
     public IngestionAcceptedResponse acceptBackup(@Valid @RequestBody BackupIngestionRequest request) {
         return service.acceptBackup(request);
+    }
+
+    @PostMapping("/signals")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public IngestionAcceptedResponse acceptSignal(@Valid @RequestBody SignalIngestionRequest request) {
+        return signalService.accept(request);
     }
 }

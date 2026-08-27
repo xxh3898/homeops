@@ -48,8 +48,8 @@ Phase 5 source는 exact `homeops.managed=true`, fresh latest snapshot, unique bo
 ## 브라우저 및 PWA 통제
 
 - API response에는 `Cache-Control: no-store`가 있습니다.
-- 브라우저 read API의 ADMIN session과 reporter ingestion 인증을 분리합니다. Ingestion은 bounded body와 timestamp window의 HMAC-SHA-256을 요구하고 missing·wrong·malformed signature를 controller 전에 거부하며 raw signature나 request body를 error response에 반사하지 않습니다.
-- Activity는 deployment, backup, incident, Agent event와 container control audit의 bounded allowlist context만 노출하며 visibility-snapshot cursor를 사용하는 no-store pagination을 제공합니다. Control audit에서는 12자리 public container ID만 context로 사용하고 principal, idempotency key, name/image, failure/raw metadata와 reason code를 제외합니다.
+- 브라우저 read API의 ADMIN session과 reporter ingestion 인증을 분리합니다. Ingestion은 bounded body와 timestamp window의 HMAC-SHA-256을 요구하고 missing·wrong·malformed signature를 controller 전에 거부하며 raw signature나 request body를 error response에 반사하지 않습니다. Signal ingestion은 `DISK_LOW`, `HTTP_5XX_BURST`와 type별 numeric measurement만 허용하며 arbitrary type, URL, path, log, response와 unknown field를 fail closed로 거부합니다.
+- Activity는 deployment, backup, incident, Agent event와 container control audit의 bounded allowlist context만 노출하며 visibility-snapshot cursor를 사용하는 no-store pagination을 제공합니다. Signal은 fake monitored service 없이 bounded incident title/type로만 같은 projection에 나타납니다. Event/episode key와 numeric measurement는 Activity에 노출하지 않습니다. Control audit에서는 12자리 public container ID만 context로 사용하고 principal, idempotency key, name/image, failure/raw metadata와 reason code를 제외합니다.
 - Workbox는 API GET request에 `NetworkOnly`를 사용하며 상태 변경 method는 cache하지 않습니다.
 - Container Logs는 explicit user action에만 요청하고 UI memory에만 잠시 보관합니다. route, tail 또는 disclosure authority가 바뀌면 표시 payload를 제거합니다.
 - Container Detail control UI는 stale/offline/refetch-error/unmanaged 또는 unsupported state에서 action을 fail closed하고 Backend·Agent의 live authority를 대체하지 않습니다. 별도 confirmation 뒤에만 fixed mutation을 보내며 자동 POST retry를 하지 않습니다. Ambiguous submission은 component memory의 같은 idempotency key로만 explicit retry하고 route/unmount 뒤 background replay 또는 durable browser storage를 사용하지 않습니다.

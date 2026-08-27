@@ -78,6 +78,62 @@ class HomeOpsEventReporterTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             REPORTER.validate_payload("backups", b"x" * (REPORTER.MAX_PAYLOAD_BYTES + 1))
 
+    def test_acceptsOnlyTypedSignalPayloads(self):
+        disk = self.signal_payload("DISK_LOW")
+        http = self.signal_payload("HTTP_5XX_BURST")
+
+        self.assertEqual(disk, REPORTER.validate_payload("signals", json.dumps(disk).encode()))
+        self.assertEqual(http, REPORTER.validate_payload("signals", json.dumps(http).encode()))
+
+        invalid_payloads = []
+        unknown = dict(disk, signalType="CUSTOM")
+        invalid_payloads.append(unknown)
+        extra = dict(disk, rawLog="synthetic-private-value")
+        invalid_payloads.append(extra)
+        invalid_payloads.append(dict(disk, availablePercent=-1))
+        invalid_payloads.append(dict(disk, thresholdPercent=101))
+        invalid_payloads.append(dict(disk, availablePercent=14.001))
+        invalid_payloads.append(dict(http, count=1_000_001))
+        invalid_payloads.append(dict(http, windowSeconds=0))
+        invalid_payloads.append(dict(http, thresholdCount=True))
+        invalid_payloads.append(dict(http, project="x" * 129))
+        invalid_payloads.append(dict(http, project="form/dock"))
+        invalid_payloads.append(dict(http, observedAt="not-a-timestamp"))
+
+        for payload in invalid_payloads:
+            with self.subTest(payload=tuple(payload.keys())):
+                with self.assertRaises(ValueError):
+                    REPORTER.validate_payload("signals", json.dumps(payload).encode())
+
+    def test_writesBoundedSignalSpoolWithoutCallerSecretArgument(self):
+        payload = self.signal_payload("DISK_LOW")
+        body = json.dumps(payload, separators=(",", ":")).encode()
+
+        with mock.patch.object(REPORTER.sys, "argv", ["report-homeops-event.py", "signal"]), \
+                mock.patch.object(REPORTER.sys, "stdin", mock.Mock(buffer=io.BytesIO(body))), \
+                mock.patch.object(REPORTER, "drain"):
+            REPORTER.main()
+
+        entries = list(REPORTER.SPOOL_DIR.glob("*.json"))
+        self.assertEqual(1, len(entries))
+        wrapper = json.loads(entries[0].read_text(encoding="utf-8"))
+        self.assertEqual("signals", wrapper["kind"])
+        self.assertEqual(payload, json.loads(wrapper["body"]))
+        self.assertNotIn("HOMEOPS_INGESTION_SHARED_SECRET", wrapper["body"])
+        self.assertNotIn("a" * 64, wrapper["body"])
+
+    def test_retainsUnavailableSignalRouteForVersionSkewRetry(self):
+        body = json.dumps(self.signal_payload("HTTP_5XX_BURST")).encode()
+        path = REPORTER.write_spool("signals", body)
+
+        with mock.patch.object(REPORTER, "send", side_effect=REPORTER.urllib.error.HTTPError(
+                "https://homeops.example.invalid", 404, "unavailable", {}, None)):
+            with self.assertRaises(REPORTER.urllib.error.HTTPError):
+                REPORTER.drain()
+
+        self.assertTrue(path.exists())
+        self.assertFalse((REPORTER.SPOOL_DIR / "quarantine").exists())
+
     def test_does_not_follow_redirect(self):
         handler = REPORTER.NoRedirect()
         self.assertIsNone(handler.redirect_request(None, None, 307, None, None, None))
@@ -233,6 +289,20 @@ class HomeOpsEventReporterTest(unittest.TestCase):
     def write_private(path, value):
         path.write_text(value, encoding="utf-8")
         path.chmod(0o600)
+
+    @staticmethod
+    def signal_payload(signal_type):
+        common = {
+            "eventKey": "signal-event-1",
+            "episodeKey": "signal-episode-1",
+            "project": "form-dock",
+            "signalType": signal_type,
+            "status": "ALERT",
+            "observedAt": "2026-08-27T01:02:03Z",
+        }
+        if signal_type == "DISK_LOW":
+            return dict(common, availablePercent=14, thresholdPercent=15)
+        return dict(common, count=12, windowSeconds=300, thresholdCount=10)
 
 
 if __name__ == "__main__":

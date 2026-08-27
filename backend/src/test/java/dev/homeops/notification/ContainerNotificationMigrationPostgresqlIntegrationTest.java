@@ -55,7 +55,7 @@ class ContainerNotificationMigrationPostgresqlIntegrationTest {
 
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("12");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM agent_status", Integer.class))
                 .isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM notification_event", Integer.class))
