@@ -68,7 +68,7 @@ Production acceptance 종료 현재 webhook Secret은 값 비노출 상태로 �
 
 ## 배포, 백업 및 bounded signal 수집
 
-`HOMEOPS_INGESTION_SHARED_SECRET`이 비어 있는 동안 ingestion endpoint는 의도적으로 비활성화됩니다. 현재 production은 secret과 reporter를 구성해 deployment/backup ingestion이 활성 상태지만, 새 설치와 미구성 환경의 fail-closed contract는 그대로 유지됩니다. Source의 `POST /api/v1/internal/ingestion/signals`는 `DISK_LOW`, `HTTP_5XX_BURST` 두 type과 `ALERT`, `RECOVERED` lifecycle만 추가로 받습니다. 이 source capability는 별도 Release·V13 migration·reporter activation 전까지 installed production capability가 아닙니다. 신뢰하는 caller는 compact JSON request를 보내며 다음 header를 포함합니다.
+`HOMEOPS_INGESTION_SHARED_SECRET`이 비어 있는 동안 ingestion endpoint는 의도적으로 비활성화됩니다. 현재 production은 secret과 installed reporter를 구성해 deployment/backup ingestion과 bounded signal ingestion이 활성 상태지만, 새 설치와 미구성 환경의 fail-closed contract는 그대로 유지됩니다. `POST /api/v1/internal/ingestion/signals`는 `DISK_LOW`, `HTTP_5XX_BURST` 두 type과 `ALERT`, `RECOVERED` lifecycle만 받으며 Flyway V13과 reporter `signal` mode의 production acceptance를 완료했습니다. 신뢰하는 caller는 compact JSON request를 보내며 다음 header를 포함합니다.
 
 - `X-HomeOps-Ingestion-Timestamp`: ISO-8601 UTC instant
 - `X-HomeOps-Ingestion-Signature`: 공유 secret을 사용한 `timestamp + "." + raw-request-body`의 소문자 hexadecimal HMAC-SHA-256
