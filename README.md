@@ -6,7 +6,7 @@ HomeOps는 Docker Desktop을 실행하는 Apple Silicon Mac용 모바일 우선 
 
 ## 상태
 
-HomeOps는 정식 출시 전 소프트웨어입니다. 현재 production에서는 읽기 전용 호스트 메트릭과 컨테이너 인벤토리, HMAC 인증 배포·백업 결과 수집, 허용 목록 기반 HTTP 서비스 점검과 인시던트 이력, 페이지네이션을 적용한 모바일 활동 타임라인, opt-in Discord 알림 capability가 활성화되어 있습니다. Source에는 `DISK_LOW`와 `HTTP_5XX_BURST`의 bounded episode ingestion도 포함되지만 설치된 production에서 사용하려면 별도 Release·V13 migration·reporter activation acceptance가 필요합니다. 새 설치에서 secret 또는 정확한 origin 허용 목록이 비어 있으면 해당 입력은 계속 fail closed합니다.
+HomeOps는 정식 출시 전 소프트웨어입니다. 현재 production에서는 읽기 전용 호스트 메트릭과 컨테이너 인벤토리, HMAC 인증 배포·백업·bounded signal 수집, 허용 목록 기반 HTTP 서비스 점검과 인시던트 이력, 페이지네이션을 적용한 모바일 활동 타임라인, opt-in Discord 알림 capability가 활성화되어 있습니다. `DISK_LOW`와 `HTTP_5XX_BURST`의 typed `ALERT → RECOVERED` episode ingestion은 Flyway V13과 installed reporter를 포함한 production acceptance를 완료했습니다. 새 설치에서 secret 또는 정확한 origin 허용 목록이 비어 있으면 해당 입력은 계속 fail closed합니다.
 
 읽기 전용 Phase 1은 Source IMPLEMENTED / Production ACTIVE / Acceptance COMPLETE입니다. CPU, memory, disk의 bounded metric history, latest Agent snapshot 기반 Container Detail, explicit opt-in과 이중 redaction을 적용한 bounded Container Logs API/UI가 production에서 검증됐습니다. Container Logs는 controlled opt-in, one-shot retrieval, mobile 표시와 revoke 뒤 fail-closed/payload 제거 acceptance까지 완료했습니다.
 
