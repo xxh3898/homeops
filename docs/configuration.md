@@ -81,6 +81,8 @@ API는 구성한 time window 안의 request만 받습니다. secret을 command l
 
 `HOMEOPS_MONITORING_ALLOWED_ORIGINS`에 하나 이상의 정확한 HTTPS origin이 들어가기 전까지 service check는 fail-closed입니다. 현재 production은 allowlist와 monitored service를 구성해 scheduler, check와 incident history가 활성 상태입니다. service가 non-default port를 쓰면 `https://homeops.example.ts.net:9443`처럼 명시적으로 포함하세요. path와 query parameter는 origin allowlist가 아니라 각 monitored service URL에 속합니다. user info와 URL fragment는 거부하고 redirect를 따르지 않으며 각 request는 설정한 timeout을 사용합니다. 이 exact-origin policy는 인증된 settings request가 HomeOps를 범용 network client로 바꾸는 일을 막습니다.
 
+이 구성은 HomeOps가 service 상태와 incident를 소유하는 단일 관제 경계입니다. 별도 availability/dashboard stack용 URL, token, push, heartbeat 또는 email 설정을 HomeOps 환경에 추가하지 않습니다. Built-in checker는 현재 expected HTTP status만 확인합니다. Public keyword, load, inode/volume, 최소 PostgreSQL metric 또는 daily summary를 추가하려면 project의 privacy-safe status source와 새 bounded typed contract를 별도 검토해야 하며, 기존 `DISK_LOW`나 `HTTP_5XX_BURST`로 의미를 바꾸어 제출하지 않습니다. Synthetic check는 공개 health/status endpoint를 사용하고 CSRF 또는 token 발급 endpoint를 probe로 사용하지 않습니다.
+
 ## native Agent 환경
 
 | 키 | 필수 여부 | secret | 제약 |

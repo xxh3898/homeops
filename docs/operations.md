@@ -107,23 +107,30 @@ Production worker는 ingestion ledger backfill을 포함한 migration 전에 cur
 - payload를 읽지 않는 spool file count
 - PostgreSQL volume 크기 및 host disk 추세
 - Tailscale Serve status 및 Funnel 부재
-- Uptime Kuma HTTP monitor status
+- HomeOps monitored-service status, incident와 구성한 public synthetic 결과
 - GitHub deployment workflow 및 Production environment history
 
 환경 값, 전체 Tailnet status, certificate, private path, Docker inspect environment를 issue report에 출력하지 마세요.
 
-## Uptime Kuma 및 알림
+## HomeOps 관제 및 알림
 
-| Owner | 담당 signal | Delivery |
+HomeOps는 current repository에서 유일한 중앙 관제·알림 authority입니다. Project별 표준 health endpoint와 privacy-safe status script/typed reporter는 signal producer일 뿐 별도 dashboard나 alert owner가 아닙니다.
+
+| 관제 영역 | 입력과 운영 확인 | HomeOps 결과 |
 |---|---|---|
-| Uptime Kuma | 외부 HTTP/Tailnet reachability | 기존 email path |
-| HomeOps | 신뢰하는 reporter의 future deployment·backup lifecycle, persisted exact-origin incident 중 명시적으로 opt-in한 service의 future transition, API가 살아 있는 동안 expected native Agent의 freshness/version lifecycle, 명시적으로 opt-in한 내부 Docker container episode | Production-accepted Discord delivery capability. 현재 global switch가 `false`라 outbound는 disabled |
+| Public synthetic | allowlisted exact-origin HTTPS status와 privacy-safe keyword 결과. CSRF/token 발급 endpoint probe 금지 | service status와 failure/recovery incident |
+| Project/container | project health endpoint, API/Web container health, fresh Agent snapshot | project health와 bounded container episode |
+| Mac/resource | CPU·memory·load, disk·inode·volume capacity, 최소 PostgreSQL metric의 bounded source | current 상태와 typed resource incident |
+| Release/backup | deployment·publisher·outbox, local/offsite backup과 restore drill의 privacy-safe typed report | lifecycle, deduplication, Activity |
+| Alert/summary | persisted incident와 typed outbox intent | Discord alert와 daily summary 상태 |
+
+이 표는 최종 ownership 범위이며 모든 input이 현재 구현·활성화됐다는 선언이 아닙니다. Built-in checker는 expected HTTP status만 확인하고 native Agent도 현재 구현한 bounded metric만 수집합니다. Keyword, load, inode/volume, PostgreSQL metric 또는 daily summary의 typed contract가 없으면 unavailable로 남기며 기존 signal type으로 의미를 바꾸지 않습니다.
 
 Phase 4는 Source IMPLEMENTED / Production ACTIVE / Acceptance COMPLETE입니다. Production acceptance는 disabled baseline과 historical no-replay, additive V8/V9 schema 적용, controlled Native Agent rollout, exact Docker opt-in의 failure/recovery, 대표 deployment·backup lifecycle delivery와 final disable을 검증했습니다. 현재 webhook Secret은 값 비노출 상태로 설치되어 있지만 `HOMEOPS_NOTIFICATIONS_ENABLED=false`이므로 outbound는 없고 새 qualifying intent는 replay 불가 `SUPPRESSED`로 종료되며 `PENDING`/`DELIVERING` backlog도 없습니다. 이는 capability의 production 상태와 별개인 운영 kill switch입니다.
 
-`monitored_service.notification_enabled`는 HomeOps Discord incident의 future eligibility만 나타냅니다. Uptime Kuma monitor/email 설정이나 Discord global kill switch를 변경하지 않습니다. 이 값을 바꾸는 것만으로 notification intent, historical/open incident replay 또는 outbound가 발생하지 않습니다. Existing service는 boolean-only ADMIN + CSRF operation으로만 이 authority를 변경하며 DB default와 legacy migration 결과는 fail-closed `false`입니다.
+`monitored_service.notification_enabled`는 HomeOps Discord incident의 future eligibility만 나타내며 global notification kill switch를 변경하지 않습니다. 이 값을 바꾸는 것만으로 notification intent, historical/open incident replay 또는 outbound가 발생하지 않습니다. Existing service는 boolean-only ADMIN + CSRF operation으로만 이 authority를 변경하며 DB default와 legacy migration 결과는 fail-closed `false`입니다.
 
-Deployment와 backup producer는 실제 ingestion insert 또는 terminal transition winner만 typed outbox intent로 기록하며 replay나 경쟁 loser는 새 intent를 만들지 않습니다. Backup payload는 project, database type, status만 허용하고 logical location, failure, expiry와 restore metadata는 제외합니다. Incident producer는 event 시점의 persisted service authority를 확인하고 actual OPEN winner, 기본 15분 이상 지속된 DOWN observation, actual recovery winner만 고려합니다. Agent producer는 persisted expected status row의 last snapshot을 stale episode root로 사용하고 actual current snapshot update winner만 recovery/version intent를 만들며, first connection·duplicate·out-of-order snapshot은 notification을 만들지 않습니다. Docker producer는 fresh current snapshot의 exact opt-in만 사용하고 first observation/recreate/re-enable을 baseline으로 처리하며 기본 30초 sustained failure와 5분 re-alert cooldown을 적용합니다. Incident, Agent와 Docker recovery는 같은 episode의 SENT root에만 parent로 연결하고 suppressed/pending/failed/unknown/missing root에는 child를 만들지 않습니다. Global switch가 disabled이면 root와 version intent는 `SUPPRESSED`로 끝나고 enable 뒤 재생되지 않습니다. Agent freshness는 `HOMEOPS_AGENT_STALE_AFTER`를 재사용하고 checker cadence만 별도 bounded setting으로 둡니다. Optional email escalation은 같은 incident의 owner와 duplicate-prevention policy를 별도로 검증한 뒤에만 고려합니다.
+Deployment와 backup producer는 실제 ingestion insert 또는 terminal transition winner만 typed outbox intent로 기록하며 replay나 경쟁 loser는 새 intent를 만들지 않습니다. Backup payload는 project, database type, status만 허용하고 logical location, failure, expiry와 restore metadata는 제외합니다. Incident producer는 event 시점의 persisted service authority를 확인하고 actual OPEN winner, 기본 15분 이상 지속된 DOWN observation, actual recovery winner만 고려합니다. Agent producer는 persisted expected status row의 last snapshot을 stale episode root로 사용하고 actual current snapshot update winner만 recovery/version intent를 만들며, first connection·duplicate·out-of-order snapshot은 notification을 만들지 않습니다. Docker producer는 fresh current snapshot의 exact opt-in만 사용하고 first observation/recreate/re-enable을 baseline으로 처리하며 기본 30초 sustained failure와 5분 re-alert cooldown을 적용합니다. Incident, Agent와 Docker recovery는 같은 episode의 SENT root에만 parent로 연결하고 suppressed/pending/failed/unknown/missing root에는 child를 만들지 않습니다. Global switch가 disabled이면 root와 version intent는 `SUPPRESSED`로 끝나고 enable 뒤 재생되지 않습니다. Agent freshness는 `HOMEOPS_AGENT_STALE_AFTER`를 재사용하고 checker cadence만 별도 bounded setting으로 둡니다. 추가 delivery channel은 같은 incident의 owner와 duplicate-prevention policy를 별도 검증한 뒤에만 고려합니다.
 
 Native Agent는 exact `homeops.notifications=true`를 container별 `notificationsAllowed` boolean으로만 전달합니다. 이 capability는 `homeops.managed`와 `homeops.logs`에서 독립적이고 old/rollback Agent가 field를 생략하면 false입니다. Backend는 public inventory/detail에 이를 노출하지 않고 fresh current snapshot winner에서만 bounded Docker episode state와 typed outbox intent를 갱신합니다. Source와 production acceptance 완료는 future service label opt-in, Agent rollout 또는 Discord enable 권한이 아니므로 이후 변경도 별도 production gate를 요구합니다.
 
