@@ -21,7 +21,6 @@ flowchart LR
     actions["GitHub Actions"] -->|"ARM64 digest-pinned image"| ghcr["GHCR"]
     actions -->|"Tailscale + 강제 SSH 명령"| bootstrap["고정 배포 bootstrap"]
     bootstrap --> docker
-    kuma["Uptime Kuma"] -.->|"독립 가용성 점검"| serve
 ```
 
 API와 데이터베이스에는 Docker socket을 절대 제공하지 않습니다. 이를 접근할 수 있는 것은 native Agent뿐입니다. Agent는 inbound listener가 없고 generic command, Docker path/query나 shell fragment를 받지 않습니다. Container Logs work는 fixed DTO의 12자리 short ID, allowlisted tail과 absolute expiry만 전달하며, Agent가 live full ID와 exact opt-in을 다시 검증한 뒤 고정 Docker API를 호출합니다. Control work도 server UUID, 12자리 ID, exact project, `START|STOP|RESTART`, absolute expiry만 전달하며 arbitrary Docker input을 포함하지 않습니다.
@@ -67,7 +66,7 @@ HomeOps는 전용 PostgreSQL instance와 volume을 사용하며 다른 프로젝
 
 현재 배포는 API replica 하나와 in-process service-check scheduler 하나를 지원합니다. Notification outbox claim은 `FOR UPDATE SKIP LOCKED`와 lease-token compare-and-set으로 multi-process safety를 유지합니다. Deployment와 backup producer는 실제 ingestion insert 또는 terminal transition winner만 같은 transaction에서 outbox에 연결합니다. Incident producer도 actual OPEN/RESOLVE winner와 qualifying long-running DOWN observation을 같은 transaction에서 연결합니다. Agent lifecycle producer는 persisted expected `agent_status` 행을 freshness checker와 snapshot acceptance의 공통 lock authority로 사용해 stale root와 actual current winner의 recovery/version intent를 직렬화합니다. Docker producer도 같은 `agent_status` lock 뒤 current-state row를 잠그며 fresh·strictly-newer winner만 baseline/failure/recovery authority로 사용합니다. Logical identity는 bounded project/name hash, instance는 full Docker ID의 one-way fingerprint로만 저장하고 notification payload에는 logical display name·optional project·bounded state/health/lifecycle/duration만 사용합니다. Missing container state는 삭제하고 notification audit row는 보존합니다. Incident 생성에는 서비스별 `OPEN` 또는 `ACKNOWLEDGED` incident의 PostgreSQL partial unique index가 있어 동시 caller가 경쟁하더라도 활성 incident는 최대 하나라는 불변식을 데이터베이스가 강제합니다.
 
-`monitored_service.notification_enabled`는 HomeOps Discord incident producer의 service별 eligibility authority입니다. DB default와 legacy row migration은 `false`이며 existing service는 ADMIN + CSRF boolean-only operation으로만 opt-in/out합니다. Check transaction은 health-result/incident write 전에 service row를 잠그고 event 시점의 authoritative 값을 사용합니다. Authority 변경은 outbox insert, current/open incident 또는 historical health-result replay를 수행하지 않고 Uptime Kuma 설정이나 global notification kill switch도 바꾸지 않습니다.
+`monitored_service.notification_enabled`는 HomeOps Discord incident producer의 service별 eligibility authority입니다. DB default와 legacy row migration은 `false`이며 existing service는 ADMIN + CSRF boolean-only operation으로만 opt-in/out합니다. Check transaction은 health-result/incident write 전에 service row를 잠그고 event 시점의 authoritative 값을 사용합니다. Authority 변경은 outbox insert, current/open incident 또는 historical health-result replay를 수행하지 않고 global notification kill switch도 바꾸지 않습니다.
 
 기본 metric policy는 1분 aggregate를 30일간, Agent 하나 기준 약 43,200행 보관하고 daily transaction에서 그보다 오래된 aggregate만 삭제합니다. 정상 service-check 결과는 기본 7일, 실패는 30일 보관합니다. Agent Activity record는 5초마다가 아니라 첫 연결 또는 version 변경 때만 기록합니다. schema에는 notification attempt, public control audit, settings, Spring session용 normalized table이 있습니다. Control audit는 principal을 durable idempotency 비교에만 보존하고 Activity에는 operation UUID, deterministic title/status/severity, requested timestamp와 12자리 public container ID만 투영합니다. Image, raw failure, private metadata, confirmation과 reason code는 Activity에 노출하지 않습니다. JSONB는 보조 metadata로 제한하며 검색할 state와 identity field는 일반 column으로 유지합니다.
 
@@ -83,11 +82,21 @@ HomeOps는 container log, Docker inspect document, `.env` 내용, credential, we
 
 Notification delivery path는 domain transaction에서 typed intent만 insert하고 Discord HTTP를 수행하지 않습니다. Deployment와 backup producer는 source row UUID와 bounded lifecycle event를 deduplication identity로 사용합니다. Deployment payload는 project·environment·12자리 commit·status, backup payload는 project·database type·status만 투영하며 backup logical location, failure, expiry와 restore metadata는 저장하지 않습니다. Incident producer는 persisted incident UUID와 OPEN/escalation/recovery event를 deduplication identity로 사용하고 logical service name·severity·lifecycle status·bounded duration만 투영합니다. Agent producer는 persisted last snapshot UUID를 stale episode identity로 사용하고 logical Agent ID·bounded version·lifecycle status·bounded duration만 투영합니다. Stale recovery는 같은 episode의 root가 `SENT`인 경우에만 그 notification ID를 parent로 사용하며, missing·pending·failed·unknown·suppressed root에는 orphan child를 만들지 않습니다. Worker는 짧은 claim transaction을 commit한 뒤 DB transaction 밖에서 한 건씩 전송하며, 별도 transaction이 lease token을 조건으로 결과를 기록합니다. Deterministic producer dedup은 intent 중복을 막지만 Discord end-to-end exactly-once를 보장하지 않습니다. 명확한 408, 429, 5xx 또는 전송 전 connect failure만 bounded retry하고, remote 처리 여부가 모호한 timeout·응답은 `DELIVERY_UNKNOWN`으로 종료해 자동 재전송하지 않습니다. Disabled kill switch에서는 새 intent와 due intent를 `SUPPRESSED`로 종료해 이후 enable 시 historical replay가 발생하지 않습니다.
 
-## Uptime Kuma 역할
+## HomeOps 단일 관제 역할
 
-Uptime Kuma는 독립적인 가용성 monitor로 유지하며 외부 HTTP/Tailnet reachability와 기존 email path를 담당합니다. HomeOps는 실제 Mac metric, Docker inventory, deployment, backup-result metadata와 persisted exact-origin incident를 소유합니다. Discord incident producer는 `notification_enabled=true`인 service의 future OPEN/long-running escalation/recovery transition만 대상으로 하므로 같은 flag를 Uptime Kuma email/reachability authority로 해석하지 않습니다.
+HomeOps는 current repository에서 유일한 중앙 관제·알림 authority입니다. Raw observation을 항상 Backend가 직접 수집한다는 뜻은 아닙니다. 각 프로젝트는 표준 health endpoint와 privacy-safe status script 또는 typed reporter만 제공하고, HomeOps가 최종 상태 해석, incident lifecycle, Activity projection과 alert delivery를 소유합니다.
 
-HomeOps는 비공식 Uptime Kuma API에 의존하지 않습니다. 두 서비스가 같은 Mac에서 실행되면 어느 쪽도 해당 Mac의 완전한 host outage를 보고할 수 없습니다. 외부 heartbeat는 선택 사항이며 비용, metadata 공개, 새 dependency를 유발하므로 이 repository에서는 활성화하지 않습니다.
+| 관제 영역 | 입력 경계 | HomeOps가 소유하는 상태 |
+|---|---|---|
+| Public synthetic | allowlisted exact-origin HTTPS status check와 privacy-safe keyword 결과. CSRF/token 발급 endpoint는 probe로 사용하지 않음 | service status, failure/recovery incident |
+| Project/container health | 표준 project health endpoint와 fresh Agent container snapshot | project availability, container state/health episode |
+| Mac/resource | bounded Agent metric과 승인된 typed status report | CPU·memory·load, disk·inode·volume, 최소 PostgreSQL metric의 current/episode 상태 |
+| Release/backup | bounded spool과 HMAC reporter가 전달하는 deployment·publisher·outbox, local/offsite backup·restore drill evidence | lifecycle, deduplication, incident와 Activity |
+| Alert/summary | typed outbox intent와 별도 activation gate | Discord alert와 daily summary delivery 상태 |
+
+Built-in service checker는 현재 expected HTTP status만 확인하고 native Agent도 현재 구현한 bounded metric만 수집합니다. Keyword, load, inode/volume, PostgreSQL metric 또는 daily summary에 필요한 typed contract가 없으면 기존 signal type으로 의미를 바꾸어 제출하지 않고 unavailable로 남깁니다. 새 producer, payload, scheduler 또는 delivery activation은 별도 Issue와 production gate가 필요합니다.
+
+HomeOps와 대상 서비스가 같은 Mac에서 실행되므로 전체 전원·회선·Docker 장애에서는 HomeOps 자체도 보고할 수 없습니다. 초기 개인 프로젝트 운영은 이 same-host blind spot을 명시적으로 수용하며 외부 heartbeat 또는 별도 availability/dashboard stack을 도입하지 않습니다.
 
 ## 실패 동작
 

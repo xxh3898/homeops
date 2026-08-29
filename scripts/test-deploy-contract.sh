@@ -7,6 +7,7 @@ readonly REPOSITORY_ROOT="$(cd "${SCRIPT_DIR}/.." && /bin/pwd -P)"
 readonly VALIDATE_WORKFLOW="${REPOSITORY_ROOT}/.github/workflows/validate.yml"
 readonly DEPLOY_WORKFLOW="${REPOSITORY_ROOT}/.github/workflows/deploy.yml"
 readonly AGENT_RELEASE_CLASSIFIER="${REPOSITORY_ROOT}/scripts/classify-agent-release-paths.sh"
+readonly OBSERVABILITY_CONTRACT="${REPOSITORY_ROOT}/scripts/test-homeops-observability-contract.sh"
 readonly BOOTSTRAP="${REPOSITORY_ROOT}/deploy/bootstrap/deploy-homeops-ci.sh.example"
 readonly WORKER="${REPOSITORY_ROOT}/deploy/scripts/deploy-homeops.sh"
 readonly ORIGIN_VALIDATOR="${REPOSITORY_ROOT}/deploy/scripts/validate-https-origin.sh"
@@ -149,6 +150,8 @@ for left, right, purpose in (
     exit 1
   fi
 }
+
+/bin/bash "${OBSERVABILITY_CONTRACT}"
 
 assert_contains "${VALIDATE_WORKFLOW}" 'value: ${{ jobs.changes.outputs.agent_release }}'
 assert_contains "${VALIDATE_WORKFLOW}" 'HEAD_SHA: ${{ github.sha }}'
