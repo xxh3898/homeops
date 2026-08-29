@@ -33,8 +33,8 @@
 | 위조 deploy request | 낮음 | 매우 높음 | Tailscale OIDC, 별도 CI key, forced command grammar, 정확한 SHA/digest, stdin의 GHCR token | 침해된 GitHub production secret이 승인된 package name을 배포할 수 있음 |
 | 위조 history ingestion | 낮음 | 높음 | bounded body·timestamp HMAC-SHA-256, fail-closed secret configuration, event key idempotency 및 state transition | 전용 ingestion secret을 가진 caller는 rotate 전까지 false history를 제출할 수 있음 |
 | 반복 restart API | 낮음/중간 | 높음 | canonical idempotency, new-key principal rate limit, global active 1, durable audit, CSRF/Origin, exact confirmation | production allowlist/managed opt-in과 UI가 활성화되기 전 별도 acceptance 필요 |
-| HomeOps outage | 중간 | 중간 | Kuma 독립 유지, stale UI, health check | HomeOps가 다운되면 스스로 alert할 수 없음 |
-| 전체 Mac outage | 중간 | 높음 | optional external heartbeat | 같은 host의 component는 전체 power/network loss를 보고할 수 없음 |
+| HomeOps outage | 중간 | 중간 | health/readiness endpoint, stale UI, 명시적 운영 확인 | HomeOps가 다운되면 스스로 alert할 수 없음 |
+| 전체 Mac outage | 중간 | 높음 | same-host blind spot의 명시적 수용, 외부 heartbeat 미도입 | 같은 host의 component는 전체 power/network loss를 보고할 수 없음 |
 | Discord webhook 유출 또는 arbitrary outbound | 낮음/중간 | 높음 | Secret은 environment에만 유지, official HTTPS host/path allowlist, no redirect/query/userinfo/custom port, disabled-by-default kill switch | API process 또는 host account 침해 시 in-memory credential과 outbound capability가 노출될 수 있음 |
 
 ## Docker API 경계
@@ -75,7 +75,7 @@ Deployment와 backup producer는 신뢰하는 HMAC ingestion의 실제 insert �
 
 Docker notification capability는 Agent가 list response의 exact `homeops.notifications=true`만 boolean으로 축소해 내부 snapshot에 전달합니다. Raw label map, inspect document, environment, mount/network/path는 Backend, public container API, DB 또는 log에 전달하지 않습니다. 이 boolean은 managed/control 및 logs disclosure authority와 독립적이며 public inventory/detail 응답에도 노출하지 않습니다. Backend current state는 bounded project/name logical hash와 full Docker ID의 one-way instance fingerprint만 사용합니다. Discord payload에는 logical display name, optional project, bounded state/health/lifecycle/duration만 허용하며 Docker ID/fingerprint, image/registry, raw status, label, port, metric 또는 private host metadata를 넣지 않습니다. Duplicate/out-of-order/equal/stale snapshot, missing container, recreate와 authority revoke는 notification recovery authority가 아닙니다. Production acceptance 완료는 future container opt-in이나 outbound enable 권한을 만들지 않습니다.
 
-Agent freshness notification은 HomeOps API가 살아 있는 동안 native Agent 또는 snapshot pipeline이 stale해지는 내부 신호입니다. API와 Agent가 같은 Mac에서 실행되므로 Mac 전체 outage나 외부 reachability를 보장하지 않으며, 해당 경계는 Uptime Kuma가 계속 소유합니다.
+Agent freshness notification은 HomeOps API가 살아 있는 동안 native Agent 또는 snapshot pipeline이 stale해지는 내부 신호입니다. API와 Agent가 같은 Mac에서 실행되므로 Mac 전체 outage나 외부 reachability를 보장하지 않습니다. 이 same-host blind spot은 초기 개인 프로젝트 운영의 accepted residual risk이며 외부 heartbeat를 추가하지 않습니다.
 
 `HOMEOPS_NOTIFICATIONS_ENABLED=false`에서는 webhook이 없어도 application이 시작하고 outbound를 수행하지 않습니다. 반대로 enabled 상태에서 missing/invalid webhook은 startup을 fail closed합니다. Production acceptance에서 typed representative payload와 channel visibility를 검토했고 webhook Secret은 값 비노출 상태로 설치했지만, 종료 뒤 switch를 다시 `false`로 두었습니다. Regex와 allowlist는 credential-free delivery를 보장하지 않으므로 새 producer, payload field 또는 channel 변경에는 별도 privacy review가 필요합니다.
 

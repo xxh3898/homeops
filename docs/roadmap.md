@@ -32,7 +32,7 @@
 
 | 항목 | 범위 | 완료 근거 |
 |---|---|---|
-| Host metric 정렬 | 선택한 macOS/Netdata 의미에 맞춰 memory usage를 일관되게 정의하고 CPU sampling 및 memory-pressure context를 유지 | Agent regression test 및 동일 시점 macOS/Netdata 비교 |
+| Host metric 정렬 | 선택한 macOS 의미에 맞춰 memory usage를 일관되게 정의하고 CPU sampling 및 memory-pressure context를 유지 | Agent regression test 및 bounded macOS source 비교 |
 | Project container group | mobile 친화적이고 접근 가능한 accordion과 명확한 aggregate health로 Docker Compose project별 inventory group화 | Frontend regression test, 여러 Compose project가 있는 iPhone visual check |
 | Metric history | `1h`/`6h`/`24h`/`7d`로 제한한 UTC aggregate API와 missing bucket을 보존하는 mobile history UI | PostgreSQL weighted/last-value integration test, API bound/auth test, frontend gap/stale/accessibility regression |
 | Container detail | 최신 Agent snapshot 안에서 12자리 identifier를 fail-closed resolve하고 freshness를 보존하는 mobile 읽기 전용 detail 제공 | Full-ID collision 및 auth/no-store Backend test, terminal cache와 mobile/accessibility Frontend test, Tailnet production detail acceptance |
@@ -80,7 +80,7 @@ Phase 3 완료 뒤 `DISK_LOW`, `HTTP_5XX_BURST`의 bounded monitoring episode in
 
 [ADR-001](adr/ADR-001-operational-history-retention-and-deletion-safety.md)에서 장기 운영 이력 보존·삭제 safety policy와 source별 current operating decision을 확정했습니다. Production aggregate evidence에서 destructive cleanup benefit과 duration 근거가 입증되지 않아 deployment, backup과 Agent event는 `KEEP_UNBOUNDED`이고 deletion runtime은 구현하지 않습니다. Incident는 lifecycle·notification dependency Decision 전까지 finite candidate가 아니며 privileged container control audit도 별도 Security/Audit Decision 범위입니다. Future finite source는 server-owned `recorded_at`, first-page cursor `snapshotAt`에 고정한 logical cutoff, accepted cursor invalidation과 active/nonterminal fail-closed ordering을 모두 충족해야 합니다. V12 event-key ledger cleanup은 disabled이고 정상/비정상 service-check result와 다른 existing bounded data의 retention semantics도 그대로 유지합니다. 이 결정은 Phase 3/5 COMPLETE 상태를 변경하지 않습니다.
 
-**포함하지 않음:** Uptime Kuma internal API dependency 또는 독립 reachability 역할의 대체.
+**포함하지 않음:** 임의 network client, 별도 availability/dashboard dependency 또는 외부 heartbeat activation.
 
 ## Phase 4: 알림
 
@@ -94,10 +94,10 @@ Production acceptance에서는 disabled baseline의 outbound zero와 no-replay, 
 
 - Agent, Docker, deployment, backup-result, incident event용 Discord delivery
 - Deduplication key, cooldown, 장기 failure escalation, recovery notification, delivery-failure record
-- 문서화한 ownership matrix: Uptime Kuma는 외부 HTTP availability와 email path를 유지하고 HomeOps는 내부 운영 event를 담당
-- Uptime Kuma email과 HomeOps Discord의 owner 및 duplicate-prevention policy를 분리하고 optional email escalation은 현재 범위에서 제외
+- 문서화한 single-authority matrix: public/project/resource/release/backup 상태와 alert lifecycle은 HomeOps incident·Activity로 수렴하고 각 project는 privacy-safe producer 역할만 담당
+- HomeOps incident/outbox 안에서 owner와 duplicate-prevention policy를 일원화하고 추가 delivery channel은 현재 범위에서 제외
 
-**완료 근거:** migration·outbox lease/CAS·bounded transport·retry/unknown·privacy·producer lifecycle·dedup/cooldown/recovery automated regression과 disabled/no-replay production baseline, representative Docker failure/recovery 및 deployment/backup Discord delivery, Uptime Kuma/HomeOps ownership 분리, final disable 뒤 suppressed/no-backlog acceptance.
+**완료 근거:** migration·outbox lease/CAS·bounded transport·retry/unknown·privacy·producer lifecycle·dedup/cooldown/recovery automated regression과 disabled/no-replay production baseline, representative Docker failure/recovery 및 deployment/backup Discord delivery, HomeOps single-authority 문서 계약, final disable 뒤 suppressed/no-backlog acceptance.
 
 ## Phase 5: 제한된 컨테이너 제어
 

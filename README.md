@@ -4,6 +4,8 @@ HomeOps는 Docker Desktop을 실행하는 Apple Silicon Mac용 모바일 우선 
 
 소스는 공개되어 있지만 지원하는 배포 경계는 비공개입니다. 한 명의 관리자가 Tailscale Serve를 통해 PWA에 접근하는 구조이며, HomeOps를 인터넷에 직접 공개해서는 안 됩니다.
 
+현재 repository에서 HomeOps는 유일한 중앙 관제·알림 authority입니다. 각 프로젝트는 표준 health endpoint와 privacy-safe status script 또는 typed report만 제공하고, public HTTPS·keyword synthetic 결과, project/container health, Mac/resource signal, deployment·publisher·outbox, backup·restore drill evidence와 Discord alert·daily summary 상태는 HomeOps의 incident와 Activity로 수렴해야 합니다. 이 ownership contract가 아직 구현되지 않은 signal이나 disabled delivery를 활성 상태로 만든다는 뜻은 아닙니다. HomeOps와 대상 서비스가 같은 Mac에 있는 동안 전체 전원·회선·Docker 장애를 스스로 보고하지 못하는 사각지대는 명시적으로 수용하며 외부 heartbeat를 추가하지 않습니다.
+
 ## 상태
 
 HomeOps는 정식 출시 전 소프트웨어입니다. 현재 production에서는 읽기 전용 호스트 메트릭과 컨테이너 인벤토리, HMAC 인증 배포·백업·bounded signal 수집, 허용 목록 기반 HTTP 서비스 점검과 인시던트 이력, 페이지네이션을 적용한 모바일 활동 타임라인, opt-in Discord 알림 capability가 활성화되어 있습니다. `DISK_LOW`와 `HTTP_5XX_BURST`의 typed `ALERT → RECOVERED` episode ingestion은 Flyway V13과 installed reporter를 포함한 production acceptance를 완료했습니다. 새 설치에서 secret 또는 정확한 origin 허용 목록이 비어 있으면 해당 입력은 계속 fail closed합니다.
