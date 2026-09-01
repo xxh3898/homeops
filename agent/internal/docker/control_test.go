@@ -204,6 +204,30 @@ func TestControlContainerRevalidatesExactLabelsServiceAndMounts(t *testing.T) {
 	}
 }
 
+func TestControlContainerKeepsRhaomiBackendWritableMountDenied(t *testing.T) {
+	t.Parallel()
+	inspect := controlInspectFixture(
+		`"homeops.managed":"true","com.docker.compose.project":"rhaomi","com.docker.compose.service":"backend"`,
+		`[{"Type":"bind","RW":true,"Source":"must-not-leak"}]`)
+	client := controlClientWithInspect(t, inspect, func(*http.Request) (*http.Response, error) {
+		t.Fatal("Rhaomi backend writable mount reached generic Docker mutation")
+		return nil, nil
+	})
+
+	outcome := client.ControlContainer(
+		context.Background(),
+		"0123456789ab",
+		"rhaomi",
+		containercontrol.OperationRestart,
+		128,
+		dockerControlTestNow.Add(15*time.Second))
+
+	if outcome.Status != containercontrol.StatusDenied ||
+		outcome.ReasonCode != containercontrol.ReasonWritableMount {
+		t.Fatalf("outcome = %#v", outcome)
+	}
+}
+
 func TestControlContainerHardDeniesExactProtectedServices(t *testing.T) {
 	t.Parallel()
 	services := []string{"db", "database", "mysql", "postgres", "postgresql", "mariadb", "redis"}

@@ -131,6 +131,50 @@ class AgentSnapshotServiceTest {
     }
 
     @Test
+    void should_authorizeRhaomiRecovery_when_capabilitySnapshotIsFresh() {
+        AgentSnapshotRequest fixture = AgentSnapshotFixtures.snapshot(
+                UUID.fromString("10000000-0000-0000-0000-000000000031"),
+                NOW.minusSeconds(2));
+        AgentSnapshotRequest request = new AgentSnapshotRequest(
+                fixture.snapshotId(),
+                fixture.agentId(),
+                fixture.agentVersion(),
+                fixture.capturedAt(),
+                fixture.supportsContainerLogs(),
+                true,
+                fixture.host(),
+                fixture.containers());
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any()))
+                .thenReturn(Optional.empty());
+
+        service.accept(request);
+
+        assertThat(service.hasFreshRhaomiRecoveryCapability()).isTrue();
+    }
+
+    @Test
+    void should_denyRhaomiRecovery_when_capabilitySnapshotIsStale() {
+        AgentSnapshotRequest staleFixture = AgentSnapshotFixtures.snapshot(
+                UUID.fromString("10000000-0000-0000-0000-000000000032"),
+                NOW.minusSeconds(31));
+        AgentSnapshotRequest stale = new AgentSnapshotRequest(
+                staleFixture.snapshotId(),
+                staleFixture.agentId(),
+                staleFixture.agentVersion(),
+                staleFixture.capturedAt(),
+                staleFixture.supportsContainerLogs(),
+                true,
+                staleFixture.host(),
+                staleFixture.containers());
+        when(metricRepository.findByAgentIdAndBucketStart(any(), any()))
+                .thenReturn(Optional.empty());
+
+        service.accept(stale);
+
+        assertThat(service.hasFreshRhaomiRecoveryCapability()).isFalse();
+    }
+
+    @Test
     void should_returnDuplicateWithoutNewMetric_when_snapshotWasProcessed() {
         UUID snapshotId = UUID.fromString(
                 "10000000-0000-0000-0000-000000000002");

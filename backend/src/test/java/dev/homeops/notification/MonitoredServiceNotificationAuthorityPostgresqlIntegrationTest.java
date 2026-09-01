@@ -42,17 +42,19 @@ class MonitoredServiceNotificationAuthorityPostgresqlIntegrationTest {
     }
 
     @Test
-    void should_migrateFromV1ToV13AndResetLegacyAuthority_when_existingRowUsesTrueDefault() {
+    void should_migrateFromV1ToV14AndResetLegacyAuthority_when_existingRowUsesTrueDefault() {
         database.migrateTo("1");
         UUID serviceId = insertServiceWithoutNotificationAuthority("legacy-v1");
         assertThat(authority(serviceId)).isTrue();
 
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("14");
         assertThat(flyway.info().applied())
                 .extracting(migration -> migration.getVersion().getVersion())
-                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13");
+                .containsExactly(
+                        "1", "2", "3", "4", "5", "6", "7",
+                        "8", "9", "10", "11", "12", "13", "14");
         assertThat(jdbc.queryForObject(
                 "SELECT count(*) FROM monitored_service WHERE id = ? AND name = 'legacy-v1'",
                 Integer.class, serviceId)).isEqualTo(1);

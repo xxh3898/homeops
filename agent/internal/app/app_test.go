@@ -15,6 +15,7 @@ import (
 	"github.com/xxh3898/homeops/agent/internal/config"
 	"github.com/xxh3898/homeops/agent/internal/containercontrol"
 	"github.com/xxh3898/homeops/agent/internal/containerlog"
+	"github.com/xxh3898/homeops/agent/internal/recovery"
 	"github.com/xxh3898/homeops/agent/internal/snapshot"
 	spoolpkg "github.com/xxh3898/homeops/agent/internal/spool"
 	"github.com/xxh3898/homeops/agent/internal/transport"
@@ -140,7 +141,7 @@ func TestCollectAndSendContinuesAfterPermanentRejectionsAreQuarantined(
 	}
 }
 
-func TestCollectAndSendAdvertisesContainerLogCapability(t *testing.T) {
+func TestCollectAndSendAdvertisesConfiguredAgentCapabilities(t *testing.T) {
 	t.Parallel()
 	snapshotTransport := &recordingTransport{}
 	docker := &recordingDockerCollector{containers: []snapshot.Container{{
@@ -152,12 +153,14 @@ func TestCollectAndSendAdvertisesContainerLogCapability(t *testing.T) {
 			AgentID:       "local-mac",
 			MaxContainers: 128,
 		},
-		version:   "1111111111111111111111111111111111111111",
-		host:      &recordingHostCollector{},
-		docker:    docker,
-		transport: snapshotTransport,
-		spool:     &recordingSpool{},
-		logger:    discardLogger(),
+		version:           "1111111111111111111111111111111111111111",
+		host:              &recordingHostCollector{},
+		docker:            docker,
+		transport:         snapshotTransport,
+		spool:             &recordingSpool{},
+		logger:            discardLogger(),
+		recoveryExecutor:  &recordingRecoveryExecutor{},
+		recoveryTransport: &recordingRecoveryTransport{},
 	}
 
 	if err := application.collectAndSend(context.Background()); err != nil {
@@ -169,6 +172,9 @@ func TestCollectAndSendAdvertisesContainerLogCapability(t *testing.T) {
 	}
 	if !captured.SupportsContainerLogs {
 		t.Fatal("supportsContainerLogs = false, want true")
+	}
+	if !captured.SupportsRhaomiRecovery {
+		t.Fatal("supportsRhaomiRecovery = false, want true")
 	}
 	if len(captured.Containers) != 1 || !captured.Containers[0].NotificationsAllowed {
 		t.Fatalf("containers = %#v, want bounded notification capability", captured.Containers)
@@ -729,6 +735,69 @@ func TestControlResultDeliveryRetryNeverReexecutesDockerOperation(t *testing.T) 
 	}
 }
 
+func TestRecoveryResultDeliveryRetryNeverReexecutesCapability(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	clock := &mutableTime{value: now}
+	executor := &recordingRecoveryExecutor{result: successfulRecoveryResult(now)}
+	recoveryTransport := &recordingRecoveryTransport{
+		sendErrors: []error{errors.New("network unavailable"), nil},
+	}
+	application := recoveryRetryTestApp(clock, recoveryTransport)
+	application.recoveryExecutor = executor
+	work := validRecoveryWork(now.Add(10 * time.Second))
+
+	result := application.recoveryExecutor.Execute(
+		context.Background(), work, application.currentTime())
+	delivery := application.deliverAutomaticRecoveryResult(
+		context.Background(), &result, work.ExpiresAt)
+
+	if delivery != resultDeliveryCompleted || executor.calls != 1 ||
+		recoveryTransport.sendCalls != 2 {
+		t.Fatalf("delivery/executor/send = %d/%d/%d",
+			delivery, executor.calls, recoveryTransport.sendCalls)
+	}
+	assertRecoveryResultReleased(t, result)
+}
+
+func TestDeliverAutomaticRecoveryResultDoesNotRetryGoneOrTerminalFailure(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{400, 410, 422} {
+		status := status
+		t.Run(fmt.Sprintf("status-%d", status), func(t *testing.T) {
+			t.Parallel()
+			clock := &mutableTime{value: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)}
+			recoveryTransport := &recordingRecoveryTransport{
+				sendError: transport.StatusError{StatusCode: status},
+			}
+			application := recoveryRetryTestApp(clock, recoveryTransport)
+			result := successfulRecoveryResult(clock.value)
+
+			delivery := application.deliverAutomaticRecoveryResult(
+				context.Background(),
+				&result,
+				clock.value.Add(10*time.Second))
+
+			if delivery != resultDeliveryCompleted || recoveryTransport.sendCalls != 1 {
+				t.Fatalf("delivery/calls = %d/%d", delivery, recoveryTransport.sendCalls)
+			}
+			assertRecoveryResultReleased(t, result)
+		})
+	}
+}
+
+func TestAutomaticRecoveryBackoffClassifiesOldAPIAsUnsupported(t *testing.T) {
+	t.Parallel()
+	if delay := automaticRecoveryBackoff(
+		transport.StatusError{StatusCode: 404}); delay != unsupportedRecoveryAPIDelay {
+		t.Fatalf("404 backoff = %s, want %s", delay, unsupportedRecoveryAPIDelay)
+	}
+	if delay := automaticRecoveryBackoff(
+		errors.New("network")); delay != transientRecoveryErrorDelay {
+		t.Fatalf("network backoff = %s, want %s", delay, transientRecoveryErrorDelay)
+	}
+}
+
 func TestPostSendUnknownResultIsDeliveredWithinGraceWithoutReexecution(t *testing.T) {
 	t.Parallel()
 	clock := &mutableTime{value: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)}
@@ -874,6 +943,53 @@ type recordingControlTransport struct {
 	lastResult containercontrol.Result
 }
 
+type recordingRecoveryExecutor struct {
+	result recovery.Result
+	calls  int
+}
+
+func (executor *recordingRecoveryExecutor) Execute(
+	_ context.Context,
+	_ recovery.Work,
+	_ time.Time,
+) recovery.Result {
+	executor.calls++
+	return executor.result
+}
+
+type recordingRecoveryTransport struct {
+	nextCalls  int
+	nextError  error
+	nextWork   *recovery.Work
+	sendCalls  int
+	sendError  error
+	sendErrors []error
+	lastResult recovery.Result
+}
+
+func (transport *recordingRecoveryTransport) NextAutomaticRecoveryWork(
+	context.Context,
+) (*recovery.Work, error) {
+	transport.nextCalls++
+	work := transport.nextWork
+	transport.nextWork = nil
+	return work, transport.nextError
+}
+
+func (transport *recordingRecoveryTransport) SendAutomaticRecoveryResult(
+	_ context.Context,
+	result recovery.Result,
+) error {
+	transport.sendCalls++
+	transport.lastResult = result
+	if len(transport.sendErrors) > 0 {
+		err := transport.sendErrors[0]
+		transport.sendErrors = transport.sendErrors[1:]
+		return err
+	}
+	return transport.sendError
+}
+
 func (controlTransport *recordingControlTransport) NextContainerControlWork(
 	context.Context,
 ) (*containercontrol.Work, error) {
@@ -981,6 +1097,23 @@ func controlRetryTestApp(
 	}
 }
 
+func recoveryRetryTestApp(
+	clock *mutableTime,
+	recoveryTransport *recordingRecoveryTransport,
+) *App {
+	return &App{
+		recoveryTransport: recoveryTransport,
+		now:               func() time.Time { return clock.value },
+		wait: func(ctx context.Context, delay time.Duration) bool {
+			if ctx.Err() != nil {
+				return false
+			}
+			clock.value = clock.value.Add(delay)
+			return true
+		},
+	}
+}
+
 func validControlWork(expiresAt time.Time) containercontrol.Work {
 	return containercontrol.Work{
 		RequestID:      "10000000-0000-4000-8000-000000000001",
@@ -997,6 +1130,38 @@ func successfulControlResult(finishedAt time.Time) containercontrol.Result {
 		Status:    containercontrol.StatusApplied,
 		Reason:    containercontrol.ReasonApplied,
 		Finished:  finishedAt,
+	}
+}
+
+func validRecoveryWork(expiresAt time.Time) recovery.Work {
+	return recovery.Work{
+		RequestID: "10000000-0000-4000-8000-000000000119",
+		Project:   recovery.ProjectRhaomi,
+		Target:    recovery.TargetBackend,
+		Action:    recovery.ActionRestart,
+		ExpiresAt: expiresAt,
+	}
+}
+
+func successfulRecoveryResult(finishedAt time.Time) recovery.Result {
+	return recovery.Result{
+		RequestID:    "10000000-0000-4000-8000-000000000119",
+		Status:       recovery.StatusApplied,
+		ReasonCode:   recovery.ReasonRecoveryApplied,
+		StartedAt:    finishedAt.Add(-time.Second),
+		FinishedAt:   finishedAt,
+		PreHealth:    recovery.HealthDown,
+		PostHealth:   recovery.HealthUp,
+		RestartCount: 1,
+	}
+}
+
+func assertRecoveryResultReleased(t *testing.T, result recovery.Result) {
+	t.Helper()
+	if result.RequestID != "" || result.Status != "" || result.ReasonCode != "" ||
+		!result.StartedAt.IsZero() || !result.FinishedAt.IsZero() ||
+		result.PreHealth != "" || result.PostHealth != "" || result.RestartCount != 0 {
+		t.Fatalf("recovery result payload reference was retained: %#v", result)
 	}
 }
 

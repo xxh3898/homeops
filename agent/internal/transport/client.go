@@ -16,28 +16,35 @@ import (
 
 	"github.com/xxh3898/homeops/agent/internal/containercontrol"
 	"github.com/xxh3898/homeops/agent/internal/containerlog"
+	"github.com/xxh3898/homeops/agent/internal/recovery"
 )
 
 type Client struct {
-	snapshotEndpoint      string
-	logWorkEndpoint       string
-	logResultEndpoint     string
-	controlWorkEndpoint   string
-	controlResultEndpoint string
-	httpClient            *http.Client
-	now                   func() time.Time
+	snapshotEndpoint       string
+	logWorkEndpoint        string
+	logResultEndpoint      string
+	controlWorkEndpoint    string
+	controlResultEndpoint  string
+	recoveryWorkEndpoint   string
+	recoveryResultEndpoint string
+	httpClient             *http.Client
+	now                    func() time.Time
 }
 
 const (
-	snapshotPath                     = "/api/v1/internal/agent/snapshots"
-	logWorkPath                      = "/api/v1/internal/agent/log-requests/next"
-	logResultPath                    = "/api/v1/internal/agent/log-results"
-	controlWorkPath                  = "/api/v1/internal/agent/control-requests/next"
-	controlResultPath                = "/api/v1/internal/agent/control-results"
-	maximumWorkResponseBytes         = 16 * 1024
-	maximumResultPayloadBytes        = 192 * 1024
-	maximumControlWorkResponseBytes  = 16 * 1024
-	maximumControlResultPayloadBytes = 4 * 1024
+	snapshotPath                      = "/api/v1/internal/agent/snapshots"
+	logWorkPath                       = "/api/v1/internal/agent/log-requests/next"
+	logResultPath                     = "/api/v1/internal/agent/log-results"
+	controlWorkPath                   = "/api/v1/internal/agent/control-requests/next"
+	controlResultPath                 = "/api/v1/internal/agent/control-results"
+	recoveryWorkPath                  = "/api/v1/internal/agent/recovery-requests/next"
+	recoveryResultPath                = "/api/v1/internal/agent/recovery-results"
+	maximumWorkResponseBytes          = 16 * 1024
+	maximumResultPayloadBytes         = 192 * 1024
+	maximumControlWorkResponseBytes   = 16 * 1024
+	maximumControlResultPayloadBytes  = 4 * 1024
+	maximumRecoveryWorkResponseBytes  = 4 * 1024
+	maximumRecoveryResultPayloadBytes = 4 * 1024
 )
 
 func NewClient(
@@ -66,6 +73,11 @@ func NewClient(
 	if err != nil {
 		return nil, err
 	}
+	recoveryWorkEndpoint, recoveryResultEndpoint, err :=
+		deriveRecoveryEndpoints(endpoint)
+	if err != nil {
+		return nil, err
+	}
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			MinVersion:   tls.VersionTLS13,
@@ -77,11 +89,13 @@ func NewClient(
 		IdleConnTimeout:    30 * time.Second,
 	}
 	return &Client{
-		snapshotEndpoint:      snapshotEndpoint,
-		logWorkEndpoint:       logWorkEndpoint,
-		logResultEndpoint:     logResultEndpoint,
-		controlWorkEndpoint:   controlWorkEndpoint,
-		controlResultEndpoint: controlResultEndpoint,
+		snapshotEndpoint:       snapshotEndpoint,
+		logWorkEndpoint:        logWorkEndpoint,
+		logResultEndpoint:      logResultEndpoint,
+		controlWorkEndpoint:    controlWorkEndpoint,
+		controlResultEndpoint:  controlResultEndpoint,
+		recoveryWorkEndpoint:   recoveryWorkEndpoint,
+		recoveryResultEndpoint: recoveryResultEndpoint,
 		httpClient: &http.Client{
 			Transport: transport,
 			Timeout:   10 * time.Second,
@@ -284,11 +298,93 @@ func (client *Client) SendContainerControlResult(
 	return nil
 }
 
+func (client *Client) NextAutomaticRecoveryWork(
+	ctx context.Context,
+) (*recovery.Work, error) {
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		client.recoveryWorkEndpoint,
+		nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNoContent {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		return nil, nil
+	}
+	if response.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		return nil, StatusError{StatusCode: response.StatusCode}
+	}
+	payload, err := io.ReadAll(io.LimitReader(
+		response.Body,
+		maximumRecoveryWorkResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(payload) > maximumRecoveryWorkResponseBytes {
+		return nil, errors.New("automatic recovery work response is too large")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var work recovery.Work
+	if err := decoder.Decode(&work); err != nil {
+		return nil, errors.New("automatic recovery work response is invalid")
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return nil, errors.New("automatic recovery work response has trailing data")
+	}
+	if err := work.Validate(client.currentTime()); err != nil {
+		return nil, err
+	}
+	return &work, nil
+}
+
+func (client *Client) SendAutomaticRecoveryResult(
+	ctx context.Context,
+	result recovery.Result,
+) error {
+	if err := result.Validate(); err != nil {
+		return errors.New("automatic recovery result is invalid")
+	}
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return errors.New("encode automatic recovery result")
+	}
+	if len(payload) > maximumRecoveryResultPayloadBytes {
+		return errors.New("automatic recovery result is too large")
+	}
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		client.recoveryResultEndpoint,
+		bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+	if response.StatusCode != http.StatusNoContent {
+		return StatusError{StatusCode: response.StatusCode}
+	}
+	return nil
+}
+
 func deriveEndpoints(endpoint string) (string, string, string, string, string, error) {
-	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" ||
-		parsed.Path != snapshotPath || parsed.RawQuery != "" ||
-		parsed.Fragment != "" || parsed.User != nil {
+	parsed, err := parseSnapshotEndpoint(endpoint)
+	if err != nil {
 		return "", "", "", "", "", errors.New("Agent API endpoint is invalid")
 	}
 	withPath := func(path string) string {
@@ -303,6 +399,30 @@ func deriveEndpoints(endpoint string) (string, string, string, string, string, e
 		withPath(controlWorkPath),
 		withPath(controlResultPath),
 		nil
+}
+
+func deriveRecoveryEndpoints(endpoint string) (string, string, error) {
+	parsed, err := parseSnapshotEndpoint(endpoint)
+	if err != nil {
+		return "", "", errors.New("Agent API endpoint is invalid")
+	}
+	withPath := func(path string) string {
+		derived := *parsed
+		derived.Path = path
+		derived.RawPath = ""
+		return derived.String()
+	}
+	return withPath(recoveryWorkPath), withPath(recoveryResultPath), nil
+}
+
+func parseSnapshotEndpoint(endpoint string) (*url.URL, error) {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" ||
+		parsed.Path != snapshotPath || parsed.RawQuery != "" ||
+		parsed.Fragment != "" || parsed.User != nil {
+		return nil, errors.New("Agent API endpoint is invalid")
+	}
+	return parsed, nil
 }
 
 type StatusError struct {

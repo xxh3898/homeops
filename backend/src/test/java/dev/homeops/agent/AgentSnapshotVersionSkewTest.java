@@ -23,6 +23,7 @@ class AgentSnapshotVersionSkewTest {
         AgentSnapshotRequest request = mapper.readValue(oldAgentSnapshot(), AgentSnapshotRequest.class);
 
         assertThat(request.supportsContainerLogs()).isFalse();
+        assertThat(request.supportsRhaomiRecovery()).isFalse();
         assertThat(request.containers()).hasSize(1);
         assertThat(request.containers().getFirst().logsAllowed()).isFalse();
         assertThat(request.containers().getFirst().notificationsAllowed()).isFalse();
@@ -74,6 +75,7 @@ class AgentSnapshotVersionSkewTest {
                   "agentVersion":"new-agent",
                   "capturedAt":"2026-08-18T00:00:00Z",
                   "supportsContainerLogs":true,
+                  "supportsRhaomiRecovery":true,
                   "host":{},
                   "containers":[{"id":"0123456789abcdef","logsAllowed":true,"notificationsAllowed":true}]
                 }

@@ -19,25 +19,28 @@ import (
 	"github.com/xxh3898/homeops/agent/internal/containercontrol"
 	"github.com/xxh3898/homeops/agent/internal/containerlog"
 	"github.com/xxh3898/homeops/agent/internal/docker"
+	"github.com/xxh3898/homeops/agent/internal/recovery"
 	"github.com/xxh3898/homeops/agent/internal/snapshot"
 	"github.com/xxh3898/homeops/agent/internal/spool"
 	"github.com/xxh3898/homeops/agent/internal/transport"
 )
 
 type App struct {
-	config           config.Config
-	version          string
-	host             hostCollector
-	docker           dockerCollector
-	transport        snapshotTransport
-	logReader        containerLogReader
-	logTransport     containerLogTransport
-	controlExecutor  containerControlExecutor
-	controlTransport containerControlTransport
-	spool            snapshotSpool
-	logger           *slog.Logger
-	now              func() time.Time
-	wait             func(context.Context, time.Duration) bool
+	config            config.Config
+	version           string
+	host              hostCollector
+	docker            dockerCollector
+	transport         snapshotTransport
+	logReader         containerLogReader
+	logTransport      containerLogTransport
+	controlExecutor   containerControlExecutor
+	controlTransport  containerControlTransport
+	recoveryExecutor  automaticRecoveryExecutor
+	recoveryTransport automaticRecoveryTransport
+	spool             snapshotSpool
+	logger            *slog.Logger
+	now               func() time.Time
+	wait              func(context.Context, time.Duration) bool
 }
 
 type hostCollector interface {
@@ -83,6 +86,15 @@ type containerControlTransport interface {
 	SendContainerControlResult(context.Context, containercontrol.Result) error
 }
 
+type automaticRecoveryExecutor interface {
+	Execute(context.Context, recovery.Work, time.Time) recovery.Result
+}
+
+type automaticRecoveryTransport interface {
+	NextAutomaticRecoveryWork(context.Context) (*recovery.Work, error)
+	SendAutomaticRecoveryResult(context.Context, recovery.Result) error
+}
+
 type snapshotSpool interface {
 	Drain(func([]byte) error) (spool.DrainResult, error)
 	Store(string, []byte) error
@@ -91,16 +103,21 @@ type snapshotSpool interface {
 const collectionTimeout = 20 * time.Second
 
 const (
-	unsupportedLogAPIDelay         = 30 * time.Second
-	transientLogErrorDelay         = time.Second
-	emptyLogPollDelay              = 250 * time.Millisecond
-	initialResultRetryDelay        = 100 * time.Millisecond
-	maximumResultRetryDelay        = 500 * time.Millisecond
-	unsupportedControlAPIDelay     = 30 * time.Second
-	transientControlErrorDelay     = time.Second
-	emptyControlPollDelay          = 250 * time.Millisecond
-	initialControlResultRetryDelay = 100 * time.Millisecond
-	maximumControlResultRetryDelay = 500 * time.Millisecond
+	unsupportedLogAPIDelay          = 30 * time.Second
+	transientLogErrorDelay          = time.Second
+	emptyLogPollDelay               = 250 * time.Millisecond
+	initialResultRetryDelay         = 100 * time.Millisecond
+	maximumResultRetryDelay         = 500 * time.Millisecond
+	unsupportedControlAPIDelay      = 30 * time.Second
+	transientControlErrorDelay      = time.Second
+	emptyControlPollDelay           = 250 * time.Millisecond
+	initialControlResultRetryDelay  = 100 * time.Millisecond
+	maximumControlResultRetryDelay  = 500 * time.Millisecond
+	unsupportedRecoveryAPIDelay     = 30 * time.Second
+	transientRecoveryErrorDelay     = time.Second
+	emptyRecoveryPollDelay          = 250 * time.Millisecond
+	initialRecoveryResultRetryDelay = 100 * time.Millisecond
+	maximumRecoveryResultRetryDelay = 500 * time.Millisecond
 )
 
 var fullSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -127,19 +144,21 @@ func New(
 		return nil, err
 	}
 	return &App{
-		config:           config,
-		version:          version,
-		host:             collector.NewHostCollector(collector.ExecRunner{}),
-		docker:           dockerClient,
-		transport:        transportClient,
-		logReader:        dockerClient,
-		logTransport:     transportClient,
-		controlExecutor:  dockerClient,
-		controlTransport: transportClient,
-		spool:            spoolStore,
-		logger:           logger,
-		now:              func() time.Time { return time.Now().UTC() },
-		wait:             waitFor,
+		config:            config,
+		version:           version,
+		host:              collector.NewHostCollector(collector.ExecRunner{}),
+		docker:            dockerClient,
+		transport:         transportClient,
+		logReader:         dockerClient,
+		logTransport:      transportClient,
+		controlExecutor:   dockerClient,
+		controlTransport:  transportClient,
+		recoveryExecutor:  recovery.NewFixedExecutor(),
+		recoveryTransport: transportClient,
+		spool:             spoolStore,
+		logger:            logger,
+		now:               func() time.Time { return time.Now().UTC() },
+		wait:              waitFor,
 	}, nil
 }
 
@@ -157,6 +176,13 @@ func (app *App) Run(ctx context.Context) error {
 		go func() {
 			defer workers.Done()
 			app.runContainerControlWorker(ctx)
+		}()
+	}
+	if app.recoveryExecutor != nil && app.recoveryTransport != nil {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			app.runAutomaticRecoveryWorker(ctx)
 		}()
 	}
 	err := app.runSnapshotLoop(ctx)
@@ -220,13 +246,14 @@ func (app *App) collectAndSend(ctx context.Context) error {
 	}
 	now := app.currentTime().Truncate(time.Microsecond)
 	payload, err := json.Marshal(snapshot.Snapshot{
-		SnapshotID:            snapshotID,
-		AgentID:               app.config.AgentID,
-		AgentVersion:          app.version,
-		CapturedAt:            now,
-		SupportsContainerLogs: true,
-		Host:                  host,
-		Containers:            containers,
+		SnapshotID:             snapshotID,
+		AgentID:                app.config.AgentID,
+		AgentVersion:           app.version,
+		CapturedAt:             now,
+		SupportsContainerLogs:  true,
+		SupportsRhaomiRecovery: app.recoveryExecutor != nil && app.recoveryTransport != nil,
+		Host:                   host,
+		Containers:             containers,
 	})
 	if err != nil {
 		return fmt.Errorf("encode Agent snapshot: %w", err)
@@ -314,6 +341,42 @@ func (app *App) runContainerControlWorker(ctx context.Context) {
 		if delivery == resultDeliveryUnsupported {
 			app.logger.Info("container control result delivery unavailable")
 			if !app.waitFor(ctx, unsupportedControlAPIDelay) {
+				return
+			}
+		}
+	}
+}
+
+func (app *App) runAutomaticRecoveryWorker(ctx context.Context) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		work, err := app.recoveryTransport.NextAutomaticRecoveryWork(ctx)
+		if err != nil {
+			app.logger.Info("automatic recovery work poll unavailable")
+			if !app.waitFor(ctx, automaticRecoveryBackoff(err)) {
+				return
+			}
+			continue
+		}
+		if work == nil {
+			if !app.waitFor(ctx, emptyRecoveryPollDelay) {
+				return
+			}
+			continue
+		}
+		result := app.recoveryExecutor.Execute(ctx, *work, app.currentTime())
+		delivery := app.deliverAutomaticRecoveryResult(
+			ctx,
+			&result,
+			work.ExpiresAt)
+		if delivery == resultDeliveryCancelled {
+			return
+		}
+		if delivery == resultDeliveryUnsupported {
+			app.logger.Info("automatic recovery result delivery unavailable")
+			if !app.waitFor(ctx, unsupportedRecoveryAPIDelay) {
 				return
 			}
 		}
@@ -533,6 +596,66 @@ func (app *App) deliverContainerControlResult(
 	}
 }
 
+func (app *App) deliverAutomaticRecoveryResult(
+	ctx context.Context,
+	result *recovery.Result,
+	expiresAt time.Time,
+) resultDelivery {
+	defer func() {
+		*result = recovery.Result{}
+	}()
+	resultDeadline, err := recovery.ResultDeliveryDeadline(
+		expiresAt,
+		app.currentTime())
+	if err != nil {
+		return resultDeliveryCompleted
+	}
+	delay := initialRecoveryResultRetryDelay
+	for {
+		if ctx.Err() != nil {
+			return resultDeliveryCancelled
+		}
+		remaining := resultDeadline.Sub(app.currentTime())
+		if remaining <= 0 {
+			return resultDeliveryCompleted
+		}
+		attemptContext, cancel := context.WithTimeout(ctx, remaining)
+		err := app.recoveryTransport.SendAutomaticRecoveryResult(
+			attemptContext,
+			*result)
+		cancel()
+		if err == nil {
+			return resultDeliveryCompleted
+		}
+		var statusError transport.StatusError
+		if errors.As(err, &statusError) {
+			switch statusError.StatusCode {
+			case 404, 405:
+				return resultDeliveryUnsupported
+			case 410:
+				return resultDeliveryCompleted
+			}
+			retryableStatus := statusError.StatusCode == 408 ||
+				statusError.StatusCode == 429 ||
+				(statusError.StatusCode >= 500 && statusError.StatusCode < 600)
+			if !retryableStatus {
+				return resultDeliveryCompleted
+			}
+		}
+		remaining = resultDeadline.Sub(app.currentTime())
+		if remaining <= 0 {
+			return resultDeliveryCompleted
+		}
+		if delay > remaining {
+			delay = remaining
+		}
+		if !app.waitFor(ctx, delay) {
+			return resultDeliveryCancelled
+		}
+		delay = min(delay*2, maximumRecoveryResultRetryDelay)
+	}
+}
+
 func containerLogBackoff(err error) time.Duration {
 	var statusError transport.StatusError
 	if errors.As(err, &statusError) &&
@@ -549,6 +672,15 @@ func containerControlBackoff(err error) time.Duration {
 		return unsupportedControlAPIDelay
 	}
 	return transientControlErrorDelay
+}
+
+func automaticRecoveryBackoff(err error) time.Duration {
+	var statusError transport.StatusError
+	if errors.As(err, &statusError) &&
+		(statusError.StatusCode == 404 || statusError.StatusCode == 405) {
+		return unsupportedRecoveryAPIDelay
+	}
+	return transientRecoveryErrorDelay
 }
 
 func waitFor(ctx context.Context, delay time.Duration) bool {
