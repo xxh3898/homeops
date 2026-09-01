@@ -51,11 +51,13 @@ class PostgresqlMonitoringIntegrationTest {
     }
 
     @Test
-    void should_applyFlywayMigrationsFromV1ToV13WithV4ActiveIncidentIndex() {
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
+    void should_applyFlywayMigrationsFromV1ToV14WithV4ActiveIncidentIndex() {
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("14");
         assertThat(flyway.info().applied())
                 .extracting(migration -> migration.getVersion().getVersion())
-                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13");
+                .containsExactly(
+                        "1", "2", "3", "4", "5", "6", "7",
+                        "8", "9", "10", "11", "12", "13", "14");
         assertThat(jdbc.queryForObject(
                 "SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?",
                 Integer.class, "uk_incident_service_open")).isEqualTo(1);

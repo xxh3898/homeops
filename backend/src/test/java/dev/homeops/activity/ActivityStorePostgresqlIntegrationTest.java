@@ -82,6 +82,48 @@ class ActivityStorePostgresqlIntegrationTest {
     }
 
     @Test
+    void should_projectBoundedAutomaticRecoveryWithoutRawEvidence_when_auditExists() {
+        UUID serviceId = uuid(110);
+        insertRecoveryService(serviceId);
+        insertRecoveryMapping(serviceId);
+        insertRecovery(
+                uuid(111),
+                uuid(112),
+                serviceId,
+                "rhaomi",
+                "backend",
+                "APPLIED",
+                "RECOVERY_APPLIED",
+                1,
+                NOW);
+        insertRecovery(
+                uuid(113),
+                uuid(114),
+                serviceId,
+                null,
+                null,
+                "SKIPPED",
+                "TARGET_UNMAPPED",
+                0,
+                NOW.minusSeconds(1));
+
+        List<ActivityEventResponse> events = service.page(
+                null, ActivityTypeFilter.CONTAINER_ACTION, 100).items();
+
+        assertThat(events).hasSize(2);
+        assertThat(events).extracting(ActivityEventResponse::title)
+                .containsOnly("Automatic recovery restart");
+        assertThat(events).extracting(ActivityEventResponse::context)
+                .containsExactlyInAnyOrder("rhaomi/backend", "unmapped");
+        assertThat(events).extracting(ActivityEventResponse::status)
+                .containsExactlyInAnyOrder("APPLIED", "SKIPPED");
+        assertThat(events).extracting(ActivityEventResponse::severity)
+                .containsOnly(Severity.INFO);
+        assertThat(events.toString())
+                .doesNotContain("RECOVERY_APPLIED", "TARGET_UNMAPPED", "stdout", "stderr", "/private/");
+    }
+
+    @Test
     void should_excludeContainerActionInsertedAfterFirstPageVisibilitySnapshot() {
         insertAction(uuid(201), "START", "APPLIED", NOW);
         insertAction(uuid(202), "STOP", "APPLIED", NOW.minusSeconds(1));
@@ -201,6 +243,67 @@ class ActivityStorePostgresqlIntegrationTest {
                 CONTAINER_ID,
                 status,
                 terminal ? "TEST_" + status : null);
+    }
+
+    private void insertRecoveryService(UUID serviceId) {
+        jdbc.update("""
+                INSERT INTO monitored_service (
+                    id, name, url, http_method, expected_status, timeout_ms,
+                    interval_seconds, failure_threshold, recovery_threshold,
+                    severity, enabled, notification_enabled)
+                VALUES (?, 'Synthetic Rhaomi', 'https://example.test/health', 'GET', 200,
+                        3000, 30, 1, 1, 'CRITICAL', TRUE, FALSE)
+                """, serviceId);
+    }
+
+    private void insertRecoveryMapping(UUID serviceId) {
+        jdbc.update("""
+                INSERT INTO automatic_recovery_mapping (service_id, project, target, enabled)
+                VALUES (?, 'rhaomi', 'backend', FALSE)
+                """, serviceId);
+    }
+
+    private void insertRecovery(
+            UUID attemptId,
+            UUID incidentId,
+            UUID serviceId,
+            String project,
+            String target,
+            String status,
+            String reason,
+            int restartCount,
+            Instant requestedAt) {
+        jdbc.update("""
+                INSERT INTO incident (
+                    id, service_id, incident_type, severity, status, title,
+                    opened_at, last_observed_at, resolved_at, resolved_xid)
+                VALUES (?, ?, 'SERVICE_UNAVAILABLE', 'CRITICAL', 'RESOLVED',
+                        'Synthetic service unavailable', ?, ?, ?, pg_current_xact_id())
+                """,
+                incidentId,
+                serviceId,
+                Timestamp.from(requestedAt),
+                Timestamp.from(requestedAt),
+                Timestamp.from(requestedAt));
+        jdbc.update("""
+                INSERT INTO automatic_recovery_attempt (
+                    id, incident_id, service_id, project, target, action, status,
+                    reason_code, requested_at, started_at, completed_at,
+                    pre_health, post_health, restart_count)
+                VALUES (?, ?, ?, ?, ?, 'RESTART', ?, ?, ?, ?, ?, 'DOWN', ?, ?)
+                """,
+                attemptId,
+                incidentId,
+                serviceId,
+                project,
+                target,
+                status,
+                reason,
+                Timestamp.from(requestedAt),
+                Timestamp.from(requestedAt),
+                Timestamp.from(requestedAt.plusSeconds(1)),
+                status.equals("APPLIED") ? "UP" : "UNKNOWN",
+                restartCount);
     }
 
     private void insertDeployment(UUID id) {

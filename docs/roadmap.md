@@ -23,6 +23,7 @@
 | Phase 3 운영 이력 | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 4 알림 | IMPLEMENTED | ACTIVE | COMPLETE |
 | Phase 5 제한된 컨테이너 제어 | IMPLEMENTED | ACTIVE | COMPLETE |
+| Phase 6 Rhaomi fixed recovery | IMPLEMENTED | INACTIVE | NOT RUN |
 
 ## Phase 1: 읽기 전용 대시보드 정확성 및 사용성
 
@@ -117,6 +118,23 @@ Production acceptance에서는 disabled baseline의 outbound zero와 no-replay, 
 **현재 source 근거:** Agent exact-label/authority-independence와 bounded allowlist/candidate test, control broker concurrency·expiry·duplicate-result test, exact mTLS route, strict wire decode, live protected target/mount revalidation, fixed Docker HTTP와 ambiguous no-retry regression. Public API에는 strict DTO, same-origin/CSRF security, commit-before-dispatch idempotency, bounded audit projection/reconciliation과 PostgreSQL concurrency/migration regression이 있습니다. Container Detail UI에는 conservative action matrix, accessible confirmation, one-key ambiguous retry, GET-only bounded polling과 terminal-state regression이 있습니다. Control audit의 bounded public subset은 visibility-snapshot cursor를 유지한 Activity source로도 projection됩니다.
 
 **전체 완료 근거:** authorization, CSRF, canonical public Origin, allowlist, duplicate request, audit, timeout, stale Agent와 database-protection automated regression에 더해 controlled `STOP → START → RESTART`, terminal 이후 fresh snapshot 확인과 iPhone production interaction acceptance를 완료했습니다.
+
+## Phase 6: Rhaomi incident 기반 fixed recovery
+
+**상태:** Source IMPLEMENTED / Production INACTIVE / Acceptance NOT RUN. V14 mapping row 부재와 `enabled=false`가 기본이며 source 변경은 production authority를 만들지 않습니다.
+
+**목표:** Actual Rhaomi service incident OPEN winner에만 보수적인 자동 복구 decision을 연결하고, 같은 incident 또는 target에 대한 restart storm 없이 기존 fixed Rhaomi capability를 한 번 호출합니다.
+
+1. Server-owned mapping은 exact `rhaomi/(rhaomi-web|backend)`만 허용하고 service·target identity를 일대일로 제한합니다. Incident unique attempt와 mapping row lock이 concurrent caller를 한 decision에 수렴시킵니다.
+2. Durable `last_reserved_at` 기준 30분 cooldown은 success가 아니라 authority reservation 때 시작하며 process restart 뒤에도 유지됩니다. Unmapped, disabled, active cooldown 또는 inactive incident는 bounded `SKIPPED` evidence만 남깁니다.
+3. Dispatcher는 incident, mapping과 fresh Agent capability를 재검증한 뒤 UUID·project·target·`RESTART`·expiry만 outbound work로 보냅니다. Active work는 하나이고 claimed, failure 또는 unknown outcome을 requeue하지 않습니다.
+4. Agent는 compile-time fixed inventory와 environment로 shell 없이 exact capability를 한 번 실행합니다. Stdout은 4 KiB strict JSON으로 제한하고 stderr/raw output, path, command, Docker input과 private metadata를 Backend에 보내지 않습니다.
+5. Success는 restart count 1과 post-health `UP`을 모두 요구합니다. Lock/precondition rejection은 mutation 0, post-health failure는 false success 없이 `FAILED`, timeout·invalid/unconfirmed result는 `OUTCOME_UNKNOWN`으로 보존합니다.
+6. Recovery audit는 incident, logical target, stable status/reason, bounded timestamp·health·restart count만 저장하고 Activity에는 더 작은 deterministic projection만 노출합니다. Generic control의 Rhaomi backend writable-mount deny는 유지합니다.
+
+**현재 source 근거:** V14 clean/upgrade 및 constraint regression, PostgreSQL decision concurrency·cooldown persistence, dispatch revalidation/result CAS, bounded broker·security route, fresh/old Agent capability, Agent fixed executor·strict transport·no-reexecution, generic control deny와 Activity privacy regression을 포함합니다. Full repository gate는 Hosted CI exact HEAD 결과로 판정합니다.
+
+**Production activation 전제:** 별도 승인된 V14 apply, exact monitored-service/mapping provisioning과 enable, fixed capability inventory 검증, controlled Agent rollout, rollback과 observation 계획이 모두 필요합니다. 실제 mapping write, Rhaomi restart, acceptance drill, deploy와 cleanup은 source Feature PR 범위에 포함하지 않습니다.
 
 ## 문서 및 릴리스 원칙
 

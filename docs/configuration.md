@@ -83,12 +83,18 @@ API는 구성한 time window 안의 request만 받습니다. secret을 command l
 
 이 구성은 HomeOps가 service 상태와 incident를 소유하는 단일 관제 경계입니다. 별도 availability/dashboard stack용 URL, token, push, heartbeat 또는 email 설정을 HomeOps 환경에 추가하지 않습니다. Built-in checker는 현재 expected HTTP status만 확인합니다. Public keyword, load, inode/volume, 최소 PostgreSQL metric 또는 daily summary를 추가하려면 project의 privacy-safe status source와 새 bounded typed contract를 별도 검토해야 하며, 기존 `DISK_LOW`나 `HTTP_5XX_BURST`로 의미를 바꾸어 제출하지 않습니다. Synthetic check는 공개 health/status endpoint를 사용하고 CSRF 또는 token 발급 endpoint를 probe로 사용하지 않습니다.
 
+## Rhaomi automatic recovery authority
+
+Rhaomi automatic recovery는 환경변수, container label 또는 public CRUD API로 활성화하지 않습니다. V14 `automatic_recovery_mapping`은 row 부재가 기본이고 row를 만들더라도 `enabled=false`가 기본입니다. Project와 target은 각각 exact `rhaomi`와 `rhaomi-web|backend`, action은 `RESTART`로 database와 Agent protocol에 고정됩니다. 30분 cooldown은 process-local setting이 아니라 mapping의 durable `last_reserved_at`을 기준으로 하며 configuration override를 제공하지 않습니다.
+
+Source merge, V14 migration 존재, generic control allowlist/managed label 또는 Agent artifact publication만으로 recovery authority가 생기지 않습니다. Production activation에는 exact monitored service와 mapping identity, 명시적 enabled 전환, V14 적용 상태, fresh Agent의 `supportsRhaomiRecovery=true`, host의 검증된 fixed recovery inventory와 rollback을 별도 Ops gate에서 확인해야 합니다. Old 또는 rollback Agent가 capability field를 생략하면 Backend는 false로 해석합니다. Mapping 등록·enable, Agent rollout, 실제 restart와 acceptance drill은 각각 독립된 production 승인 대상입니다.
+
 ## native Agent 환경
 
 | 키 | 필수 여부 | secret | 제약 |
 |---|---:|---:|---|
 | `HOMEOPS_AGENT_ID` | 예 | 아니요 | API configuration과 정확히 일치해야 함 |
-| `HOMEOPS_AGENT_API_URL` | 예 | 민감 endpoint | 고정 snapshot path를 포함하는 HTTPS loopback URL. user info, query, fragment 불가. Agent는 검증된 scheme/host/port에서 compile-time fixed log work/result path를 파생하며 별도 endpoint 환경변수를 받지 않음 |
+| `HOMEOPS_AGENT_API_URL` | 예 | 민감 endpoint | 고정 snapshot path를 포함하는 HTTPS loopback URL. user info, query, fragment 불가. Agent는 검증된 scheme/host/port에서 compile-time fixed log, generic control, Rhaomi recovery work/result path를 파생하며 별도 endpoint 환경변수를 받지 않음 |
 | `HOMEOPS_AGENT_CLIENT_CERT` | 예 | 민감 path | absolute client certificate path |
 | `HOMEOPS_AGENT_CLIENT_KEY` | 예 | 예/path | absolute private key path |
 | `HOMEOPS_AGENT_CA_CERT` | 예 | 민감 path | absolute server CA path |

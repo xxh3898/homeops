@@ -61,6 +61,21 @@ public class ActivityStore {
                        'CONTAINER_ACTION:' || CAST(c.id AS text)
                 FROM container_action_audit c
                 WHERE c.container_id_prefix ~ '^[0-9a-f]{12}$'
+                UNION ALL
+                SELECT CAST(r.id AS text), 'CONTAINER_ACTION',
+                       'Automatic recovery restart', r.status,
+                       CASE WHEN r.status IN ('APPLIED', 'SKIPPED') THEN 'INFO'
+                            WHEN r.status IN ('REQUESTED', 'DISPATCHED', 'EXPIRED') THEN 'WARNING'
+                            ELSE 'CRITICAL' END,
+                       r.requested_at, r.recorded_xid,
+                       CASE
+                           WHEN r.project = 'rhaomi'
+                                AND r.target IN ('rhaomi-web', 'backend')
+                           THEN r.project || '/' || r.target
+                           ELSE 'unmapped'
+                       END,
+                       'AUTOMATIC_RECOVERY:' || CAST(r.id AS text)
+                FROM automatic_recovery_attempt r
             ) events
             WHERE pg_visible_in_snapshot(recorded_xid, ?::pg_snapshot)
               AND (?::text IS NULL OR event_type = ?::text)

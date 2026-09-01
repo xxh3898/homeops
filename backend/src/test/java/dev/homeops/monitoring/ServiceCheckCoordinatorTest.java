@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import dev.homeops.monitoring.MonitoredServiceStore.OpenIncident;
 import dev.homeops.monitoring.api.MonitoredServiceResponse;
 import dev.homeops.notification.IncidentNotificationProducer;
+import dev.homeops.recovery.AutomaticRecoveryDecisionService;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -27,12 +28,13 @@ class ServiceCheckCoordinatorTest {
 
     @Mock private MonitoredServiceStore store;
     @Mock private IncidentNotificationProducer notifications;
+    @Mock private AutomaticRecoveryDecisionService recoveries;
     private ServiceCheckCoordinator coordinator;
 
     @BeforeEach
     void setUp() {
         coordinator = new ServiceCheckCoordinator(
-                store, notifications, Clock.fixed(NOW, ZoneOffset.UTC));
+                store, notifications, recoveries, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Test
@@ -50,6 +52,7 @@ class ServiceCheckCoordinatorTest {
         verify(store).recordResult(SERVICE_ID, NOW, result);
         verify(store).openIncident(service, NOW);
         verify(notifications).recordOpened(incidentId, service, true, NOW);
+        verify(recoveries).evaluateOpenIncident(incidentId, SERVICE_ID, NOW);
         InOrder lockOrder = Mockito.inOrder(store);
         lockOrder.verify(store).findNotificationAuthorityForUpdate(SERVICE_ID);
         lockOrder.verify(store).recordResult(SERVICE_ID, NOW, result);
@@ -69,6 +72,10 @@ class ServiceCheckCoordinatorTest {
                 org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.anyBoolean(),
+                org.mockito.ArgumentMatchers.any());
+        verify(recoveries, never()).evaluateOpenIncident(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any());
     }
 

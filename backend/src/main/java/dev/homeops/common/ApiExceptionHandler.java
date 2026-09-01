@@ -17,6 +17,8 @@ import dev.homeops.agent.logs.InvalidContainerLogTailException;
 import dev.homeops.metrics.InvalidMetricHistoryPeriodException;
 import dev.homeops.monitoring.SafeServiceUrlPolicy.UnsafeServiceUrlException;
 import dev.homeops.monitoring.MonitoredServiceNotFoundException;
+import dev.homeops.recovery.AutomaticRecoveryRequestGoneException;
+import dev.homeops.recovery.AutomaticRecoveryResultRejectedException;
 import dev.homeops.system.AmbiguousContainerIdentifierException;
 import dev.homeops.system.ContainerInventoryUnavailableException;
 import dev.homeops.system.ContainerNotFoundException;
@@ -168,6 +170,26 @@ public class ApiExceptionHandler {
                 "Container control result cannot be processed");
         detail.setType(URI.create("urn:homeops:problem:container-control-result-rejected"));
         detail.setTitle("Container control result rejected");
+        return detail;
+    }
+
+    @ExceptionHandler(AutomaticRecoveryRequestGoneException.class)
+    ProblemDetail handleAutomaticRecoveryRequestGone() {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.GONE,
+                "Automatic recovery request is no longer available");
+        detail.setType(URI.create("urn:homeops:problem:automatic-recovery-request-gone"));
+        detail.setTitle("Automatic recovery request expired");
+        return detail;
+    }
+
+    @ExceptionHandler(AutomaticRecoveryResultRejectedException.class)
+    ProblemDetail handleAutomaticRecoveryResultRejected() {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.UNPROCESSABLE_CONTENT,
+                "Automatic recovery result cannot be processed");
+        detail.setType(URI.create("urn:homeops:problem:automatic-recovery-result-rejected"));
+        detail.setTitle("Automatic recovery result rejected");
         return detail;
     }
 

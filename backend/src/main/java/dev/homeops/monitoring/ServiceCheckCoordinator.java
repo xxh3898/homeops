@@ -3,6 +3,7 @@ package dev.homeops.monitoring;
 import dev.homeops.monitoring.MonitoredServiceStore.OpenIncident;
 import dev.homeops.monitoring.api.MonitoredServiceResponse;
 import dev.homeops.notification.IncidentNotificationProducer;
+import dev.homeops.recovery.AutomaticRecoveryDecisionService;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
@@ -14,21 +15,25 @@ import org.springframework.transaction.annotation.Transactional;
 public class ServiceCheckCoordinator {
     private final MonitoredServiceStore store;
     private final IncidentNotificationProducer notifications;
+    private final AutomaticRecoveryDecisionService recoveries;
     private final Clock clock;
 
     @Autowired
     public ServiceCheckCoordinator(
             MonitoredServiceStore store,
-            IncidentNotificationProducer notifications) {
-        this(store, notifications, Clock.systemUTC());
+            IncidentNotificationProducer notifications,
+            AutomaticRecoveryDecisionService recoveries) {
+        this(store, notifications, recoveries, Clock.systemUTC());
     }
 
     public ServiceCheckCoordinator(
             MonitoredServiceStore store,
             IncidentNotificationProducer notifications,
+            AutomaticRecoveryDecisionService recoveries,
             Clock clock) {
         this.store = store;
         this.notifications = notifications;
+        this.recoveries = recoveries;
         this.clock = clock;
     }
 
@@ -48,9 +53,11 @@ public class ServiceCheckCoordinator {
                 service.recoveryThreshold(), incident.isPresent(), result.healthy());
 
         switch (transition.action()) {
-            case OPEN -> store.openIncident(service, checkedAt)
-                    .ifPresent(incidentId -> notifications.recordOpened(
-                            incidentId, service, notificationEnabled, checkedAt));
+            case OPEN -> store.openIncident(service, checkedAt).ifPresent(incidentId -> {
+                notifications.recordOpened(
+                        incidentId, service, notificationEnabled, checkedAt);
+                recoveries.evaluateOpenIncident(incidentId, service.id(), checkedAt);
+            });
             case RESOLVE -> {
                 OpenIncident open = incident.orElseThrow();
                 if (store.resolveIncident(open.id(), checkedAt)) {

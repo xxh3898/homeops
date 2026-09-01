@@ -203,6 +203,13 @@ public class AgentSnapshotService {
         return Optional.ofNullable(latest.get());
     }
 
+    public boolean hasFreshRhaomiRecoveryCapability() {
+        ReceivedAgentSnapshot received = latest.get();
+        return received != null
+                && received.snapshot().supportsRhaomiRecovery()
+                && !isSnapshotStale(received);
+    }
+
     @Transactional(readOnly = true)
     public AgentStatusResponse status() {
         Instant now = clock.instant();
@@ -428,7 +435,7 @@ public class AgentSnapshotService {
     private static AgentSnapshotRequest canonicalize(AgentSnapshotRequest request) {
         return new AgentSnapshotRequest(request.snapshotId(), request.agentId(), request.agentVersion(),
                 PostgresqlTimestamp.canonicalize(request.capturedAt()), request.supportsContainerLogs(),
-                request.host(), request.containers());
+                request.supportsRhaomiRecovery(), request.host(), request.containers());
     }
 
     private boolean sameDatabaseTimestamp(Instant left, Instant right) {
