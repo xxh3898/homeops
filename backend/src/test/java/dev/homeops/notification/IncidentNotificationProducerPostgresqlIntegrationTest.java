@@ -2,10 +2,12 @@ package dev.homeops.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 import dev.homeops.monitoring.HttpServiceChecker;
 import dev.homeops.monitoring.MonitoredServiceStore;
 import dev.homeops.monitoring.ServiceCheckCoordinator;
+import dev.homeops.recovery.AutomaticRecoveryDecisionService;
 import dev.homeops.monitoring.api.MonitoredServiceResponse;
 import dev.homeops.notification.config.HomeOpsNotificationProperties;
 import dev.homeops.notification.config.IncidentNotificationProperties;
@@ -290,7 +292,10 @@ class IncidentNotificationProducerPostgresqlIntegrationTest {
                 new NotificationOutbox(outboxTransactions),
                 new IncidentNotificationProperties(ESCALATION_AFTER));
         return new ServiceCheckCoordinator(
-                monitoredServices, producer, Clock.fixed(now, ZoneOffset.UTC));
+                monitoredServices,
+                producer,
+                mock(AutomaticRecoveryDecisionService.class),
+                Clock.fixed(now, ZoneOffset.UTC));
     }
 
     private void raceRecords(

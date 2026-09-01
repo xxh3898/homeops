@@ -24,12 +24,33 @@ public record AgentSnapshotRequest(
         @NotBlank @Size(max = 64) @NoPostgresqlNul String agentVersion,
         @NotNull Instant capturedAt,
         Boolean supportsContainerLogs,
+        Boolean supportsRhaomiRecovery,
         @NotNull @Valid HostSnapshot host,
         @NotNull @Size(max = 256) List<@NotNull @Valid ContainerSnapshot> containers) {
 
     public AgentSnapshotRequest {
         supportsContainerLogs = Boolean.TRUE.equals(supportsContainerLogs);
+        supportsRhaomiRecovery = Boolean.TRUE.equals(supportsRhaomiRecovery);
         containers = containers == null ? null : List.copyOf(containers);
+    }
+
+    public AgentSnapshotRequest(
+            UUID snapshotId,
+            String agentId,
+            String agentVersion,
+            Instant capturedAt,
+            Boolean supportsContainerLogs,
+            HostSnapshot host,
+            List<ContainerSnapshot> containers) {
+        this(
+                snapshotId,
+                agentId,
+                agentVersion,
+                capturedAt,
+                supportsContainerLogs,
+                false,
+                host,
+                containers);
     }
 
     public AgentSnapshotRequest(
@@ -39,7 +60,7 @@ public record AgentSnapshotRequest(
             Instant capturedAt,
             HostSnapshot host,
             List<ContainerSnapshot> containers) {
-        this(snapshotId, agentId, agentVersion, capturedAt, false, host, containers);
+        this(snapshotId, agentId, agentVersion, capturedAt, false, false, host, containers);
     }
 
     public record HostSnapshot(

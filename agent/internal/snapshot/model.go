@@ -3,13 +3,14 @@ package snapshot
 import "time"
 
 type Snapshot struct {
-	SnapshotID            string      `json:"snapshotId"`
-	AgentID               string      `json:"agentId"`
-	AgentVersion          string      `json:"agentVersion"`
-	CapturedAt            time.Time   `json:"capturedAt"`
-	SupportsContainerLogs bool        `json:"supportsContainerLogs"`
-	Host                  Host        `json:"host"`
-	Containers            []Container `json:"containers"`
+	SnapshotID             string      `json:"snapshotId"`
+	AgentID                string      `json:"agentId"`
+	AgentVersion           string      `json:"agentVersion"`
+	CapturedAt             time.Time   `json:"capturedAt"`
+	SupportsContainerLogs  bool        `json:"supportsContainerLogs"`
+	SupportsRhaomiRecovery bool        `json:"supportsRhaomiRecovery"`
+	Host                   Host        `json:"host"`
+	Containers             []Container `json:"containers"`
 }
 
 type Host struct {

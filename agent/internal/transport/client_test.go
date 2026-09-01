@@ -12,6 +12,7 @@ import (
 
 	"github.com/xxh3898/homeops/agent/internal/containercontrol"
 	"github.com/xxh3898/homeops/agent/internal/containerlog"
+	"github.com/xxh3898/homeops/agent/internal/recovery"
 )
 
 func TestStatusErrorClassifiesValidationRejectionAsPermanent(t *testing.T) {
@@ -50,6 +51,128 @@ func TestDeriveEndpointsRejectsAlternateConfiguredPath(t *testing.T) {
 	if _, _, _, _, _, err := deriveEndpoints(
 		"https://127.0.0.1:13443/api/v1/internal/agent/log-results"); err == nil {
 		t.Fatal("deriveEndpoints accepted an alternate configured path")
+	}
+}
+
+func TestDeriveRecoveryEndpointsUsesFixedPathsOnValidatedOrigin(t *testing.T) {
+	t.Parallel()
+	work, result, err := deriveRecoveryEndpoints(
+		"https://127.0.0.1:13443/api/v1/internal/agent/snapshots")
+	if err != nil {
+		t.Fatalf("deriveRecoveryEndpoints returned an error: %v", err)
+	}
+	if work != "https://127.0.0.1:13443"+recoveryWorkPath ||
+		result != "https://127.0.0.1:13443"+recoveryResultPath {
+		t.Fatalf("derived recovery endpoints are invalid")
+	}
+}
+
+func TestNextAutomaticRecoveryWorkAcceptsOnlyFixedBoundedContract(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(
+		response http.ResponseWriter,
+		request *http.Request,
+	) {
+		if request.Method != http.MethodGet || request.URL.Path != recoveryWorkPath {
+			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(response,
+			`{"requestId":"10000000-0000-4000-8000-000000000119","project":"rhaomi","target":"backend","action":"RESTART","expiresAt":"2026-09-01T12:00:10Z"}`)
+	}))
+	defer server.Close()
+	client := &Client{
+		recoveryWorkEndpoint: server.URL + recoveryWorkPath,
+		httpClient:           server.Client(),
+		now:                  func() time.Time { return now },
+	}
+
+	work, err := client.NextAutomaticRecoveryWork(context.Background())
+
+	if err != nil || work == nil || work.Project != recovery.ProjectRhaomi ||
+		work.Target != recovery.TargetBackend || work.Action != recovery.ActionRestart {
+		t.Fatalf("work/error = %#v/%v", work, err)
+	}
+}
+
+func TestNextAutomaticRecoveryWorkRejectsArbitraryInputsAndExpiry(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	base := `{"requestId":"10000000-0000-4000-8000-000000000119","project":%q,"target":%q,"action":%q,"expiresAt":%q%s}`
+	cases := map[string]string{
+		"project":       fmt.Sprintf(base, "other", "backend", "RESTART", "2026-09-01T12:00:10Z", ""),
+		"target":        fmt.Sprintf(base, "rhaomi", "arbitrary", "RESTART", "2026-09-01T12:00:10Z", ""),
+		"action":        fmt.Sprintf(base, "rhaomi", "backend", "SHELL", "2026-09-01T12:00:10Z", ""),
+		"expired":       fmt.Sprintf(base, "rhaomi", "backend", "RESTART", "2026-09-01T12:00:00Z", ""),
+		"unknown field": fmt.Sprintf(base, "rhaomi", "backend", "RESTART", "2026-09-01T12:00:10Z", `,"path":"forbidden"`),
+	}
+	for name, payload := range cases {
+		payload := payload
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(
+				response http.ResponseWriter,
+				_ *http.Request,
+			) {
+				_, _ = io.WriteString(response, payload)
+			}))
+			defer server.Close()
+			client := &Client{
+				recoveryWorkEndpoint: server.URL + recoveryWorkPath,
+				httpClient:           server.Client(),
+				now:                  func() time.Time { return now },
+			}
+
+			work, err := client.NextAutomaticRecoveryWork(context.Background())
+			if err == nil || work != nil {
+				t.Fatalf("work/error = %#v/%v, want strict rejection", work, err)
+			}
+		})
+	}
+}
+
+func TestSendAutomaticRecoveryResultPostsOnlyBoundedDTO(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(
+		response http.ResponseWriter,
+		request *http.Request,
+	) {
+		if request.Method != http.MethodPost || request.URL.Path != recoveryResultPath {
+			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		text := string(body)
+		if !strings.Contains(text, `"status":"APPLIED"`) ||
+			!strings.Contains(text, `"reasonCode":"RECOVERY_APPLIED"`) ||
+			!strings.Contains(text, `"restartCount":1`) ||
+			strings.Contains(text, "command") || strings.Contains(text, "path") ||
+			strings.Contains(text, "stdout") || strings.Contains(text, "stderr") {
+			t.Fatalf("automatic recovery result body is not bounded")
+		}
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	client := &Client{
+		recoveryResultEndpoint: server.URL + recoveryResultPath,
+		httpClient:             server.Client(),
+	}
+
+	err := client.SendAutomaticRecoveryResult(context.Background(), recovery.Result{
+		RequestID:    "10000000-0000-4000-8000-000000000119",
+		Status:       recovery.StatusApplied,
+		ReasonCode:   recovery.ReasonRecoveryApplied,
+		StartedAt:    time.Date(2026, 9, 1, 12, 0, 1, 0, time.UTC),
+		FinishedAt:   time.Date(2026, 9, 1, 12, 0, 2, 0, time.UTC),
+		PreHealth:    recovery.HealthDown,
+		PostHealth:   recovery.HealthUp,
+		RestartCount: 1,
+	})
+	if err != nil {
+		t.Fatalf("SendAutomaticRecoveryResult returned an error: %v", err)
 	}
 }
 

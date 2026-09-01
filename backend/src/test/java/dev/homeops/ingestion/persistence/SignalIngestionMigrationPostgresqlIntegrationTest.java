@@ -31,10 +31,10 @@ class SignalIngestionMigrationPostgresqlIntegrationTest {
     }
 
     @Test
-    void should_createBoundedSignalSchema_when_migratingCleanlyToV13() {
+    void should_createBoundedSignalSchema_when_migratingCleanlyToV14() {
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("14");
         assertThat(jdbc.queryForList("""
                 SELECT table_name
                 FROM information_schema.tables
@@ -81,7 +81,7 @@ class SignalIngestionMigrationPostgresqlIntegrationTest {
     }
 
     @Test
-    void should_preserveExistingOperationalHistory_when_migratingFromV12ToV13() {
+    void should_preserveExistingOperationalHistory_when_migratingFromV12ToV14() {
         database.migrateTo("12");
         UUID deploymentId = UUID.randomUUID();
         UUID backupId = UUID.randomUUID();
@@ -104,7 +104,7 @@ class SignalIngestionMigrationPostgresqlIntegrationTest {
 
         Flyway flyway = database.migrateToCurrent();
 
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("13");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("14");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM deployment WHERE id = ?", Integer.class, deploymentId))
                 .isOne();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM backup_run WHERE id = ?", Integer.class, backupId))
